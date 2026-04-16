@@ -18,6 +18,9 @@
 #include "shell.h"
 #include "panic.h"
 #include "arch/x86_64/arch.h"
+#include "elf.h"
+#include "userapi.h"
+#include "process.h"
 
 namespace vk {
 namespace shell {
@@ -57,6 +60,7 @@ static void cmd_help() {
     console::puts("  clear   - Clear screen\n");
     console::puts("  uptime  - Show tick count\n");
     console::puts("  idt     - Dump interrupt descriptor table\n");
+    console::puts("  run <f> - Load and execute an ELF64 binary from ramfs\n");
 }
 
 static void cmd_version() {
@@ -121,6 +125,16 @@ static void cmd_uptime() {
     console::puts(" seconds (");
     console::put_dec(s_tick_count);
     console::puts(" ticks)\n");
+}
+
+static void cmd_run(const char* arg) {
+    /* Skip leading spaces */
+    while (*arg == ' ') ++arg;
+    if (*arg == '\0') {
+        console::puts("Usage: run <filename>\n");
+        return;
+    }
+    process::run(arg);
 }
 
 /* ============================================================
@@ -205,6 +219,8 @@ void shell_main() {
             } else {
                 console::puts("Allocation failed\n");
             }
+        } else if (str_starts_with(cmd_buf, "run ")) {
+            cmd_run(cmd_buf + 4);
         } else if (str_equal(cmd_buf, "panic")) {
             vk_panic(__FILE__, __LINE__, "Manual panic triggered by 'panic' command");
         } else {

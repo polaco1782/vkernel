@@ -72,6 +72,30 @@ auto ramfs::add_file(const char* name, const u8* data, usize size) -> status_cod
     return status_code::success;
 }
 
+auto ramfs::add_file_nocopy(const char* name, u8* data, usize size) -> status_code {
+    if (g_file_count >= RAMFS_MAX_FILES) return status_code::no_memory;
+    if (name == null || data == null) return status_code::invalid_param;
+
+    auto& f = g_files[g_file_count];
+    str_copy(f.name, name, sizeof(f.name));
+    f.data  = data;
+    f.size  = size;
+    f.valid = true;
+    ++g_file_count;
+
+#if VK_DEBUG_LEVEL >= 4
+    console::puts("[DEBUG] ramfs: registered (nocopy) '");
+    console::puts(name);
+    console::puts("' at 0x");
+    console::put_hex(reinterpret_cast<u64>(data));
+    console::puts(" (");
+    console::put_dec(size);
+    console::puts(" bytes)\n");
+#endif
+
+    return status_code::success;
+}
+
 auto ramfs::find(const char* name) -> const file_entry* {
     for (usize i = 0; i < g_file_count; ++i) {
         if (g_files[i].valid && str_equal(g_files[i].name, name))
@@ -297,6 +321,7 @@ auto loader::load_initrd() -> status_code {
         "\\EFI\\vkernel\\shell.txt",
         "\\EFI\\vkernel\\hello.txt",
         "\\EFI\\vkernel\\motd.txt",
+        "\\EFI\\vkernel\\hello.elf",
     };
     constexpr usize file_count = sizeof(files) / sizeof(files[0]);
 
@@ -311,7 +336,7 @@ auto loader::load_initrd() -> status_code {
                 if (*p == '\\' || *p == '/') name = p + 1;
                 ++p;
             }
-            if (ramfs::add_file(name, result.data, result.size) == status_code::success) {
+            if (ramfs::add_file_nocopy(name, result.data, result.size) == status_code::success) {
                 console::puts("  Loaded: ");
                 console::puts(name);
                 console::puts(" (");

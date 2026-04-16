@@ -10,6 +10,11 @@ EFI_FILE := $(BUILD_DIR)/$(KERNEL_NAME).efi
 ESP_DIR   := $(BUILD_DIR)/esp
 BOOT_IMG  := $(BUILD_DIR)/$(KERNEL_NAME)_boot.img
 
+# Userspace programs
+USERSPACE_DIR  := userspace
+HELLO_ELF      := $(USERSPACE_DIR)/hello/hello.elf
+USERSPACE_ELFS := $(HELLO_ELF)
+
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
 CXX := $(CROSS_PREFIX)g++
@@ -92,9 +97,16 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@ls -lh $@
 
 # Create bootable GPT + EFI System Partition disk image
-$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh
+$(BOOT_IMG): $(EFI_FILE) $(USERSPACE_ELFS) scripts/make_disk.sh
 	@echo "  DISK    $@"
-	@bash scripts/make_disk.sh $< $@
+	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(USERSPACE_ELFS)
+
+# Build all userspace ELF programs
+.PHONY: userspace
+userspace: $(USERSPACE_ELFS)
+
+$(HELLO_ELF): $(USERSPACE_DIR)/hello/hello.c $(USERSPACE_DIR)/hello/Makefile
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello
 
 # Disassembly for debugging
 disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
@@ -105,6 +117,7 @@ disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
 clean:
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello clean
 
 # QEMU test
 qemu: $(BOOT_IMG)
@@ -143,4 +156,6 @@ info:
 	@echo "  Objects:      $(ALL_OBJS)"
 
 # Phony targets
-.PHONY: all clean disasm qemu qemu-debug info
+.PHONY: all clean disasm qemu qemu-debug info userspace disk
+
+disk: $(BOOT_IMG)

@@ -39,6 +39,11 @@ auto init() -> status_code;
 /* Register a file blob (called during ESP load phase) */
 auto add_file(const char* name, const u8* data, usize size) -> status_code;
 
+/* Register a file blob without copying — takes ownership of an already-
+ * allocated buffer (e.g. UEFI AllocatePool).  Safe to call before the
+ * kernel heap is initialized. */
+auto add_file_nocopy(const char* name, u8* data, usize size) -> status_code;
+
 /* Look up a file by name */
 auto find(const char* name) -> const file_entry*;
 
