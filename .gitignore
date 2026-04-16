@@ -1,0 +1,55 @@
+# vkernel - UEFI Microkernel
+# Git ignore file
+
+# Build directories
+build/
+build_vs/
+*.efi
+*.elf
+*.dis
+*.img
+
+# Object files
+*.o
+*.obj
+*.lib
+*.dll
+*.exe
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+ipch/
+
+# IDE files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Toolchain (if built locally)
+toolchain/
+cross/
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+
+# QEMU
+*.fd
+/tmp/vkernel_ovmf_vars.fd
+
+# Test artifacts
+tests/output/
+tests/coverage/
