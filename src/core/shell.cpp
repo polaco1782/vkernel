@@ -16,6 +16,7 @@
 #include "scheduler.h"
 #include "input.h"
 #include "shell.h"
+#include "panic.h"
 #include "arch/x86_64/arch.h"
 
 namespace vk {
@@ -55,6 +56,7 @@ static void cmd_help() {
     console::puts("  cat <f> - Display file contents\n");
     console::puts("  clear   - Clear screen\n");
     console::puts("  uptime  - Show tick count\n");
+    console::puts("  idt     - Dump interrupt descriptor table\n");
 }
 
 static void cmd_version() {
@@ -80,6 +82,9 @@ static void cmd_mem() {
     console::puts("\n  Total RAM:   ");
     console::put_dec((g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024));
     console::puts(" MB\n");
+    console::puts("\n");
+    
+    memory::dump_heap();
 }
 
 static void cmd_ls() {
@@ -185,6 +190,23 @@ void shell_main() {
             console::clear();
         } else if (str_equal(cmd_buf, "uptime")) {
             cmd_uptime();
+        } else if (str_equal(cmd_buf, "reboot")) {
+            console::puts("Rebooting...\n");
+            arch::reboot();
+        } else if (str_equal(cmd_buf, "idt")) {
+            arch::dump_idt();
+        } else if (str_equal(cmd_buf, "alloc")) {
+            /* Test command to allocate some memory and show it in 'mem' */
+            void* p = g_kernel_heap.allocate(4096);
+            if (p) {
+                console::puts("Allocated 4096 bytes at 0x");
+                console::put_hex(reinterpret_cast<u64>(p));
+                console::puts("\n");
+            } else {
+                console::puts("Allocation failed\n");
+            }
+        } else if (str_equal(cmd_buf, "panic")) {
+            vk_panic(__FILE__, __LINE__, "Manual panic triggered by 'panic' command");
         } else {
             console::puts("Unknown command: ");
             console::puts(cmd_buf);

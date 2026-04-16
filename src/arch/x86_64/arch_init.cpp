@@ -10,6 +10,7 @@
 #include "console.h"
 #include "memory.h"
 #include "scheduler.h"
+#include "panic.h"
 #include "arch/x86_64/arch.h"
 
 namespace vk {
@@ -337,6 +338,56 @@ auto halt() -> void {
     while (true) {
         cpu_halt();
     }
+}
+
+auto reboot() -> void {
+    /* Triple fault → CPU reset.
+     * Load a zero-limit IDT so that the software interrupt causes a
+     * #GP (selector out of range), which itself faults again (no valid
+     * handler), producing the triple fault and hardware reset. */
+    disable_interrupts();
+    idt_ptr null_idt = { 0, 0 };
+    asm volatile("lidt %0" : : "m"(null_idt));
+    asm volatile("int $0xFF");
+
+    // should not reach here, but if we do, halt the CPU
+    while (true) {
+        cpu_halt();
+    }
+}
+
+/* ============================================================
+ * IDT dump
+ * ============================================================ */
+
+void dump_idt() {
+    console::puts("IDT dump (256 vectors):\n");
+    console::puts("  Vec  Handler             Sel    IST  Type\n");
+    console::puts("  ---  ------------------  -----  ---  ----\n");
+    for (u32 i = 0; i < 256; ++i) {
+        const auto& e = g_idt[i];
+        u64 handler = static_cast<u64>(e.offset_low)
+                    | (static_cast<u64>(e.offset_middle) << 16)
+                    | (static_cast<u64>(e.offset_high)   << 32);
+        /* Skip null (uninstalled) entries */
+        if (handler == 0 && e.selector == 0) continue;
+
+        console::puts("  ");
+        /* Vector (3 digits) */
+        if (i < 100) console::putc(' ');
+        if (i < 10)  console::putc(' ');
+        console::put_dec(i);
+        console::puts("  0x");
+        console::put_hex(handler);
+        console::puts("  0x");
+        console::put_hex(e.selector);
+        console::puts("  ");
+        console::put_dec(e.ist);
+        console::puts("    0x");
+        console::put_hex(e.type_attr);
+        console::putc('\n');
+    }
+    console::puts("IDT dump complete.\n");
 }
 
 /* ============================================================

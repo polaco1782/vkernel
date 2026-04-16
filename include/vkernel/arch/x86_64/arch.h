@@ -317,9 +317,11 @@ void activate();       /* Load GDT/IDT/TSS (call AFTER ExitBootServices) */
 void init_gdt();
 void init_idt();
 void init_paging();
+void dump_idt();       /* Print all installed IDT entries to the console */
 auto enable_interrupts() -> void;
 auto disable_interrupts() -> void;
 auto halt() -> void;
+auto reboot() -> void;
 
 } // namespace arch
 } // namespace vk

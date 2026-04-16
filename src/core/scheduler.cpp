@@ -14,6 +14,7 @@
 #include "console.h"
 #include "memory.h"
 #include "scheduler.h"
+#include "panic.h"
 #include "arch/x86_64/arch.h"
 
 namespace vk {

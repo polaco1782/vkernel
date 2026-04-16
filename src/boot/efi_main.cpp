@@ -14,6 +14,7 @@
 #include "scheduler.h"
 #include "input.h"
 #include "shell.h"
+#include "panic.h"
 #include "arch/x86_64/arch.h"
 
 namespace vk {

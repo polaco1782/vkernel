@@ -297,13 +297,6 @@ auto memory::init(span<const memory_map_entry> map) -> status_code {
     return status_code::success;
 }
 
-/* Exit boot services */
-auto memory::exit_boot_services() -> status_code {
-    /* TODO: Call ExitBootServices UEFI runtime service */
-    log::info("Boot services exited");
-    return status_code::success;
-}
-
 /* Get memory map */
 auto memory::get_memory_map() -> span<const memory_map_entry> {
     return span(g_memory_map, g_memory_map_count);
@@ -340,13 +333,61 @@ void memory::dump_map() {
     console::puts("========================================\n\n");
 }
 
-/* Dump allocator state */
-void memory::dump_allocator() {
-    console::puts("Physical Memory Allocator:\n");
-    console::puts("  Total pages: ");
-    console::puts("  Free pages: ");
-    console::puts("  Used pages: ");
-    console::puts("\n\n");
+/* Dump kernel heap allocations */
+void memory::dump_heap() {
+    console::puts("\nKernel Heap Allocations:\n");
+    console::puts("========================================\n");
+    console::puts("  Address          Size       Status\n");
+    console::puts("  ---------------  ---------  -------\n");
+    
+    auto block = g_kernel_heap.get_free_list();
+    u64 used_total = 0;
+    u64 free_total = 0;
+    u32 used_count = 0;
+    u32 free_count = 0;
+    
+    while (block != null) {
+        console::puts("  0x");
+        console::put_hex(reinterpret_cast<u64>(block->data()));
+        console::puts("  ");
+        
+        if (block->size < 1000) {
+            console::putc(' ');
+        }
+        if (block->size < 100) {
+            console::putc(' ');
+        }
+        if (block->size < 10) {
+            console::putc(' ');
+        }
+        console::put_dec(block->size);
+        
+        console::puts("  ");
+        if (block->used) {
+            console::puts("USED\n");
+            used_total += block->size;
+            used_count++;
+        } else {
+            console::puts("FREE\n");
+            free_total += block->size;
+            free_count++;
+        }
+        
+        block = block->next;
+    }
+    
+    console::puts("----------------------------------------\n");
+    console::puts("  Total Used:  ");
+    console::put_dec(used_count);
+    console::puts(" blocks, ");
+    console::put_dec(used_total);
+    console::puts(" bytes\n");
+    console::puts("  Total Free:  ");
+    console::put_dec(free_count);
+    console::puts(" blocks, ");
+    console::put_dec(free_total);
+    console::puts(" bytes\n");
+    console::puts("========================================\n\n");
 }
 
 } // namespace vk

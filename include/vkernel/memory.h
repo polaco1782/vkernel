@@ -187,6 +187,9 @@ public:
 
     void free(void* ptr);
 
+    /* For diagnostic purposes only (not thread-safe) */
+    [[nodiscard]] auto get_free_list() const -> heap_block* { return free_list_; }
+
 private:
     heap_block* free_list_ = null;
 };
@@ -202,7 +205,6 @@ extern kernel_heap g_kernel_heap;
 namespace memory {
 
 auto init(span<const memory_map_entry> map) -> status_code;
-auto exit_boot_services() -> status_code;
 
 void* memory_set(void* dest, i32 c, size_phys n);
 void* memory_copy(void* dest, const void* src, size_phys n);
@@ -213,7 +215,7 @@ auto get_memory_map() -> span<const memory_map_entry>;
 auto find_entry(phys_addr addr) -> const memory_map_entry*;
 
 void dump_map();
-void dump_allocator();
+void dump_heap();
 
 } // namespace memory
 

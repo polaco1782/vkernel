@@ -143,8 +143,6 @@ private:
 
 } // namespace log
 
-VK_NORETURN void vk_panic(const char* file, u32 line, const char* condition);
-
 } // namespace vk
 
 #endif /* VKERNEL_CONSOLE_H */
