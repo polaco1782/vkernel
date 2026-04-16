@@ -134,7 +134,12 @@ static void cmd_run(const char* arg) {
         console::puts("Usage: run <filename>\n");
         return;
     }
-    process::run(arg);
+    i64 task_id = process::run(arg);
+    if (task_id >= 0) {
+        console::puts("run: spawned task ");
+        console::put_dec(static_cast<u64>(task_id));
+        console::puts("\n");
+    }
 }
 
 /* ============================================================

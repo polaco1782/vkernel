@@ -136,6 +136,11 @@ static inline void vk_yield(void) {
     __vk_api->yield();
 }
 
+/* Sleep for approximately the given number of ticks (1 tick = 10 ms) */
+static inline void vk_sleep(vk_u64 ticks) {
+    __vk_api->sleep(ticks);
+}
+
 /* ============================================================
  * Convenience helpers (built on top of the primitives above)
  * ============================================================ */

@@ -245,12 +245,12 @@ static void self_relocate() {
     }
 
     /* Create the idle task (task 0) — just halts when nothing else runs */
-    sched::create_task("idle", []() {
+    sched::create_task("idle", [](void*) {
         while (true) { asm volatile("hlt"); }
     });
 
     /* Create the shell task */
-    sched::create_task("shell", shell::shell_main);
+    sched::create_task("shell", [](void*) { shell::shell_main(); });
 
     /* Start the scheduler — does not return */
     log::debug("Transferring control to scheduler...");

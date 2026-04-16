@@ -48,6 +48,13 @@ int _start(const vk_api_t* api) {
         vk_puts("not found\n");
     }
 
+    for(int i = 0; i < 100; i++) {
+        vk_puts("  Tick ");
+        vk_put_dec(i);
+        vk_puts("\n");
+        vk_sleep(100); /* Sleep for 100 ticks (1 second) */
+    }
+
     vk_puts("\nGoodbye!\n");
     return 0;
 }

@@ -31,13 +31,15 @@ enum class task_state : u8 {
 inline constexpr usize TASK_STACK_SIZE = 16384;  /* 16 KB per task */
 inline constexpr usize MAX_TASKS = 64;
 
-using task_entry_fn = void(*)();
+using task_entry_fn = void(*)(void*);
 
 struct task {
     u64         rsp;                        /* Saved stack pointer */
     u64         id;
     task_state  state;
+    u64         wake_tick;
     char        name[32];
+    void*       user_data;
     u8          stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
     task_entry_fn entry;
 
@@ -55,7 +57,7 @@ namespace sched {
 auto init() -> status_code;
 
 /* Create a new kernel task. Returns task ID or -1 on failure. */
-auto create_task(const char* name, task_entry_fn entry) -> i64;
+auto create_task(const char* name, task_entry_fn entry, void* user_data = null) -> i64;
 
 /* Yield CPU to next ready task (cooperative) */
 void yield();
@@ -72,6 +74,15 @@ auto current_task_id() -> u64;
 
 /* Get current task name */
 auto current_task_name() -> const char*;
+
+/* Get current task user data */
+auto current_task_user_data() -> void*;
+
+/* Get current scheduler tick count */
+auto tick_count() -> u64;
+
+/* Sleep current task for at least the given number of ticks */
+void sleep(u64 ticks);
 
 /* Terminate the calling task */
 VK_NORETURN void exit_task();

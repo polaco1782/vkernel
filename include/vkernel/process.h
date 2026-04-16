@@ -22,9 +22,9 @@ namespace process {
  * kernel API table, and call its entry point.
  *
  * Prints progress and errors to the console.
- * Returns the exit code returned by the process, or -1 on load error.
+ * Returns the spawned task ID, or -1 on load error.
  */
-auto run(const char* filename) -> int;
+auto run(const char* filename) -> i64;
 
 /*
  * Return a pointer to the global kernel API table.

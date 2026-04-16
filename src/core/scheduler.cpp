@@ -27,6 +27,7 @@ static task  g_tasks[MAX_TASKS];
 static usize g_task_count    = 0;
 static usize g_current_task  = 0;
 static bool  g_scheduler_active = false;
+static u64   g_tick_count = 0;
 
 /* ============================================================
  * PIT (Programmable Interval Timer) helpers — 8254 chip
@@ -115,8 +116,16 @@ static void str_copy(char* dst, const char* src, usize max) {
 
 static void task_trampoline() {
     auto& t = g_tasks[g_current_task];
-    if (t.entry) t.entry();
+    if (t.entry) t.entry(t.user_data);
     sched::exit_task();
+}
+
+static void wake_sleeping_tasks() {
+    for (usize i = 0; i < g_task_count; ++i) {
+        if (g_tasks[i].state == task_state::blocked && g_tasks[i].wake_tick <= g_tick_count) {
+            g_tasks[i].state = task_state::ready;
+        }
+    }
 }
 
 /* ============================================================
@@ -128,6 +137,7 @@ auto sched::init() -> status_code {
     g_task_count   = 0;
     g_current_task = 0;
     g_scheduler_active = false;
+    g_tick_count = 0;
 
     /* Remap PIC so IRQ0 → vector 32 */
     pic_remap();
@@ -139,13 +149,15 @@ auto sched::init() -> status_code {
     return status_code::success;
 }
 
-auto sched::create_task(const char* name, task_entry_fn entry) -> i64 {
+auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) -> i64 {
     if (g_task_count >= MAX_TASKS) return -1;
 
     auto& t = g_tasks[g_task_count];
     t.id    = g_task_count;
     t.state = task_state::ready;
+    t.wake_tick = 0;
     t.entry = entry;
+    t.user_data = user_data;
     str_copy(t.name, name, sizeof(t.name));
 
     /*
@@ -214,6 +226,9 @@ void sched::yield() {
 }
 
 auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
+    ++g_tick_count;
+    wake_sleeping_tasks();
+
     if (!g_scheduler_active || g_task_count < 2) {
         pic_eoi();
         return regs;
@@ -226,9 +241,18 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
 
     /* Round-robin: find next runnable task */
     usize next = g_current_task;
+    bool found = false;
     for (usize i = 0; i < g_task_count; ++i) {
         next = (next + 1) % g_task_count;
-        if (g_tasks[next].state == task_state::ready) break;
+        if (g_tasks[next].state == task_state::ready) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        pic_eoi();
+        return regs;
     }
 
     g_current_task = next;
@@ -307,6 +331,32 @@ auto sched::current_task_id() -> u64 {
 
 auto sched::current_task_name() -> const char* {
     return g_tasks[g_current_task].name;
+}
+
+auto sched::current_task_user_data() -> void* {
+    return g_tasks[g_current_task].user_data;
+}
+
+auto sched::tick_count() -> u64 {
+    return g_tick_count;
+}
+
+void sched::sleep(u64 ticks) {
+    if (ticks == 0) {
+        yield();
+        return;
+    }
+
+    auto& t = g_tasks[g_current_task];
+    t.wake_tick = g_tick_count + ticks;
+    t.state = task_state::blocked;
+
+    while (t.state == task_state::blocked) {
+        yield();
+        if (t.state == task_state::blocked) {
+            arch::cpu_halt();
+        }
+    }
 }
 
 VK_NORETURN void sched::exit_task() {

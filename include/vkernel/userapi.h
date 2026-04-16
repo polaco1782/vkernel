@@ -59,6 +59,7 @@ typedef struct vk_api {
     /* ---- process (offset 120) ---- */
     void (*exit)(int code);
     void (*yield)(void);
+    void (*sleep)(vk_u64 ticks);
 
 } vk_api_t;
 

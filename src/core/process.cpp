@@ -26,6 +26,24 @@
 namespace vk {
 namespace process {
 
+extern vk_api_t s_api;
+extern bool     s_api_ready;
+
+struct process_task_context {
+    u64 entry;
+    u8* image_base;
+    usize image_size;
+};
+
+static void cleanup_process_context(process_task_context* ctx, int exit_code) {
+    console::puts("Process exited with code ");
+    console::put_dec(static_cast<u64>(static_cast<u32>(exit_code)));
+    console::puts("\n");
+
+    g_kernel_heap.free(ctx->image_base);
+    g_kernel_heap.free(ctx);
+}
+
 /* ============================================================
  * Kernel-side API stub functions
  * These are plain C-linkage functions assigned into vk_api_t.
@@ -72,14 +90,35 @@ static vk_usize stub_file_read(const char* name, void* buf, vk_usize buf_size) {
 
 /* ---- process ---- */
 
-static void stub_exit(int) {
-    /* Full process termination requires a task-switch mechanism.
-     * For now the return value from _start() serves as the exit code;
-     * this stub is a no-op placeholder. */
+static void stub_exit(int code) {
+    auto* ctx = static_cast<process_task_context*>(sched::current_task_user_data());
+    if (ctx != null) {
+        cleanup_process_context(ctx, code);
+    } else {
+        console::puts("Process exited with code ");
+        console::put_dec(static_cast<u64>(static_cast<u32>(code)));
+        console::puts("\n");
+    }
+
+    sched::exit_task();
 }
 
 static void stub_yield() {
     sched::yield();
+}
+
+static void stub_sleep(vk_u64 ticks) {
+    sched::sleep(static_cast<u64>(ticks));
+}
+
+static void process_task_main(void* user_data) {
+    auto* ctx = static_cast<process_task_context*>(user_data);
+    using entry_fn = int (*)(const vk_api_t*);
+    auto entry = reinterpret_cast<entry_fn>(ctx->entry);
+
+    int ret = entry(&s_api);
+
+    cleanup_process_context(ctx, ret);
 }
 
 /* ============================================================
@@ -87,8 +126,8 @@ static void stub_yield() {
  * Populated once by init(); never changes at runtime.
  * ============================================================ */
 
-static vk_api_t s_api;
-static bool     s_api_ready = false;
+vk_api_t s_api;
+bool     s_api_ready = false;
 
 void init() {
     if (s_api_ready) return;
@@ -116,6 +155,7 @@ void init() {
         /* process */
         .exit         = stub_exit,
         .yield        = stub_yield,
+        .sleep        = stub_sleep
     };
 
     s_api_ready = true;
@@ -130,7 +170,7 @@ auto get_api() -> const vk_api_t* {
  * run()
  * ============================================================ */
 
-auto run(const char* filename) -> int {
+auto run(const char* filename) -> i64 {
     /* Look up the file in ramfs */
     const file_entry* f = ramfs::find(filename);
     if (f == null) {
@@ -162,19 +202,32 @@ auto run(const char* filename) -> int {
     /* Ensure the API table is ready */
     if (!s_api_ready) init();
 
-    /* Call the entry point: int _start(const vk_api_t*) */
-    using entry_fn = int (*)(const vk_api_t*);
-    auto entry = reinterpret_cast<entry_fn>(result.entry);
-    int ret = entry(&s_api);
+    auto* ctx = static_cast<process_task_context*>(g_kernel_heap.allocate(sizeof(process_task_context)));
+    if (ctx == null) {
+        console::puts("process: out of memory while creating task context\n");
+        g_kernel_heap.free(result.image_base);
+        return -1;
+    }
 
-    console::puts("Process exited with code ");
-    console::put_dec(static_cast<u64>(static_cast<u32>(ret)));
+    ctx->entry = result.entry;
+    ctx->image_base = result.image_base;
+    ctx->image_size = result.image_size;
+
+    i64 task_id = sched::create_task(filename, process_task_main, ctx);
+    if (task_id < 0) {
+        console::puts("process: failed to create task\n");
+        g_kernel_heap.free(ctx);
+        g_kernel_heap.free(result.image_base);
+        return -1;
+    }
+
+    console::puts("Spawned task id ");
+    console::put_dec(static_cast<u64>(task_id));
+    console::puts(" for ");
+    console::puts(filename);
     console::puts("\n");
 
-    /* Release the loaded image back to the heap */
-    g_kernel_heap.free(result.image_base);
-
-    return ret;
+    return task_id;
 }
 
 } // namespace process
