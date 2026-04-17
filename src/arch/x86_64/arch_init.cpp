@@ -226,6 +226,21 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
             console::puts("\n");
         }
 
+        /* Print instruction bytes at RIP for diagnosis */
+        {
+            console::puts("  Bytes @ RIP:  ");
+            const u8* ip = reinterpret_cast<const u8*>(regs->frame.rip);
+            for (int b = 0; b < 16; ++b) {
+                u8 byte = ip[b];
+                const char hex[] = "0123456789ABCDEF";
+                char tmp[3] = { hex[byte >> 4], hex[byte & 0xF], ' ' };
+                console::putc(tmp[0]);
+                console::putc(tmp[1]);
+                console::putc(' ');
+            }
+            console::puts("\n");
+        }
+
         console::set_color(console_color::white, console_color::black);
 
         /*

@@ -37,15 +37,14 @@ CXXFLAGS += -I$(CURDIR)/include/vkernel
 CXXFLAGS += -ffreestanding
 CXXFLAGS += -fpic
 CXXFLAGS += -std=c++26
-CXXFLAGS += -O2
 CXXFLAGS += -Wno-unused-parameter
 CXXFLAGS += -Wno-unused-variable
 
 # Debug flags
 ifdef DEBUG
-    CXXFLAGS += -g -DDEBUG -DKERNEL_DEBUG=1
+	CXXFLAGS += -g3 -Og -fno-omit-frame-pointer -DDEBUG -DKERNEL_DEBUG=1
 else
-    CXXFLAGS += -DNDEBUG
+	CXXFLAGS += -O2 -DNDEBUG
 endif
 
 # Linker flags — static link; -fpic gives RIP-relative code; reloc_stub.cpp

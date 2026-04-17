@@ -150,6 +150,14 @@ The Makefile uses `x86_64-redhat-linux-g++` by default. Override with:
 make CROSS_PREFIX=x86_64-linux-gnu-
 ```
 
+Debug builds use `-Og`, `-g3`, and frame pointers so QEMU/GDB stepping stays
+predictable.
+
+VS Code includes build tasks for both platforms:
+
+* `build vkernel (Linux)` runs `make DEBUG=1 disk`
+* `build vkernel (Windows)` runs `msbuild vkernel.sln /m /p:Configuration=Debug /p:Platform=x64`
+
 ### Userspace Shell
 
 The shell now runs as a userspace program launched by the kernel. It still reads from the unified keyboard/serial input path and writes to the same console surfaces.
@@ -200,6 +208,34 @@ QEMU is launched with:
 - 512 MB RAM
 - VGA + GTK display (keyboard works)
 - `serial mon:stdio` (serial input/output in the terminal)
+
+## Debugging
+
+The source-level QEMU debug flow is:
+
+1. Build a debug image with symbols.
+2. Start QEMU paused with the GDB stub enabled.
+3. Attach GDB to `localhost:1234`, then set breakpoints and step.
+
+In VS Code, run the `qemu debug (Linux)` task first, then launch
+`Attach to vkernel (QEMU/GDB, Linux)` from the Run and Debug panel.
+
+Example session:
+
+```bash
+make DEBUG=1 disk
+./run_qemu.sh --debug
+gdb build/vkernel.elf -ex 'target remote localhost:1234'
+```
+
+Useful breakpoints are `efi_main`, `self_relocate`, `sched::start`, and the
+functions in `src/core/` that you want to trace.
+
+The Windows QEMU launcher also supports `--debug`, which pauses the VM and
+opens the GDB stub, but source-level stepping is intended for the Linux/DWARF
+build.
+
+On Windows, run `run_qemu.bat Debug --debug` to start QEMU paused before boot.
 
 ### ESP Files
 

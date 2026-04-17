@@ -12,11 +12,18 @@ set ESP_ROOT=%BUILD_DIR%\esp
 set ESP_BOOT=%ESP_ROOT%\EFI\BOOT
 set NVRAM_FILE=%BUILD_DIR%\ovmf_vars.fd
 set BUILD_CONFIG=Debug
+set DEBUG_QEMU=0
 
-if not "%~1"=="" (
-    if /I "%~1"=="Release" set BUILD_CONFIG=Release
-    if /I "%~1"=="Debug" set BUILD_CONFIG=Debug
-)
+:parse_args
+if "%~1"=="" goto args_done
+if /I "%~1"=="Release" set BUILD_CONFIG=Release
+if /I "%~1"=="Debug" set BUILD_CONFIG=Debug
+if /I "%~1"=="--debug" set DEBUG_QEMU=1
+if /I "%~1"=="-d" set DEBUG_QEMU=1
+shift
+goto parse_args
+
+:args_done
 
 REM Check if EFI file exists
 if not exist "%EFI_FILE%" (
@@ -122,6 +129,12 @@ echo Press Ctrl+Alt+1 to switch back to VM
 echo Type 'quit' in QEMU monitor to exit
 echo.
 
+set "DEBUG_ARGS="
+if "%DEBUG_QEMU%"=="1" (
+    set "DEBUG_ARGS=-s -S"
+    echo GDB: gdb build_vs\vkernel.efi -ex "target remote localhost:1234"
+)
+
 "%QEMU_EXE%" ^
     -machine q35 ^
     -drive if=pflash,format=raw,readonly=on,file="%OVMF_CODE%" ^
@@ -131,6 +144,6 @@ echo.
     -net none ^
     -serial stdio ^
     -no-reboot ^
-    -no-shutdown
+    -no-shutdown %DEBUG_ARGS%
 
 endlocal

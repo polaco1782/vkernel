@@ -180,7 +180,7 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
 
     /* iretq frame */
     stack_top[-1] = arch::SEG_KERNEL_DATA; /* SS */
-    stack_top[-2] = reinterpret_cast<u64>(stack_top); /* RSP — top of usable stack */
+    stack_top[-2] = reinterpret_cast<u64>(stack_top - 1); /* RSP — 16-byte aligned entry stack */
     stack_top[-3] = 0x202;  /* RFLAGS: IF=1 */
     stack_top[-4] = arch::SEG_KERNEL_CODE; /* CS */
     stack_top[-5] = reinterpret_cast<u64>(&task_trampoline); /* RIP */

@@ -21,6 +21,12 @@ static u32 g_memory_map_count = 0;
 phys_allocator g_phys_alloc;
 
 /* Kernel heap - 64 MB initial heap */
+/* Must be 16-byte aligned so SSE/XMM constants in loaded PE images stay aligned */
+#if defined(_MSC_VER)
+__declspec(align(16))
+#else
+__attribute__((aligned(16)))
+#endif
 static u8 g_kernel_heap_memory[64 * 1024 * 1024];
 kernel_heap g_kernel_heap;
 
@@ -136,8 +142,9 @@ auto kernel_heap::allocate(size_phys size) -> void* {
         return null;
     }
     
-    /* Align size to 8 bytes */
-    size = align_up(size, static_cast<usize>(8));
+    /* Align size to 16 bytes so every allocation starts on a 16-byte boundary
+     * (required by SSE/XMM constants in PE .rdata that use MOVAPS/XORPS). */
+    size = align_up(size, static_cast<usize>(16));
     
     /* Find a free block that fits */
     auto block = free_list_;
@@ -147,7 +154,7 @@ auto kernel_heap::allocate(size_phys size) -> void* {
             block->used = true;
             
             /* Split the block if there's enough remaining space */
-            if (block->size > size + sizeof(heap_block) + 8) {
+            if (block->size > size + sizeof(heap_block) + 16) {
                 auto new_block = reinterpret_cast<heap_block*>(
                     reinterpret_cast<u8*>(block) + sizeof(heap_block) + size
                 );
