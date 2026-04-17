@@ -16,6 +16,9 @@
 #include "scheduler.h"
 #include "panic.h"
 #include "arch/x86_64/arch.h"
+#if defined(_MSC_VER)
+#include "msvc_asm.h"
+#endif
 
 namespace vk {
 
@@ -222,7 +225,11 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
 
 void sched::yield() {
     if (!g_scheduler_active || g_task_count < 2) return;
+#if defined(_MSC_VER)
+    asm_int_timer();
+#else
     asm volatile("int $32");  /* Software interrupt → timer vector */
+#endif
 }
 
 auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
@@ -267,8 +274,17 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
 
 /*
  * sched_switch_to — load a full register_state frame and iretq.
- * Must be naked: no compiler prologue/epilogue, just raw asm.
+ * On MSVC this is implemented in msvc_asm.asm as asm_sched_switch_to.
+ * On GCC/Clang we use a naked function with inline asm.
  */
+#if defined(_MSC_VER)
+
+static inline void sched_switch_to(u64 rsp) {
+    asm_sched_switch_to(rsp);
+}
+
+#else
+
 [[gnu::naked, noreturn]] static void sched_switch_to(u64 /* rsp in %rdi */) {
     asm volatile(
         "movq %%rdi, %%rsp\n\t"
@@ -294,6 +310,8 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         ::: "memory"
     );
 }
+
+#endif
 
 VK_NORETURN void sched::start() {
     if (g_task_count == 0) {
@@ -368,7 +386,7 @@ VK_NORETURN void sched::exit_task() {
     arch::enable_interrupts();
     /* Yield to let scheduler pick another task */
     while (true) { sched::yield(); arch::cpu_halt(); }
-    __builtin_unreachable();
+    VK_UNREACHABLE();
 }
 
 void sched::dump_tasks() {

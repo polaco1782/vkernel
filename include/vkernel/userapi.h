@@ -21,10 +21,31 @@ extern "C" {
 #endif
 
 typedef unsigned long long vk_u64;
+typedef unsigned int       vk_u32;
+#if defined(_MSC_VER)
+typedef unsigned long long vk_usize;
+#else
 typedef unsigned long      vk_usize;
+#endif
+
+typedef enum vk_pixel_format {
+    VK_PIXEL_FORMAT_RGBX_8BPP = 0,
+    VK_PIXEL_FORMAT_BGRX_8BPP = 1,
+    VK_PIXEL_FORMAT_BITMASK   = 2,
+    VK_PIXEL_FORMAT_BLT_ONLY  = 3,
+} vk_pixel_format_t;
+
+typedef struct vk_framebuffer_info {
+    vk_u64            base;
+    vk_u32            width;
+    vk_u32            height;
+    vk_u32            stride;
+    vk_pixel_format_t format;
+    vk_u32            valid;
+} vk_framebuffer_info_t;
 
 /* ============================================================
- * vk_api_t — version 2
+ * vk_api_t — version 3
  *
  * Add new fields only at the END to preserve ABI compatibility.
  * Bump VK_API_VERSION when the layout changes in a breaking way.
@@ -61,10 +82,13 @@ typedef struct vk_api {
     void (*yield)(void);
     void (*sleep)(vk_u64 ticks);
 
+    /* ---- framebuffer (offset 144) ---- */
+    void (*framebuffer_info)(vk_framebuffer_info_t* out);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 2ULL
+#define VK_API_VERSION 3ULL
 
 #ifdef __cplusplus
 } /* extern "C" */

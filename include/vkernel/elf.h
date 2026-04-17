@@ -71,6 +71,7 @@ inline constexpr u32 R_X86_64_RELATIVE = 8;
  * ELF64 structures (packed to match the file format)
  * ============================================================ */
 
+#pragma pack(push, 1)
 struct Elf64_Ehdr {
     u8  e_ident[EI_NIDENT];
     u16 e_type;
@@ -86,7 +87,7 @@ struct Elf64_Ehdr {
     u16 e_shentsize;
     u16 e_shnum;
     u16 e_shstrndx;
-} __attribute__((packed));
+};
 
 struct Elf64_Phdr {
     u32 p_type;
@@ -97,18 +98,21 @@ struct Elf64_Phdr {
     u64 p_filesz;   /* Bytes in file image */
     u64 p_memsz;    /* Bytes in memory (>= filesz; excess is zero-filled) */
     u64 p_align;
-} __attribute__((packed));
+};
+#pragma pack(pop)
 
+#pragma pack(push, 1)
 struct Elf64_Dyn {
     i64 d_tag;
     u64 d_val;      /* Value or pointer (union — we use as u64 for both) */
-} __attribute__((packed));
+};
 
 struct Elf64_Rela {
     u64 r_offset;   /* Address of the location to patch */
     u64 r_info;     /* Symbol index (high 32) + relocation type (low 32) */
     i64 r_addend;   /* Constant addend */
-} __attribute__((packed));
+};
+#pragma pack(pop)
 
 /* Extract relocation type from r_info */
 constexpr auto elf64_r_type(u64 info) -> u32 { return static_cast<u32>(info); }

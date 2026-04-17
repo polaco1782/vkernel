@@ -12,6 +12,9 @@
 #include "scheduler.h"
 #include "panic.h"
 #include "arch/x86_64/arch.h"
+#if defined(_MSC_VER)
+#include "msvc_asm.h"
+#endif
 
 namespace vk {
 namespace arch {
@@ -127,6 +130,11 @@ void init_gdt() {
  * Must be called AFTER ExitBootServices — UEFI firmware
  * expects its own GDT while boot services are active. */
 static void activate_gdt() {
+#if defined(_MSC_VER)
+    asm_lgdt(&g_gdt_ptr);
+    asm_reload_segments(static_cast<u64>(SEG_KERNEL_CODE), static_cast<u64>(SEG_KERNEL_DATA));
+    asm_ltr(SEG_TSS);
+#else
     asm volatile("lgdt %0" : : "m"(g_gdt_ptr));
 
     /*
@@ -154,6 +162,7 @@ static void activate_gdt() {
 
     /* Load the TSS selector */
     asm volatile("ltr %w0" : : "r"(SEG_TSS));
+#endif
 }
 
 /* ============================================================
@@ -251,9 +260,13 @@ static constexpr usize ISR_STUB_STRIDE = 16;
  * The compiler/linker will otherwise use an absolute link-time constant
  * because we're not linked as -pie. */
 static inline auto get_isr_stub_base() -> u64 {
+#if defined(_MSC_VER)
+    return reinterpret_cast<u64>(&isr_stub_0);
+#else
     u64 addr;
     asm volatile("lea isr_stub_0(%%rip), %0" : "=r"(addr));
     return addr;
+#endif
 }
 
 void init_idt() {
@@ -284,7 +297,11 @@ void init_idt() {
 
 /* Load the IDT. Called after ExitBootServices. */
 static void activate_idt() {
+#if defined(_MSC_VER)
+    asm_lidt(&g_idt_ptr);
+#else
     asm volatile("lidt %0" : : "m"(g_idt_ptr));
+#endif
 }
 
 /* ============================================================
@@ -326,11 +343,19 @@ void init_paging() {
  * ============================================================ */
 
 auto enable_interrupts() -> void {
+#if defined(_MSC_VER)
+    asm_sti();
+#else
     asm volatile("sti");
+#endif
 }
 
 auto disable_interrupts() -> void {
+#if defined(_MSC_VER)
+    asm_cli();
+#else
     asm volatile("cli");
+#endif
 }
 
 auto halt() -> void {
@@ -341,14 +366,16 @@ auto halt() -> void {
 }
 
 auto reboot() -> void {
-    /* Triple fault → CPU reset.
-     * Load a zero-limit IDT so that the software interrupt causes a
-     * #GP (selector out of range), which itself faults again (no valid
-     * handler), producing the triple fault and hardware reset. */
     disable_interrupts();
+#if defined(_MSC_VER)
+    idt_ptr null_idt = { 0, 0 };
+    asm_lidt(&null_idt);
+    asm_int_0xff();
+#else
     idt_ptr null_idt = { 0, 0 };
     asm volatile("lidt %0" : : "m"(null_idt));
     asm volatile("int $0xFF");
+#endif
 
     // should not reach here, but if we do, halt the CPU
     while (true) {

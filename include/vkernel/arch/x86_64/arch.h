@@ -10,6 +10,10 @@
 
 #include "types.h"
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
 namespace vk {
 namespace arch {
 
@@ -24,7 +28,8 @@ inline constexpr u16 SEG_USER_DATA = 0x20;
 inline constexpr u16 SEG_TSS = 0x28;
 
 /* GDT entry structure */
-struct [[gnu::packed]] gdt_entry {
+#pragma pack(push, 1)
+struct gdt_entry {
     u16 limit_low;
     u16 base_low;
     u8 base_middle;
@@ -32,15 +37,19 @@ struct [[gnu::packed]] gdt_entry {
     u8 granularity;
     u8 base_high;
 };
+#pragma pack(pop)
 
 /* GDT Pointer structure */
-struct [[gnu::packed]] gdt_ptr {
+#pragma pack(push, 1)
+struct gdt_ptr {
     u16 limit;
     u64 base;
 };
+#pragma pack(pop)
 
 /* IDT entry structure */
-struct [[gnu::packed]] idt_entry {
+#pragma pack(push, 1)
+struct idt_entry {
     u16 offset_low;
     u16 selector;
     u8 ist;
@@ -49,21 +58,26 @@ struct [[gnu::packed]] idt_entry {
     u32 offset_high;
     u32 zero;
 };
+#pragma pack(pop)
 
 /* IDT Pointer structure */
-struct [[gnu::packed]] idt_ptr {
+#pragma pack(push, 1)
+struct idt_ptr {
     u16 limit;
     u64 base;
 };
+#pragma pack(pop)
 
 /* Interrupt frame (pushed by CPU on interrupt/exception) */
-struct [[gnu::packed]] interrupt_frame {
+#pragma pack(push, 1)
+struct interrupt_frame {
     u64 rip;
     u64 cs;
     u64 rflags;
     u64 rsp;
     u64 ss;
 };
+#pragma pack(pop)
 
 /* Full register state saved on context switch */
 struct register_state {
@@ -97,7 +111,8 @@ struct register_state {
 };
 
 /* TSS Structure (x86_64) */
-struct [[gnu::packed]] tss {
+#pragma pack(push, 1)
+struct tss {
     u32 reserved0;
     u64 rsp0;
     u64 rsp1;
@@ -114,8 +129,7 @@ struct [[gnu::packed]] tss {
     u16 reserved3;
     u16 iomap_base;
 };
-
-/* Page table entry types */
+#pragma pack(pop)
 using pte = u64;
 using pde = u64;
 using pdpe = u64;
@@ -153,33 +167,93 @@ inline constexpr u64 EFER_LME              = (1ULL << 8);  /* Long mode enable *
 inline constexpr u64 EFER_LMA              = (1ULL << 10); /* Long mode active */
 inline constexpr u64 EFER_NXE              = (1ULL << 11); /* No-execute enable */
 
-/* Port I/O functions */
+/* ============================================================
+ * Port I/O, MSR, CR, and misc CPU primitives
+ *
+ * MSVC x64 forbids inline asm — use compiler intrinsics.
+ * GCC / Clang keep the original asm volatile forms.
+ * ============================================================ */
+
+#if defined(_MSC_VER)
+
+/* Port I/O */
+[[nodiscard]] inline auto inb(u16 port) -> u8  { return __inbyte(port); }
+inline auto outb(u16 port, u8 value)  -> void  { __outbyte(port, value); }
+[[nodiscard]] inline auto inw(u16 port) -> u16 { return __inword(port); }
+inline auto outw(u16 port, u16 value) -> void  { __outword(port, value); }
+[[nodiscard]] inline auto inl(u16 port) -> u32 { return __indword(port); }
+inline auto outl(u16 port, u32 value) -> void  { __outdword(port, value); }
+
+/* MSR access */
+[[nodiscard]] inline auto rdmsr(u32 msr) -> u64 { return __readmsr(msr); }
+inline auto wrmsr(u32 msr, u64 value) -> void   { __writemsr(msr, value); }
+
+/* Control register access */
+[[nodiscard]] inline auto read_cr0() -> u64  { return __readcr0(); }
+inline auto write_cr0(u64 value) -> void     { __writecr0(value); }
+[[nodiscard]] inline auto read_cr2() -> u64  { return __readcr2(); }
+[[nodiscard]] inline auto read_cr3() -> u64  { return __readcr3(); }
+inline auto write_cr3(u64 value) -> void     { __writecr3(value); }
+[[nodiscard]] inline auto read_cr4() -> u64  { return __readcr4(); }
+inline auto write_cr4(u64 value) -> void     { __writecr4(value); }
+
+/* RIP / RSP / RBP — use _ReturnAddress / _AddressOfReturnAddress as proxies */
+[[nodiscard]] inline auto read_rip() -> u64  { return reinterpret_cast<u64>(_ReturnAddress()); }
+[[nodiscard]] inline auto read_rsp() -> u64  { return reinterpret_cast<u64>(_AddressOfReturnAddress()); }
+[[nodiscard]] inline auto read_rbp() -> u64  { return reinterpret_cast<u64>(_AddressOfReturnAddress()) - 8; }
+
+/* RFLAGS */
+[[nodiscard]] inline auto read_rflags() -> u64 { return __readeflags(); }
+
+/* Halt / NOP */
+inline auto cpu_halt() -> void { __halt(); }
+inline auto cpu_nop()  -> void { __nop();  }
+
+/* Memory barriers */
+inline auto memory_barrier()      -> void { _mm_mfence(); }
+inline auto read_memory_barrier() -> void { _mm_lfence(); }
+inline auto write_memory_barrier()-> void { _mm_sfence(); }
+
+/* Invalidate TLB entry */
+inline auto invlpg(vaddr addr) -> void { __invlpg(reinterpret_cast<void*>(addr)); }
+
+/* Atomic operations */
+[[nodiscard]] inline auto atomic_add(volatile u64* ptr, u64 value) -> u64 {
+    return static_cast<u64>(_InterlockedExchangeAdd64(
+        reinterpret_cast<volatile long long*>(ptr),
+        static_cast<long long>(value)));
+}
+[[nodiscard]] inline auto atomic_cmpxchg(volatile u64* ptr, u64 expected, u64 new_value) -> bool {
+    return _InterlockedCompareExchange64(
+        reinterpret_cast<volatile long long*>(ptr),
+        static_cast<long long>(new_value),
+        static_cast<long long>(expected)) == static_cast<long long>(expected);
+}
+
+#else /* GCC / Clang */
+
+/* Port I/O */
 [[nodiscard]] inline auto inb(u16 port) -> u8 {
     u8 value;
     asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
     return value;
 }
-
 inline auto outb(u16 port, u8 value) -> void {
     asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
-
 [[nodiscard]] inline auto inw(u16 port) -> u16 {
     u16 value;
     asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
     return value;
 }
-
 inline auto outw(u16 port, u16 value) -> void {
     asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
 }
-
 [[nodiscard]] inline auto inl(u16 port) -> u32 {
     u32 value;
     asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
     return value;
 }
-
 inline auto outl(u16 port, u32 value) -> void {
     asm volatile("outl %0, %1" : : "a"(value), "Nd"(port));
 }
@@ -190,7 +264,6 @@ inline auto outl(u16 port, u32 value) -> void {
     asm volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
     return (static_cast<u64>(high) << 32) | low;
 }
-
 inline auto wrmsr(u32 msr, u64 value) -> void {
     u32 low = static_cast<u32>(value & 0xFFFFFFFF);
     u32 high = static_cast<u32>(value >> 32);
@@ -199,91 +272,52 @@ inline auto wrmsr(u32 msr, u64 value) -> void {
 
 /* Control register access */
 [[nodiscard]] inline auto read_cr0() -> u64 {
-    u64 value;
-    asm volatile("mov %%cr0, %0" : "=r"(value));
-    return value;
+    u64 value; asm volatile("mov %%cr0, %0" : "=r"(value)); return value;
 }
-
 inline auto write_cr0(u64 value) -> void {
     asm volatile("mov %0, %%cr0" : : "r"(value));
 }
-
 [[nodiscard]] inline auto read_cr2() -> u64 {
-    u64 value;
-    asm volatile("mov %%cr2, %0" : "=r"(value));
-    return value;
+    u64 value; asm volatile("mov %%cr2, %0" : "=r"(value)); return value;
 }
-
 [[nodiscard]] inline auto read_cr3() -> u64 {
-    u64 value;
-    asm volatile("mov %%cr3, %0" : "=r"(value));
-    return value;
+    u64 value; asm volatile("mov %%cr3, %0" : "=r"(value)); return value;
 }
-
 inline auto write_cr3(u64 value) -> void {
     asm volatile("mov %0, %%cr3" : : "r"(value));
 }
-
 [[nodiscard]] inline auto read_cr4() -> u64 {
-    u64 value;
-    asm volatile("mov %%cr4, %0" : "=r"(value));
-    return value;
+    u64 value; asm volatile("mov %%cr4, %0" : "=r"(value)); return value;
 }
-
 inline auto write_cr4(u64 value) -> void {
     asm volatile("mov %0, %%cr4" : : "r"(value));
 }
 
 /* Get RIP */
 [[nodiscard]] inline auto read_rip() -> u64 {
-    u64 rip;
-    asm volatile("lea (%%rip), %0" : "=r"(rip));
-    return rip;
+    u64 rip; asm volatile("lea (%%rip), %0" : "=r"(rip)); return rip;
 }
-
 /* Get RSP */
 [[nodiscard]] inline auto read_rsp() -> u64 {
-    u64 rsp;
-    asm volatile("mov %%rsp, %0" : "=r"(rsp));
-    return rsp;
+    u64 rsp; asm volatile("mov %%rsp, %0" : "=r"(rsp)); return rsp;
 }
-
 /* Get RBP */
 [[nodiscard]] inline auto read_rbp() -> u64 {
-    u64 rbp;
-    asm volatile("mov %%rbp, %0" : "=r"(rbp));
-    return rbp;
+    u64 rbp; asm volatile("mov %%rbp, %0" : "=r"(rbp)); return rbp;
 }
-
 /* Read RFLAGS */
 [[nodiscard]] inline auto read_rflags() -> u64 {
-    u64 rflags;
-    asm volatile("pushfq; pop %0" : "=r"(rflags));
-    return rflags;
+    u64 rflags; asm volatile("pushfq; pop %0" : "=r"(rflags)); return rflags;
 }
 
-/* Halt instruction */
-inline auto cpu_halt() -> void {
-    asm volatile("hlt");
-}
-
-/* No-operation */
-inline auto cpu_nop() -> void {
-    asm volatile("nop");
-}
+/* Halt / NOP */
+inline auto cpu_halt() -> void { asm volatile("hlt"); }
+inline auto cpu_nop()  -> void { asm volatile("nop"); }
 
 /* Memory barriers */
-inline auto memory_barrier() -> void {
-    asm volatile("mfence" ::: "memory");
-}
-
-inline auto read_memory_barrier() -> void {
-    asm volatile("lfence" ::: "memory");
-}
-
-inline auto write_memory_barrier() -> void {
-    asm volatile("sfence" ::: "memory");
-}
+inline auto memory_barrier()       -> void { asm volatile("mfence" ::: "memory"); }
+inline auto read_memory_barrier()  -> void { asm volatile("lfence" ::: "memory"); }
+inline auto write_memory_barrier() -> void { asm volatile("sfence" ::: "memory"); }
 
 /* Invalidate TLB entry */
 inline auto invlpg(vaddr addr) -> void {
@@ -292,24 +326,17 @@ inline auto invlpg(vaddr addr) -> void {
 
 /* Atomic operations */
 [[nodiscard]] inline auto atomic_add(volatile u64* ptr, u64 value) -> u64 {
-    asm volatile(
-        "lock; xadd %0, %1"
-        : "+r"(value), "+m"(*ptr)
-        : : "memory"
-    );
+    asm volatile("lock; xadd %0, %1" : "+r"(value), "+m"(*ptr) : : "memory");
     return value;
 }
-
 [[nodiscard]] inline auto atomic_cmpxchg(volatile u64* ptr, u64 expected, u64 new_value) -> bool {
     u8 result;
-    asm volatile(
-        "lock; cmpxchg %2, %1; setz %0"
-        : "=q"(result), "+m"(*ptr)
-        : "r"(new_value), "a"(expected)
-        : "memory"
-    );
+    asm volatile("lock; cmpxchg %2, %1; setz %0"
+        : "=q"(result), "+m"(*ptr) : "r"(new_value), "a"(expected) : "memory");
     return result != 0;
 }
+
+#endif /* _MSC_VER */
 
 /* Architecture initialization */
 void init();           /* Prepare tables (safe during boot services) */

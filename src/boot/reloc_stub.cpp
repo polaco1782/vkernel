@@ -16,5 +16,10 @@
  *   DWORD SizeOfBlock    = 8   (header only, no TypeOffset[] entries)
  */
 
+#if defined(_MSC_VER)
+#pragma section(".reloc", read)
+__declspec(allocate(".reloc")) constexpr unsigned int pe_reloc_stub[2] = {0u, 8u};
+#else
 [[gnu::section(".reloc"), gnu::used]]
 constexpr unsigned int pe_reloc_stub[2] = {0u, 8u};
+#endif

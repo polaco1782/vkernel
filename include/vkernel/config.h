@@ -123,8 +123,6 @@ inline constexpr auto kernel_name = "vkernel";
  *  5 - Verbose + debug + info + warnings + errors
  * ============================================================ */
 
-#define DEBUG
-
 #ifdef DEBUG
     inline constexpr u32 debug_level = 5;
     #define VK_DEBUG_LEVEL 5

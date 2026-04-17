@@ -137,7 +137,7 @@ auto kernel_heap::allocate(size_phys size) -> void* {
     }
     
     /* Align size to 8 bytes */
-    size = align_up(size, 8uz);
+    size = align_up(size, static_cast<usize>(8));
     
     /* Find a free block that fits */
     auto block = free_list_;

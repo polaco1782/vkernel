@@ -150,19 +150,19 @@ constexpr uefi::guid FILE_INFO_GUID = {
 /* EFI_FILE_PROTOCOL — subset of function pointers we need */
 struct efi_file_protocol;
 
-using efi_file_open_fn  = [[gnu::ms_abi]] uefi::status(*)(
+using efi_file_open_fn  = VK_MSABI uefi::status(*)(
     efi_file_protocol* self, efi_file_protocol** new_handle,
     const char16_t* file_name, u64 open_mode, u64 attributes);
 
-using efi_file_close_fn = [[gnu::ms_abi]] uefi::status(*)(efi_file_protocol* self);
+using efi_file_close_fn = VK_MSABI uefi::status(*)(efi_file_protocol* self);
 
-using efi_file_read_fn  = [[gnu::ms_abi]] uefi::status(*)(
+using efi_file_read_fn  = VK_MSABI uefi::status(*)(
     efi_file_protocol* self, usize* buffer_size, void* buffer);
 
-using efi_file_write_fn = [[gnu::ms_abi]] uefi::status(*)(
+using efi_file_write_fn = VK_MSABI uefi::status(*)(
     efi_file_protocol* self, usize* buffer_size, const void* buffer);
 
-using efi_file_get_info_fn = [[gnu::ms_abi]] uefi::status(*)(
+using efi_file_get_info_fn = VK_MSABI uefi::status(*)(
     efi_file_protocol* self, const uefi::guid* info_type,
     usize* buffer_size, void* buffer);
 
@@ -182,7 +182,7 @@ struct efi_file_protocol {
 /* EFI_SIMPLE_FILE_SYSTEM_PROTOCOL */
 struct efi_sfs_protocol;
 
-using efi_sfs_open_volume_fn = [[gnu::ms_abi]] uefi::status(*)(
+using efi_sfs_open_volume_fn = VK_MSABI uefi::status(*)(
     efi_sfs_protocol* self, efi_file_protocol** root);
 
 struct efi_sfs_protocol {
@@ -319,7 +319,7 @@ auto loader::load_initrd() -> status_code {
      * These live under \EFI\vkernel\ on the ESP. */
     static const char* const files[] = {
         "\\EFI\\vkernel\\shell.txt",
-        "\\EFI\\vkernel\\hello.txt",
+        "\\EFI\\vkernel\\hello.exe",
         "\\EFI\\vkernel\\motd.txt",
         "\\EFI\\vkernel\\hello.elf",
     };

@@ -20,10 +20,10 @@ template<typename T>
 class span {
 public:
     constexpr span() noexcept : data_(null), size_(0) {}
-    constexpr span(T* data, unsigned long count) noexcept
+    constexpr span(T* data, usize count) noexcept
         : data_(data), size_(count) {}
 
-    template<unsigned long N>
+    template<usize N>
     constexpr span(T (&arr)[N]) noexcept : data_(arr), size_(N) {}
 
     /* Allow non-const to const conversion */
@@ -32,10 +32,10 @@ public:
         : data_(other.data()), size_(other.size()) {}
 
     [[nodiscard]] constexpr auto data() const noexcept -> T*       { return data_; }
-    [[nodiscard]] constexpr auto size() const noexcept -> unsigned long { return size_; }
+    [[nodiscard]] constexpr auto size() const noexcept -> usize { return size_; }
     [[nodiscard]] constexpr auto empty() const noexcept -> bool   { return size_ == 0; }
 
-    [[nodiscard]] constexpr auto operator[](unsigned long i) const noexcept -> T& {
+    [[nodiscard]] constexpr auto operator[](usize i) const noexcept -> T& {
         return data_[i];
     }
 
@@ -44,7 +44,7 @@ public:
 
 private:
     T* data_;
-    unsigned long size_;
+    usize size_;
 };
 
 /* ============================================================
@@ -160,12 +160,12 @@ struct heap_block {
     heap_block* next;
     heap_block* prev;
 
-    [[nodiscard]] constexpr auto data() -> void* {
+    [[nodiscard]] auto data() -> void* {
         return reinterpret_cast<void*>(
             reinterpret_cast<u8*>(this) + sizeof(heap_block));
     }
 
-    [[nodiscard]] constexpr auto end() -> heap_block* {
+    [[nodiscard]] auto end() -> heap_block* {
         return reinterpret_cast<heap_block*>(
             reinterpret_cast<u8*>(this) + sizeof(heap_block) + size);
     }

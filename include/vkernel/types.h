@@ -28,8 +28,13 @@ using s16 = i16;
 using s32 = i32;
 using s64 = i64;
 
+#if defined(_MSC_VER)
+using usize  = unsigned long long;
+using isize  = long long;
+#else
 using usize  = unsigned long;
 using isize  = long;
+#endif
 
 /* Physical and virtual address types */
 using phys_addr = u64;
@@ -158,14 +163,23 @@ enum class status_code : i32 {
 
 #define VK_NORETURN    [[noreturn]]
 #define VK_INLINE      inline
+#if defined(_MSC_VER)
+#define VK_FORCEINLINE __forceinline
+#else
 #define VK_FORCEINLINE [[gnu::always_inline]] inline
+#endif
 
 /* Compile-time assert */
 #define VK_STATIC_ASSERT(cond) static_assert(cond, #cond)
 
-/* Container of */
+#if defined(_MSC_VER)
+#include <stddef.h>
+#define container_of(ptr, type, member) \
+    (type*)((char*)(ptr) - offsetof(type, member))
+#else
 #define container_of(ptr, type, member) \
     (type*)((char*)(ptr) - __builtin_offsetof(type, member))
+#endif
 
 /* Min/Max - constexpr */
 template<typename T>
@@ -178,31 +192,31 @@ template<typename T>
     return a > b ? a : b;
 }
 
-template<typename T, unsigned long N>
-[[nodiscard]] consteval auto array_size(T (&)[N]) noexcept -> unsigned long {
+template<typename T, usize N>
+[[nodiscard]] consteval auto array_size(T (&)[N]) noexcept -> usize {
     return N;
 }
 
 /* Round up/down */
 template<typename T>
-[[nodiscard]] constexpr auto align_up(T val, unsigned long align) noexcept -> T {
-    return static_cast<T>((static_cast<unsigned long>(val) + align - 1) & ~(align - 1));
+[[nodiscard]] constexpr auto align_up(T val, usize align) noexcept -> T {
+    return static_cast<T>((static_cast<usize>(val) + align - 1) & ~(align - 1));
 }
 
 template<typename T>
-[[nodiscard]] constexpr auto align_down(T val, unsigned long align) noexcept -> T {
-    return static_cast<T>(static_cast<unsigned long>(val) & ~(align - 1));
+[[nodiscard]] constexpr auto align_down(T val, usize align) noexcept -> T {
+    return static_cast<T>(static_cast<usize>(val) & ~(align - 1));
 }
 
 template<typename T>
-[[nodiscard]] constexpr auto is_aligned(T val, unsigned long align) noexcept -> bool {
-    return (static_cast<unsigned long>(val) & (align - 1)) == 0;
+[[nodiscard]] constexpr auto is_aligned(T val, usize align) noexcept -> bool {
+    return (static_cast<usize>(val) & (align - 1)) == 0;
 }
 
 /* Page size constants */
-inline constexpr unsigned long PAGE_SIZE_4K  = 0x1000ULL;
-inline constexpr unsigned long PAGE_SIZE_2MB = 0x200000ULL;
-inline constexpr unsigned long PAGE_SIZE_1GB = 0x40000000ULL;
+inline constexpr usize PAGE_SIZE_4K  = 0x1000ULL;
+inline constexpr usize PAGE_SIZE_2MB = 0x200000ULL;
+inline constexpr usize PAGE_SIZE_1GB = 0x40000000ULL;
 
 /* Assert */
 #define VK_ASSERT(cond) \
@@ -214,5 +228,12 @@ inline constexpr unsigned long PAGE_SIZE_1GB = 0x40000000ULL;
 
 /* Forward declarations */
 VK_NORETURN void vk_panic(const char* file, unsigned int line, const char* condition);
+
+/* Compiler-specific unreachable hint */
+#if defined(_MSC_VER)
+#define VK_UNREACHABLE() __assume(false)
+#else
+#define VK_UNREACHABLE() __builtin_unreachable()
+#endif
 
 #endif /* VKERNEL_TYPES_H */

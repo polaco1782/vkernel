@@ -123,6 +123,11 @@ make info         # Print build configuration
 make disasm       # Generate build/vkernel.disasm
 ```
 
+### Visual Studio / MSVC
+
+Open `vkernel.sln` and build the `hello` project. It uses `cl` and writes
+`hello.exe` under `build_vs\hello\<Configuration>\`.
+
 Output: `build/vkernel.efi` — a UEFI PE application (~43 KB).
 
 ## Running

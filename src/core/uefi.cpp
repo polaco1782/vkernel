@@ -9,6 +9,7 @@
 #include "types.h"
 #include "uefi.h"
 #include "console.h"
+#include "arch/x86_64/arch.h"
 
 namespace vk {
 namespace uefi {
@@ -145,20 +146,16 @@ auto do_exit_boot_services(handle image_handle, usize map_key) -> status {
  * This bypass is needed when OVMF doesn't include a GOP driver
  * for the QEMU standard VGA (PCI 1234:1111). */
 static inline void outl_pci(u16 port, u32 val) {
-    asm volatile("outl %0, %1" : : "a"(val), "Nd"(port));
+    arch::outl(port, val);
 }
 static inline auto inl_pci(u16 port) -> u32 {
-    u32 val;
-    asm volatile("inl %1, %0" : "=a"(val) : "Nd"(port));
-    return val;
+    return arch::inl(port);
 }
 static inline void outw_vbe(u16 port, u16 val) {
-    asm volatile("outw %0, %1" : : "a"(val), "Nd"(port));
+    arch::outw(port, val);
 }
 static inline auto inw_vbe(u16 port) -> u16 {
-    u16 val;
-    asm volatile("inw %1, %0" : "=a"(val) : "Nd"(port));
-    return val;
+    return arch::inw(port);
 }
 
 static constexpr u16 VBE_DISPI_IOPORT_INDEX = 0x01CE;

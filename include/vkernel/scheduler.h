@@ -40,7 +40,11 @@ struct task {
     u64         wake_tick;
     char        name[32];
     void*       user_data;
-    u8          stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
+    #if defined(_MSC_VER)
+        __declspec(align(16)) u8 stack[TASK_STACK_SIZE];
+    #else
+        u8 stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
+    #endif
     task_entry_fn entry;
 
     [[nodiscard]] constexpr auto is_runnable() const -> bool {

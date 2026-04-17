@@ -4,7 +4,7 @@
  *
  * hello.c - Minimal freestanding ELF64 program for vkernel
  *
- * Build: see Makefile in this directory.
+ * Build: see Makefile (Linux) or hello.vcxproj (Visual Studio).
  * Run:   vk> run hello.elf
  */
 
@@ -29,7 +29,7 @@ int _start(const vk_api_t* api) {
     void* p = vk_malloc(128);
     if (p) {
         vk_puts("OK at 0x");
-        vk_put_hex((vk_u64)(unsigned long)p);
+        vk_put_hex((vk_u64)(vk_usize)p);
         vk_puts("\n");
         vk_memset(p, 0xAB, 128);
         vk_free(p);

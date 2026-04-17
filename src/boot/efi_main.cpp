@@ -34,6 +34,16 @@ extern "C" {
 }
 
 static void self_relocate() {
+#if defined(_MSC_VER)
+    /*
+     * On MSVC/PE the linker generates proper base relocations when
+     * /FIXED:NO is used (the default for EFI Application subsystem).
+     * The UEFI firmware applies them at load time, so there is nothing
+     * for us to do here.  The function is kept as a no-op so the call
+     * site in efi_main() compiles unchanged.
+     */
+    (void)ImageBase;
+#else
     /* Runtime address of ImageBase via RIP-relative LEA */
     u64 runtime_base;
     asm volatile("lea ImageBase(%%rip), %0" : "=r"(runtime_base));
@@ -63,6 +73,7 @@ static void self_relocate() {
             *p += delta;
         }
     }
+#endif
 }
 
 /*
@@ -71,7 +82,7 @@ static void self_relocate() {
  * This is the entry point for the UEFI application.
  * It is called by the UEFI firmware when the image is loaded.
  */
-[[gnu::sysv_abi]] auto efi_main(
+auto efi_main(
     uefi::handle image_handle,
     uefi::system_table* system_table
 ) -> uefi::status {
@@ -230,9 +241,6 @@ static void self_relocate() {
         vk_panic(__FILE__, __LINE__, "Memory subsystem initialization failed");
     }
 
-    /* Dump memory map for diagnostics */
-    memory::dump_map();
-
     console::write("Kernel initialization complete.");
 
     /* ============================================================
@@ -246,7 +254,7 @@ static void self_relocate() {
 
     /* Create the idle task (task 0) — just halts when nothing else runs */
     sched::create_task("idle", [](void*) {
-        while (true) { asm volatile("hlt"); }
+        while (true) { arch::cpu_halt(); }
     });
 
     /* Create the shell task */
@@ -266,8 +274,12 @@ extern "C" {
     using vk::uefi::handle;
     using vk::uefi::system_table;
     using vk::uefi::status;
-    
+
+#if defined(_MSC_VER)
+    status efi_main(handle image_handle, system_table* system_table) {
+#else
     [[gnu::ms_abi]] status efi_main(handle image_handle, system_table* system_table) {
+#endif
         return vk::efi_main(image_handle, system_table);
     }
 }

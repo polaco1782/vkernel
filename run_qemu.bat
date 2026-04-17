@@ -8,6 +8,9 @@ setlocal
 
 set BUILD_DIR=build_vs
 set EFI_FILE=%BUILD_DIR%\vkernel.efi
+set ESP_ROOT=%BUILD_DIR%\esp
+set ESP_BOOT=%ESP_ROOT%\EFI\BOOT
+set NVRAM_FILE=%BUILD_DIR%\ovmf_vars.fd
 
 REM Check if EFI file exists
 if not exist "%EFI_FILE%" (
@@ -16,54 +19,49 @@ if not exist "%EFI_FILE%" (
     exit /b 1
 )
 
-REM Find QEMU executable
-where qemu-system-x86_64 >nul 2>nul
-if %errorlevel% equ 0 (
-    set QEMU=qemu-system-x86_64
-) else if exist "C:\Program Files\qemu\qemu-system-x86_64.exe" (
-    set QEMU="C:\Program Files\qemu\qemu-system-x86_64.exe"
-) else if exist "C:\Program Files (x86)\qemu\qemu-system-x86_64.exe" (
-    set QEMU="C:\Program Files (x86)\qemu\qemu-system-x86_64.exe"
-) else (
+set QEMU_EXE=C:\Program Files\qemu\qemu-system-x86_64.exe
+set QEMU_DIR=C:\Program Files\qemu\
+
+if not exist "%QEMU_EXE%" (
     echo Error: QEMU not found
     echo Please install QEMU from https://www.qemu.org/download/
     exit /b 1
 )
 
 REM Find OVMF firmware
-set OVMF_CODE=
-set OVMF_VARS=
+set OVMF_CODE=%QEMU_DIR%share\edk2-x86_64-code.fd
+set OVMF_VARS=%QEMU_DIR%share\edk2-i386-vars.fd
 
-REM Check common OVMF locations
-if exist "C:\Program Files\qemu\OVMF_CODE.fd" (
-    set OVMF_CODE="C:\Program Files\qemu\OVMF_CODE.fd"
-    set OVMF_VARS="C:\Program Files\qemu\OVMF_VARS.fd"
-) else if exist "C:\Program Files (x86)\qemu\OVMF_CODE.fd" (
-    set OVMF_CODE="C:\Program Files (x86)\qemu\OVMF_CODE.fd"
-    set OVMF_VARS="C:\Program Files (x86)\qemu\OVMF_VARS.fd"
-) else if exist "%CD%\OVMF\OVMF_CODE.fd" (
-    set OVMF_CODE="%CD%\OVMF\OVMF_CODE.fd"
-    set OVMF_VARS="%CD%\OVMF\OVMF_VARS.fd"
-) else (
-    echo Warning: OVMF firmware not found, attempting to download...
-    echo Please download OVMF from:
-    echo   https://github.com/tianocore/edk2/releases
-    echo Or install via package manager
-    echo.
-    echo Continuing without OVMF...
+if not exist "%OVMF_CODE%" (
+    echo Error: OVMF firmware not found at %OVMF_CODE%
+    echo Expected the QEMU Windows package to include share\edk2-x86_64-code.fd
+    exit /b 1
 )
 
-REM Create FAT disk image with EFI file
-set EFI_IMG=%BUILD_DIR%\efi_disk.img
-echo Creating EFI disk image...
+if not exist "%OVMF_VARS%" (
+    echo Error: OVMF NVRAM template not found at %OVMF_VARS%
+    echo Expected the QEMU Windows package to include share\edk2-i386-vars.fd
+    exit /b 1
+)
 
-REM Create a 64MB FAT image
-if exist "%EFI_IMG%" del "%EFI_IMG%"
-qemu-img create -f raw "%EFI_IMG%" 64M >nul 2>nul
+copy /y "%OVMF_VARS%" "%NVRAM_FILE%" >nul
 
-REM Format as FAT and copy EFI file
-REM Note: This requires mtools on Windows
-REM Alternative: Use a pre-made FAT image
+REM Stage the ESP as a host directory and expose it to QEMU as a virtual FAT disk.
+if exist "%ESP_ROOT%" rmdir /s /q "%ESP_ROOT%"
+mkdir "%ESP_BOOT%"
+copy /y "%EFI_FILE%" "%ESP_BOOT%\bootx64.efi" >nul
+
+REM Copy userspace hello.exe to ESP
+set HELLO_EXE=%BUILD_DIR%\hello\Debug\hello.exe
+set ESP_VKERNEL=%ESP_ROOT%\EFI\vkernel
+
+if exist "%HELLO_EXE%" (
+    mkdir "%ESP_VKERNEL%"
+    copy /y "%HELLO_EXE%" "%ESP_VKERNEL%\hello.exe" >nul
+    echo Copied %HELLO_EXE% to ESP
+) else (
+    echo Warning: hello.exe not found at %HELLO_EXE%
+)
 
 REM Run QEMU
 echo.
@@ -73,10 +71,11 @@ echo Press Ctrl+Alt+1 to switch back to VM
 echo Type 'quit' in QEMU monitor to exit
 echo.
 
-%QEMU% ^
-    -drive if=pflash,format=raw,readonly=on,file=%OVMF_CODE% ^
-    -drive if=pflash,format=raw,file=%OVMF_VARS% ^
-    -hda "%EFI_IMG%" ^
+"%QEMU_EXE%" ^
+    -machine q35 ^
+    -drive if=pflash,format=raw,readonly=on,file="%OVMF_CODE%" ^
+    -drive if=pflash,format=raw,file="%NVRAM_FILE%" ^
+    -drive if=ide,index=0,media=disk,format=raw,file="fat:rw:%ESP_ROOT%" ^
     -m 256M ^
     -net none ^
     -serial stdio ^

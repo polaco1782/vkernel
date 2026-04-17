@@ -20,6 +20,7 @@
 #include "input.h"
 #include "scheduler.h"
 #include "elf.h"
+#include "pe.h"
 #include "process.h"
 #include "userapi.h"
 
@@ -180,23 +181,57 @@ auto run(const char* filename) -> i64 {
         return -1;
     }
 
-    console::puts("Loading ELF: ");
+    console::puts("Loading binary: ");
     console::puts(filename);
     console::puts(" (");
     console::put_dec(f->size);
     console::puts(" bytes)\n");
 
-    /* Load and relocate the ELF binary */
-    auto result = elf::load(f->data, f->size);
-    if (result.error != elf::elf_error::ok) {
-        console::puts("process: ELF load failed: ");
-        console::puts(elf::error_string(result.error));
-        console::puts("\n");
+    const u8*  data = f->data;
+    const usize sz  = f->size;
+
+    u64   entry_addr = 0;
+    u8*   image_base = null;
+    u64   image_size = 0;
+
+    /* Detect format by magic bytes:
+     *   ELF  →  7F 45 4C 46  (\x7FELF)
+     *   PE   →  4D 5A        (MZ)       */
+    const bool is_elf = sz >= 4 &&
+        data[0] == 0x7Fu && data[1] == 'E' &&
+        data[2] == 'L'   && data[3] == 'F';
+    const bool is_pe = sz >= 2 &&
+        data[0] == 'M' && data[1] == 'Z';
+
+    if (is_elf) {
+        auto result = elf::load(data, sz);
+        if (result.error != elf::elf_error::ok) {
+            console::puts("process: ELF load failed: ");
+            console::puts(elf::error_string(result.error));
+            console::puts("\n");
+            return -1;
+        }
+        entry_addr = result.entry;
+        image_base = result.image_base;
+        image_size = result.image_size;
+    } else if (is_pe) {
+        auto result = pe::load(data, sz);
+        if (result.error != pe::pe_error::ok) {
+            console::puts("process: PE load failed: ");
+            console::puts(pe::error_string(result.error));
+            console::puts("\n");
+            return -1;
+        }
+        entry_addr = result.entry;
+        image_base = result.image_base;
+        image_size = result.image_size;
+    } else {
+        console::puts("process: unknown binary format (not ELF or PE)\n");
         return -1;
     }
 
     console::puts("Executing at 0x");
-    console::put_hex(result.entry);
+    console::put_hex(entry_addr);
     console::puts("\n");
 
     /* Ensure the API table is ready */
@@ -205,19 +240,19 @@ auto run(const char* filename) -> i64 {
     auto* ctx = static_cast<process_task_context*>(g_kernel_heap.allocate(sizeof(process_task_context)));
     if (ctx == null) {
         console::puts("process: out of memory while creating task context\n");
-        g_kernel_heap.free(result.image_base);
+        g_kernel_heap.free(image_base);
         return -1;
     }
 
-    ctx->entry = result.entry;
-    ctx->image_base = result.image_base;
-    ctx->image_size = result.image_size;
+    ctx->entry      = entry_addr;
+    ctx->image_base = image_base;
+    ctx->image_size = image_size;
 
     i64 task_id = sched::create_task(filename, process_task_main, ctx);
     if (task_id < 0) {
         console::puts("process: failed to create task\n");
         g_kernel_heap.free(ctx);
-        g_kernel_heap.free(result.image_base);
+        g_kernel_heap.free(image_base);
         return -1;
     }
 

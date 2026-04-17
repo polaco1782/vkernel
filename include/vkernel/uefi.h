@@ -68,17 +68,22 @@ struct text_output_protocol;
 
 /*
  * ALL UEFI protocol function pointers use the Microsoft x64 ABI.
- * Without [[gnu::ms_abi]] the compiler would generate a SysV call,
- * passing arguments in RDI/RSI instead of RCX/RDX, causing crashes.
+ * On MSVC this is the default; on GCC/Clang we need [[gnu::ms_abi]].
  */
-using text_output_reset_fn      = [[gnu::ms_abi]] status(*)(text_output_protocol* self, bool extended_verification);
-using text_output_string_fn     = [[gnu::ms_abi]] status(*)(text_output_protocol* self, const char16_t* string);
-using text_output_test_fn       = [[gnu::ms_abi]] status(*)(text_output_protocol* self, const char16_t* string);
-using text_output_mode_fn       = [[gnu::ms_abi]] status(*)(text_output_protocol* self, usize mode_number, usize* columns, usize* rows);
-using text_output_set_mode_fn   = [[gnu::ms_abi]] status(*)(text_output_protocol* self, usize mode_number);
-using text_output_attr_fn       = [[gnu::ms_abi]] status(*)(text_output_protocol* self, usize attribute);
-using text_output_clear_fn      = [[gnu::ms_abi]] status(*)(text_output_protocol* self);
-using text_output_cursor_fn     = [[gnu::ms_abi]] status(*)(text_output_protocol* self, usize column, usize row);
+#if defined(_MSC_VER)
+#define VK_MSABI
+#else
+#define VK_MSABI [[gnu::ms_abi]]
+#endif
+
+using text_output_reset_fn      = VK_MSABI status(*)(text_output_protocol* self, bool extended_verification);
+using text_output_string_fn     = VK_MSABI status(*)(text_output_protocol* self, const char16_t* string);
+using text_output_test_fn       = VK_MSABI status(*)(text_output_protocol* self, const char16_t* string);
+using text_output_mode_fn       = VK_MSABI status(*)(text_output_protocol* self, usize mode_number, usize* columns, usize* rows);
+using text_output_set_mode_fn   = VK_MSABI status(*)(text_output_protocol* self, usize mode_number);
+using text_output_attr_fn       = VK_MSABI status(*)(text_output_protocol* self, usize attribute);
+using text_output_clear_fn      = VK_MSABI status(*)(text_output_protocol* self);
+using text_output_cursor_fn     = VK_MSABI status(*)(text_output_protocol* self, usize column, usize row);
 
 /* Text output mode structure */
 struct text_output_mode {
@@ -120,14 +125,14 @@ struct memory_descriptor {
 };
 
 /* Boot Services function pointer types (all MS ABI) */
-using get_memory_map_fn     = [[gnu::ms_abi]] status(*)(usize*, memory_descriptor*, usize*, usize*, u32*);
-using allocate_pool_fn      = [[gnu::ms_abi]] status(*)(u32, usize, void**);
-using free_pool_fn          = [[gnu::ms_abi]] status(*)(void*);
-using exit_boot_services_fn = [[gnu::ms_abi]] status(*)(handle, usize);
-using locate_protocol_fn       = [[gnu::ms_abi]] status(*)(const guid*, void*, void**);
-using handle_protocol_fn       = [[gnu::ms_abi]] status(*)(handle, const guid*, void**);
-using locate_handle_buffer_fn  = [[gnu::ms_abi]] status(*)(u32 search_type, const guid*, void* search_key, usize* no_handles, handle** buffer);
-using connect_controller_fn    = [[gnu::ms_abi]] status(*)(handle controller, handle* driver_image_handle, void* remaining_device_path, bool recursive);
+using get_memory_map_fn     = VK_MSABI status(*)(usize*, memory_descriptor*, usize*, usize*, u32*);
+using allocate_pool_fn      = VK_MSABI status(*)(u32, usize, void**);
+using free_pool_fn          = VK_MSABI status(*)(void*);
+using exit_boot_services_fn = VK_MSABI status(*)(handle, usize);
+using locate_protocol_fn       = VK_MSABI status(*)(const guid*, void*, void**);
+using handle_protocol_fn       = VK_MSABI status(*)(handle, const guid*, void**);
+using locate_handle_buffer_fn  = VK_MSABI status(*)(u32 search_type, const guid*, void* search_key, usize* no_handles, handle** buffer);
+using connect_controller_fn    = VK_MSABI status(*)(handle controller, handle* driver_image_handle, void* remaining_device_path, bool recursive);
 
 /* UEFI Boot Services Table (EFI_BOOT_SERVICES, partial)
  * Each void* placeholder preserves the correct field offset. */
@@ -283,8 +288,8 @@ auto query_gop() -> framebuffer_info;
 
 /* EFIAPI calling convention (Microsoft ABI for x86_64) */
 #ifdef _MSC_VER
-    #define EFIAPI __attribute((ms_abi))
-#elif defined(__GNUC__)
+    #define EFIAPI
+#elif defined(__GNUC__) || defined(__clang__)
     #define EFIAPI __attribute__((ms_abi))
 #else
     #define EFIAPI

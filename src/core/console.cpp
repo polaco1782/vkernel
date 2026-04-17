@@ -9,6 +9,7 @@
 #include "types.h"
 #include "uefi.h"
 #include "console.h"
+#include "arch/x86_64/arch.h"
 
 namespace vk {
 
@@ -125,12 +126,10 @@ static constexpr u32 FONT_H = 16;
 static constexpr u16 COM1 = 0x3F8;
 
 static inline void serial_outb(u16 port, u8 val) {
-    asm volatile("outb %0, %1" : : "a"(val), "Nd"(port));
+    arch::outb(port, val);
 }
 static inline auto serial_inb(u16 port) -> u8 {
-    u8 val;
-    asm volatile("inb %1, %0" : "=a"(val) : "Nd"(port));
-    return val;
+    return arch::inb(port);
 }
 static void serial_init() {
     serial_outb(COM1 + 1, 0x00);

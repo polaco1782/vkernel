@@ -26,6 +26,14 @@
 
 #include "vkernel/userapi.h"
 
+#if defined(_MSC_VER)
+#define VK_UNREACHABLE() __assume(0)
+#define VK_NORETURN      __declspec(noreturn)
+#else
+#define VK_UNREACHABLE() __builtin_unreachable()
+#define VK_NORETURN      __attribute__((noreturn))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -99,6 +107,14 @@ static inline void* vk_memcpy(void* dest, const void* src, vk_usize n) {
 }
 
 /* ============================================================
+ * Framebuffer
+ * ============================================================ */
+
+static inline void vk_get_framebuffer_info(vk_framebuffer_info_t* out) {
+    __vk_api->framebuffer_info(out);
+}
+
+/* ============================================================
  * Filesystem (ramfs)
  * ============================================================ */
 
@@ -125,10 +141,10 @@ static inline vk_usize vk_file_read(const char* name, void* buf, vk_usize buf_si
  * ============================================================ */
 
 /* Terminate immediately with exit code */
-static inline void vk_exit(int code) {
+static VK_NORETURN inline void vk_exit(int code) {
     __vk_api->exit(code);
     /* Should never return, but prevent compiler warnings */
-    __builtin_unreachable();
+    VK_UNREACHABLE();
 }
 
 /* Yield the CPU to other tasks */
