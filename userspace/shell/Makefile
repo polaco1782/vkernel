@@ -1,4 +1,4 @@
-# vkernel userspace - framebuffer text demo
+# vkernel userspace - shell
 # Copyright (C) 2026 vkernel authors
 #
 # Builds a freestanding static ELF64 binary suitable for loading
@@ -27,13 +27,13 @@ LDFLAGS += -e _start
 LDFLAGS += -Wl,--build-id=none
 LDFLAGS += -Wl,-z,norelro
 
-TARGET  := framebuffer_text.elf
+TARGET  := shell.elf
 
 .PHONY: all clean
 
 all: $(TARGET)
 
-$(TARGET): framebuffer_text.c
+$(TARGET): shell.c
 	@echo "  CC      $<  ->  $@"
 	@$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 	@echo "  SIZE    $@"

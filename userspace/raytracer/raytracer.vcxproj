@@ -51,7 +51,7 @@
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <CompileAs>CompileAsC</CompileAs>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>VK_BUILD_FOR_USERSPACE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <ExceptionHandling>false</ExceptionHandling>
@@ -59,10 +59,6 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <AdditionalOptions>/GS- /Gs999999 /GR- /EHs-c- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
-    <PreBuildEvent>
-      <Command>if not exist "$(ProjectDir)..\include\vkernel" mkdir "$(ProjectDir)..\include\vkernel"
-copy /Y "$(SolutionDir)include\vkernel\vk.h" "$(ProjectDir)..\include\vkernel\vk.h" &gt;nul</Command>
-    </PreBuildEvent>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -93,10 +89,6 @@ copy /Y "$(SolutionDir)include\vkernel\vk.h" "$(ProjectDir)..\include\vkernel\vk
 
   <ItemGroup>
     <ClCompile Include="raytracer.c" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ClInclude Include="..\..\include\vkernel\vk.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

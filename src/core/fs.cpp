@@ -330,6 +330,8 @@ auto loader::load_initrd() -> status_code {
         "\\EFI\\vkernel\\raytracer.elf",
         "\\EFI\\vkernel\\ramfs_reader.exe",
         "\\EFI\\vkernel\\ramfs_reader.elf",
+        "\\EFI\\vkernel\\shell.exe",
+        "\\EFI\\vkernel\\shell.elf",
     };
     constexpr usize file_count = sizeof(files) / sizeof(files[0]);
 

@@ -5,8 +5,9 @@
  * vk.h - Kernel API table passed to loaded ELF programs
  *
  * This header is the single source of truth for the kernel/userspace
- * ABI. It is copied into the userspace include tree at build time so
- * freestanding binaries and the kernel always see the same layout.
+ * ABI. Userspace code should include it directly, or via the thin
+ * wrapper in userspace/include/vk.h, so the build always sees the
+ * current layout.
  *
  * The kernel fills in a vk_api struct and passes a pointer to it
  * as the first argument of every ELF entry point:
@@ -65,7 +66,7 @@ typedef struct vk_framebuffer_info {
 typedef vk_u64 vk_file_handle_t;
 
 /* ============================================================
- * vk_api_t — version 6
+ * vk_api_t — version 8
  *
  * Add new fields only at the END to preserve ABI compatibility.
  * Bump VK_API_VERSION when the layout changes in a breaking way.
@@ -122,10 +123,18 @@ typedef struct vk_api {
     int              (*vk_file_remove)(const char* path);
     int              (*vk_file_rename)(const char* old_path, const char* new_path);
 
+    /* ---- process utilities ---- */
+    vk_i64 (*vk_run)(const char* path);
+    vk_u64 (*vk_tick_count)(void);
+    void (*vk_dump_memory)(void);
+    void (*vk_dump_tasks)(void);
+    void (*vk_dump_idt)(void);
+    void (*vk_reboot)(void);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 6ULL
+#define VK_API_VERSION 8ULL
 
 /* ============================================================
  * Userspace runtime helpers
@@ -231,6 +240,30 @@ static inline void vk_yield(void) {
 
 static inline void vk_sleep(vk_u64 ticks) {
     vk_get_api()->vk_sleep(ticks);
+}
+
+static inline vk_i64 vk_run(const char* path) {
+    return vk_get_api()->vk_run(path);
+}
+
+static inline vk_u64 vk_tick_count(void) {
+    return vk_get_api()->vk_tick_count();
+}
+
+static inline void vk_dump_memory(void) {
+    vk_get_api()->vk_dump_memory();
+}
+
+static inline void vk_dump_tasks(void) {
+    vk_get_api()->vk_dump_tasks();
+}
+
+static inline void vk_dump_idt(void) {
+    vk_get_api()->vk_dump_idt();
+}
+
+static inline void vk_reboot(void) {
+    vk_get_api()->vk_reboot();
 }
 
 static inline void vk_print_int(int n) {

@@ -22,7 +22,7 @@ A minimal UEFI microkernel for x86_64, written in **C++26** as a hobby project.
 | Kernel/userspace ABI header | ✅ Working |
 | Userspace compat layer (`printf`, `FILE`, stubs) | ✅ Working |
 | Kernel input subsystem (PS/2 + serial) | ✅ Working |
-| Built-in kernel shell | ✅ Working |
+| Userspace shell | ✅ Working |
 | IPC mechanism | ❌ Not yet implemented |
 | Virtual memory / paging rework | ❌ Not yet implemented |
 | PCI enumeration | ❌ Not yet implemented |
@@ -67,7 +67,6 @@ include/vkernel/        — Public kernel headers
     scheduler.h         — Task scheduler API
     input.h             — Unified input (PS/2 + serial)
     fs.h                — Ramfs + UEFI ESP loader
-    shell.h             — Built-in shell entry point
     process.h           — ELF/PE loader entry point
     process_internal.h  — Shared loader internals
     uefi.h              — UEFI protocol bindings
@@ -94,6 +93,10 @@ userspace/raytracer/
     raytracer.c         — Realtime raytracing demo
     raytracer.vcxproj   — MSVC project for the demo
 
+userspace/shell/
+    shell.c             — Userspace shell that launches demos
+    shell.vcxproj       — MSVC project for the shell
+
 userspace/ramfs_reader/
     ramfs_reader.c      — Ramfs file-reading demo
     ramfs_reader.vcxproj — MSVC project for the demo
@@ -113,7 +116,6 @@ src/core/
     pe.cpp              — PE binary loader for ramfs-backed programs
     kernel_api.cpp      — Kernel API table, file streams, and kernel-backed stubs
     process.cpp         — ELF/PE process loader and task launch
-    shell.cpp           — Built-in kernel shell with commands
     uefi.cpp            — UEFI protocol wrappers
 
 src/arch/x86_64/
@@ -128,7 +130,7 @@ src/arch/x86_64/
 3. **Phase 1** (boot services active): query memory map, query GOP framebuffer, load files from ESP into ramfs
 4. **Phase 2**: `ExitBootServices` — switches console to serial + framebuffer
 5. **Phase 3**: load GDT/IDT/TSS, harden paging (WP + NXE), init kernel heap, init input subsystem
-6. **Phase 4**: init scheduler (PIC remap + PIT @ 100 Hz), create idle task + shell task, `sched::start()` — does not return
+6. **Phase 4**: init scheduler (PIC remap + PIT @ 100 Hz), create idle task, launch userspace shell, `sched::start()` — does not return
 
 ## Building
 
@@ -148,26 +150,32 @@ The Makefile uses `x86_64-redhat-linux-g++` by default. Override with:
 make CROSS_PREFIX=x86_64-linux-gnu-
 ```
 
-### Build Commands
+### Userspace Shell
 
-```bash
+The shell now runs as a userspace program launched by the kernel. It still reads from the unified keyboard/serial input path and writes to the same console surfaces.
 make              # Release build
 make DEBUG=1      # Debug build (VK_DEBUG_LEVEL=5, extra [DEBUG] output)
 make userspace    # Build all staged userspace ELF examples
-make clean        # Remove build artefacts
-make info         # Print build configuration
-make disasm       # Generate build/vkernel.disasm
-```
-
-### Visual Studio / MSVC
-
-Open `vkernel.sln` and build the userspace projects (`hello`, `framebuffer`,
+| `help` | List available commands |
+| `version` | Show shell and ABI version |
+| `mem` | Show memory info |
+| `tasks` | Show scheduler tasks |
+| `ls` | Show staged files |
+| `cat <file>` | Print a ramfs file |
+| `clear` | Clear the screen |
+| `uptime` | Show tick count |
+| `reboot` | Reboot the machine |
+| `idt` | Dump interrupt descriptor table |
+| `alloc` | Allocate and free a test block |
+| `run <file>` | Launch a staged userspace program |
+| `panic` | Trigger a userspace fault |
+| `exit` | Exit the shell |
 `ramfs_reader`). They use `cl` and write their outputs under
 `build_vs\<project>\<Configuration>\`.
 
 `run_qemu.bat` stages the matching `.exe` files into the Windows ESP image,
 copying `hello.exe`, `framebuffer.exe`, `framebuffer_text.exe`, `raytracer.exe`,
-and `ramfs_reader.exe` from the selected configuration directory.
+`ramfs_reader.exe`, and `shell.exe` from the selected configuration directory.
 
 Pass `Debug` or `Release` to `run_qemu.bat` to choose which MSVC output
 directory gets staged; `Debug` is the default.
@@ -203,9 +211,9 @@ Files placed under `\EFI\vkernel\` on the ESP are loaded into the ramfs before `
 \EFI\vkernel\shell.txt
 ```
 
-## Shell Commands
+## Userspace Shell
 
-The built-in kernel shell accepts input from both the PS/2 keyboard (QEMU window) and the serial port simultaneously.
+The shell accepts input from both the PS/2 keyboard (QEMU window) and the serial port simultaneously.
 
 | Command | Description |
 |---|---|
@@ -220,7 +228,7 @@ The built-in kernel shell accepts input from both the PS/2 keyboard (QEMU window
 
 ### Userspace Examples
 
-The boot image now stages multiple freestanding binaries into ramfs. After boot, you can launch them from the shell with `run`:
+The boot image now stages multiple freestanding binaries into ramfs. The shell itself is one of those binaries, and once it is running you can launch the other demos with `run`:
 
 ```text
 vk> run hello.elf
@@ -230,7 +238,7 @@ vk> run raytracer.elf
 vk> run ramfs_reader.elf
 ```
 
-On Windows/MSVC builds, the same examples are staged as `.exe` files, so the shell names are `hello.exe`, `framebuffer.exe`, `framebuffer_text.exe`, `raytracer.exe`, and `ramfs_reader.exe`.
+On Windows/MSVC builds, the same examples are staged as `.exe` files, so the shell names are `hello.exe`, `framebuffer.exe`, `framebuffer_text.exe`, `raytracer.exe`, `ramfs_reader.exe`, and `shell.exe`.
 
 ## Key Design Notes
 
@@ -244,8 +252,9 @@ On Windows/MSVC builds, the same examples are staged as `.exe` files, so the she
 
 **Userspace stdio layer**: `userspace/include/vk.h` provides a freestanding C-style wrapper with `printf`, `FILE`, `fopen`, `fread`, `fwrite`, and the usual string/memory shims on top of the kernel ABI.
 
+**Userspace shell**: `userspace/shell` is launched by the kernel at boot and provides the interactive prompt, file inspection, and `run` command in userspace.
+
 **Userspace examples**: `userspace/hello` prints runtime and file-system information, `userspace/framebuffer` paints the GOP framebuffer directly, `userspace/framebuffer_text` renders text into the framebuffer, `userspace/raytracer` draws a realtime raytraced scene, and `userspace/ramfs_reader` reads back a staged ELF from ramfs and prints its header bytes.
-`userspace/framebuffer_text` renders text directly into the framebuffer.
 
 **Exception handling**: CPU exceptions in userspace terminate only the faulting task when a process context exists. Kernel-mode exceptions still panic the kernel.
 

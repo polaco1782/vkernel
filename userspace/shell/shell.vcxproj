@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -12,23 +12,13 @@
   </ItemGroup>
 
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{5F2D6A2B-8AE1-4A4D-9C1A-4D9E6E3D7B20}</ProjectGuid>
-    <RootNamespace>hello</RootNamespace>
-    <ProjectName>hello</ProjectName>
+    <ProjectGuid>{B1C2D3E4-F5A6-4789-ABCD-0123456789AB}</ProjectGuid>
+    <RootNamespace>shell</RootNamespace>
+    <ProjectName>shell</ProjectName>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-
-  <!--
-    Freestanding PE32+ userspace application for vkernel.
-    The kernel PE loader maps sections and applies DIR64 base
-    relocations; the binary must be compiled without any CRT.
-
-    ABI: MSVC MS-x64 calling convention matches the kernel perfectly.
-    The kernel calls entry(api) with api in RCX; MSVC userspace reads
-    from RCX with no bridging required.
-  -->
 
   <PropertyGroup Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -50,9 +40,9 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
 
   <PropertyGroup>
-    <OutDir>$(SolutionDir)build_vs\hello\$(Configuration)\</OutDir>
-    <IntDir>$(SolutionDir)build_vs\hello\obj\$(Configuration)\</IntDir>
-    <TargetName>hello</TargetName>
+    <OutDir>$(SolutionDir)build_vs\shell\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)build_vs\shell\obj\$(Configuration)\</IntDir>
+    <TargetName>shell</TargetName>
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
 
@@ -67,11 +57,9 @@
       <ExceptionHandling>false</ExceptionHandling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <FunctionLevelLinking>true</FunctionLevelLinking>
-      <!-- /GS- no security cookie  /Gs999999 no stack probes (__chkstk) -->
       <AdditionalOptions>/GS- /Gs999999 /GR- /EHs-c- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <!-- /NODEFAULTLIB no CRT  /DYNAMICBASE generates .reloc for PE loader -->
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
@@ -100,7 +88,7 @@
   </ItemDefinitionGroup>
 
   <ItemGroup>
-    <ClCompile Include="hello.c" />
+    <ClCompile Include="shell.c" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

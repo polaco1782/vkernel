@@ -47,11 +47,6 @@ int _start(const vk_api_t* api) {
         vk_sleep(100); /* Sleep for 100 ticks (1 second) */
     }
 
-    // execute a bad opcode to test error handling
-    // Note: this will crash the process, but it's a good sanity check that the kernel doesn't just hang on invalid instructions.
-    // printf("  Executing invalid instruction... ");
-    ((void(*)())0)();
-        
     printf("\nGoodbye!\n");
     return 0;
 }

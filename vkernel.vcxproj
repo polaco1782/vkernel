@@ -92,7 +92,6 @@
     <ClCompile Include="src\core\process.cpp" />
     <ClCompile Include="src\core\scheduler.cpp" />
     <ClCompile Include="src\core\input.cpp" />
-    <ClCompile Include="src\core\shell.cpp" />
     <ClCompile Include="src\core\console.cpp" />
     <ClCompile Include="src\core\uefi.cpp" />
     <ClCompile Include="src\core\memory.cpp" />

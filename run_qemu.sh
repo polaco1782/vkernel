@@ -25,6 +25,7 @@ USERSPACE_ELFS=(
     "userspace/framebuffer_text/framebuffer_text.elf"
     "userspace/raytracer/raytracer.elf"
     "userspace/ramfs_reader/ramfs_reader.elf"
+    "userspace/shell/shell.elf"
 )
 
 # Fall back to 2M variant

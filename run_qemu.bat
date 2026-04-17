@@ -63,6 +63,7 @@ set FRAMEBUFFER_EXE=%BUILD_DIR%\framebuffer\%BUILD_CONFIG%\framebuffer.exe
 set FRAMEBUFFER_TEXT_EXE=%BUILD_DIR%\framebuffer_text\%BUILD_CONFIG%\framebuffer_text.exe
 set RAYTRACER_EXE=%BUILD_DIR%\raytracer\%BUILD_CONFIG%\raytracer.exe
 set RAMFS_READER_EXE=%BUILD_DIR%\ramfs_reader\%BUILD_CONFIG%\ramfs_reader.exe
+set SHELL_EXE=%BUILD_DIR%\shell\%BUILD_CONFIG%\shell.exe
 set ESP_VKERNEL=%ESP_ROOT%\EFI\vkernel
 
 if exist "%HELLO_EXE%" (
@@ -103,6 +104,14 @@ if exist "%RAMFS_READER_EXE%" (
     echo Copied %RAMFS_READER_EXE% to ESP
 ) else (
     echo Warning: ramfs_reader.exe not found at %RAMFS_READER_EXE%
+)
+
+if exist "%SHELL_EXE%" (
+    if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
+    copy /y "%SHELL_EXE%" "%ESP_VKERNEL%\shell.exe" >nul
+    echo Copied %SHELL_EXE% to ESP
+) else (
+    echo Warning: shell.exe not found at %SHELL_EXE%
 )
 
 REM Run QEMU

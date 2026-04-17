@@ -6,7 +6,8 @@
  *
  * Include this header when porting code that expects a small slice of
  * the C standard library. It builds on top of the canonical ABI header
- * in <vkernel/vk.h> and provides lightweight inline shims.
+ * in the repository include/vkernel/vk.h and provides lightweight
+ * inline shims.
  */
 
 #ifndef VK_USERSPACE_COMPAT_H
@@ -15,7 +16,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 
-#include <vkernel/vk.h>
+#include "../../include/vkernel/vk.h"
 
 #ifdef __cplusplus
 extern "C" {

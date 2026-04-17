@@ -17,7 +17,8 @@ FRAMEBUFFER_ELF := $(USERSPACE_DIR)/framebuffer/framebuffer.elf
 FRAMEBUFFER_TEXT_ELF := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.elf
 RAYTRACER_ELF := $(USERSPACE_DIR)/raytracer/raytracer.elf
 RAMFS_READER_ELF := $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.elf
-USERSPACE_ELFS := $(HELLO_ELF) $(FRAMEBUFFER_ELF) $(FRAMEBUFFER_TEXT_ELF) $(RAYTRACER_ELF) $(RAMFS_READER_ELF)
+SHELL_ELF      := $(USERSPACE_DIR)/shell/shell.elf
+USERSPACE_ELFS := $(HELLO_ELF) $(FRAMEBUFFER_ELF) $(FRAMEBUFFER_TEXT_ELF) $(RAYTRACER_ELF) $(RAMFS_READER_ELF) $(SHELL_ELF)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -124,6 +125,9 @@ $(RAYTRACER_ELF): $(USERSPACE_DIR)/raytracer/raytracer.c $(USERSPACE_DIR)/raytra
 $(RAMFS_READER_ELF): $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.c $(USERSPACE_DIR)/ramfs_reader/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/ramfs_reader
 
+$(SHELL_ELF): $(USERSPACE_DIR)/shell/shell.c $(USERSPACE_DIR)/shell/Makefile
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell
+
 # Disassembly for debugging
 disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@$(OBJDUMP) -d $< > $(BUILD_DIR)/$(KERNEL_NAME).dis
@@ -138,6 +142,7 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer_text clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/ramfs_reader clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell clean
 
 # QEMU test
 qemu: $(BOOT_IMG)

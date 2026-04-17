@@ -12,6 +12,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "framebuffer_text", "userspa
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "raytracer", "userspace\raytracer\raytracer.vcxproj", "{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "shell", "userspace\shell\shell.vcxproj", "{B1C2D3E4-F5A6-4789-ABCD-0123456789AB}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ramfs_reader", "userspace\ramfs_reader\ramfs_reader.vcxproj", "{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}"
 EndProject
 Global
@@ -40,6 +42,10 @@ Global
 		{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}.Debug|x64.Build.0 = Debug|x64
 		{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}.Release|x64.ActiveCfg = Release|x64
 		{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}.Release|x64.Build.0 = Release|x64
+		{B1C2D3E4-F5A6-4789-ABCD-0123456789AB}.Debug|x64.ActiveCfg = Debug|x64
+		{B1C2D3E4-F5A6-4789-ABCD-0123456789AB}.Debug|x64.Build.0 = Debug|x64
+		{B1C2D3E4-F5A6-4789-ABCD-0123456789AB}.Release|x64.ActiveCfg = Release|x64
+		{B1C2D3E4-F5A6-4789-ABCD-0123456789AB}.Release|x64.Build.0 = Release|x64
 		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Debug|x64.ActiveCfg = Debug|x64
 		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Debug|x64.Build.0 = Debug|x64
 		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Release|x64.ActiveCfg = Release|x64

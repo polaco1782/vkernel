@@ -12,6 +12,8 @@
 #include "fs.h"
 #include "input.h"
 #include "scheduler.h"
+#include "arch/x86_64/arch.h"
+#include "process.h"
 #include "vk.h"
 #include "process_internal.h"
 
@@ -83,6 +85,41 @@ static void stub_yield() {
 
 static void stub_sleep(vk_u64 ticks) {
     sched::sleep(static_cast<u64>(ticks));
+}
+
+static vk_i64 stub_run(const char* path) {
+    return process::run(path);
+}
+
+static vk_u64 stub_tick_count() {
+    return sched::tick_count();
+}
+
+static void stub_dump_memory() {
+    console::puts("Physical allocator:\n");
+    console::puts("  Total pages: ");
+    console::put_dec(g_phys_alloc.total_pages());
+    console::puts("\n  Free pages:  ");
+    console::put_dec(g_phys_alloc.free_pages());
+    console::puts("\n  Used pages:  ");
+    console::put_dec(g_phys_alloc.used_pages());
+    console::puts("\n  Total RAM:   ");
+    console::put_dec((g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024));
+    console::puts(" MB\n\n");
+
+    memory::dump_heap();
+}
+
+static void stub_dump_tasks() {
+    sched::dump_tasks();
+}
+
+static void stub_dump_idt() {
+    arch::dump_idt();
+}
+
+static void stub_reboot() {
+    arch::reboot();
 }
 
 static void stub_framebuffer_info(vk_framebuffer_info_t* out) {
@@ -355,6 +392,12 @@ void init() {
     s_api.vk_exit = stub_exit;
     s_api.vk_yield = stub_yield;
     s_api.vk_sleep = stub_sleep;
+    s_api.vk_run = stub_run;
+    s_api.vk_tick_count = stub_tick_count;
+    s_api.vk_dump_memory = stub_dump_memory;
+    s_api.vk_dump_tasks = stub_dump_tasks;
+    s_api.vk_dump_idt = stub_dump_idt;
+    s_api.vk_reboot = stub_reboot;
     /* framebuffer */
     s_api.vk_framebuffer_info = stub_framebuffer_info;
     /* file streams */

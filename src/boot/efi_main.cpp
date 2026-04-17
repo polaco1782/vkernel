@@ -13,7 +13,6 @@
 #include "fs.h"
 #include "scheduler.h"
 #include "input.h"
-#include "shell.h"
 #include "panic.h"
 #include "process.h"
 #include "arch/x86_64/arch.h"
@@ -137,13 +136,12 @@ auto efi_main(
             ? static_cast<memory_type>(d->type)
             : memory_type::reserved;
 
-        s_map[map_count++] = {
-            .physical_start  = d->physical_start,
-            .virtual_start   = d->virtual_start,
-            .number_of_pages = d->number_of_pages,
-            .type            = mtype,
-            .attribute       = d->attribute,
-        };
+        auto& entry = s_map[map_count++];
+        entry.physical_start = d->physical_start;
+        entry.virtual_start = d->virtual_start;
+        entry.number_of_pages = d->number_of_pages;
+        entry.type = mtype;
+        entry.attribute = d->attribute;
     }
 
     console::puts("  Found ");
@@ -158,7 +156,7 @@ auto efi_main(
         }
     }
     console::puts("  Conventional memory: ");
-    console::put_dec((total_conventional_pages * PAGE_SIZE_4K) / (1024 * 1024));
+    console::put_dec((total_conventional_pages * 0x1000ULL) / (1024 * 1024));
     console::puts(" MB\n");
 
 #if VK_DEBUG_LEVEL >= 4
@@ -245,7 +243,7 @@ auto efi_main(
     console::write("Kernel initialization complete.");
 
     /* ============================================================
-     * Phase 4 — Scheduler + Shell
+    * Phase 4 — Scheduler + Userspace Shell
      * ============================================================ */
 
     /* Initialize the scheduler (sets up PIC + PIT) */
@@ -258,8 +256,15 @@ auto efi_main(
         while (true) { arch::cpu_halt(); }
     });
 
-    /* Create the shell task */
-    sched::create_task("shell", [](void*) { shell::shell_main(); });
+    /* Launch the userspace shell binary. */
+    console::write("Launching userspace shell...");
+#if defined(_MSC_VER)
+    if (process::run("shell.exe") < 0) {
+#else
+    if (process::run("shell.elf") < 0) {
+#endif
+        vk_panic(__FILE__, __LINE__, "Failed to launch userspace shell!");
+    }
 
     /* Start the scheduler — does not return */
     log::debug("Transferring control to scheduler...");
