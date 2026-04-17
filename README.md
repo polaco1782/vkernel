@@ -62,6 +62,8 @@ include/vkernel/        — Public kernel headers
     types.h             — Freestanding primitive types
     console.h           — Console + log:: namespace
     memory.h            — Heap, physical allocator, memory map
+    elf.h               — ELF64 loader/data structures
+    pe.h                — PE loader/data structures
     scheduler.h         — Task scheduler API
     input.h             — Unified input (PS/2 + serial)
     fs.h                — Ramfs + UEFI ESP loader
@@ -91,6 +93,8 @@ src/core/
     scheduler.cpp       — Round-robin preemptive scheduler, PIC/PIT init
     input.cpp           — PS/2 keyboard driver + COM1 serial input
     fs.cpp              — Ramfs + UEFI Simple File System Protocol loader
+    elf.cpp             — ELF64 binary loader for ramfs-backed programs
+    pe.cpp              — PE binary loader for ramfs-backed programs
     kernel_api.cpp      — Kernel API table, file streams, and kernel-backed stubs
     process.cpp         — ELF/PE process loader and task launch
     shell.cpp           — Built-in kernel shell with commands
@@ -192,6 +196,8 @@ The built-in kernel shell accepts input from both the PS/2 keyboard (QEMU window
 ## Key Design Notes
 
 **Position-Independent PE**: The kernel is compiled with `-fpic` and linked at base 0. UEFI loads it at an arbitrary address. Because the `.reloc` section is an empty stub (PE loader applies zero fixups), `self_relocate()` in `efi_main.cpp` manually walks `.data` and adjusts all pointer-sized values that fall within the link-time image range.
+
+**Runtime binary loader**: `process.cpp` accepts ramfs files in either ELF or PE format. It detects the format from the magic bytes (`0x7F 'E' 'L' 'F'` or `MZ`), dispatches to `elf::load()` or `pe::load()`, and then starts the loaded image as a task with the kernel API pointer as the first argument.
 
 **IDT runtime addresses**: ISR stub addresses are computed at runtime via `lea isr_stub_0(%rip)` + stride × vector, avoiding the broken absolute addresses that a `.rodata` table would contain.
 
