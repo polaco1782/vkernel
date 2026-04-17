@@ -19,7 +19,7 @@
 #include "panic.h"
 #include "arch/x86_64/arch.h"
 #include "elf.h"
-#include "userapi.h"
+#include "vk.h"
 #include "process.h"
 
 namespace vk {

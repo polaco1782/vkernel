@@ -12,6 +12,8 @@ OBJCOPY ?= objcopy
 # Kernel include path (relative to this Makefile's directory)
 KERNEL_INCLUDE := ../../include
 USER_INCLUDE   := ../include
+ABI_HEADER_SRC := $(KERNEL_INCLUDE)/vkernel/vk.h
+ABI_HEADER_DST := $(USER_INCLUDE)/vkernel/vk.h
 
 CFLAGS  := -std=c11
 CFLAGS  += -nostdlib
@@ -36,9 +38,13 @@ TARGET  := hello.elf
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(ABI_HEADER_DST) $(TARGET)
 
-$(TARGET): hello.c
+$(ABI_HEADER_DST): $(ABI_HEADER_SRC)
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+$(TARGET): hello.c $(ABI_HEADER_DST)
 	@echo "  CC      $<  ->  $@"
 	@$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 	@echo "  SIZE    $@"

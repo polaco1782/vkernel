@@ -70,6 +70,10 @@
       <!-- /GS- no security cookie  /Gs999999 no stack probes (__chkstk) -->
       <AdditionalOptions>/GS- /Gs999999 /GR- /EHs-c- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
+    <PreBuildEvent>
+      <Command>if not exist "$(ProjectDir)..\include\vkernel" mkdir "$(ProjectDir)..\include\vkernel"
+copy /Y "$(SolutionDir)include\vkernel\vk.h" "$(ProjectDir)..\include\vkernel\vk.h" &gt;nul</Command>
+    </PreBuildEvent>
     <Link>
       <!-- /NODEFAULTLIB no CRT  /DYNAMICBASE generates .reloc for PE loader -->
       <SubSystem>Console</SubSystem>
@@ -104,8 +108,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ClInclude Include="..\include\vk.h" />
-    <ClInclude Include="..\..\include\vkernel\userapi.h" />
+    <ClInclude Include="..\..\include\vkernel\vk.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -87,6 +87,7 @@
     <ClCompile Include="src\core\panic.cpp" />
     <ClCompile Include="src\core\fs.cpp" />
     <ClCompile Include="src\core\elf.cpp" />
+    <ClCompile Include="src\core\kernel_api.cpp" />
     <ClCompile Include="src\core\pe.cpp" />
     <ClCompile Include="src\core\process.cpp" />
     <ClCompile Include="src\core\scheduler.cpp" />
@@ -104,7 +105,9 @@
     <ClInclude Include="include\vkernel\uefi.h" />
     <ClInclude Include="include\vkernel\console.h" />
     <ClInclude Include="include\vkernel\memory.h" />
+    <ClInclude Include="include\vkernel\vk.h" />
     <ClInclude Include="include\vkernel\arch\x86_64\arch.h" />
+    <ClInclude Include="src\core\process_internal.h" />
   </ItemGroup>
   <ItemGroup>
     <MASM Include="src\arch\x86_64\msvc_asm.asm" />

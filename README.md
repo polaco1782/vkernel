@@ -29,27 +29,27 @@ A minimal UEFI microkernel for x86_64, written in **C++26** as a hobby project.
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────┐
 │               Kernel Tasks (ring 0)               │
 │  ┌─────────────────────┬────────────────────────┐ │
 │  │   Built-in Shell    │     Idle Task (hlt)    │ │
 │  └─────────────────────┴────────────────────────┘ │
-├──────────────────────────────────────────────────┤
-│                  Microkernel Core                  │
+├───────────────────────────────────────────────────┤
+│                  Microkernel Core                 │
 │  ┌────────────┬──────────────┬──────────────────┐ │
-│  │ Scheduler  │ Memory (heap │  Input subsystem  │ │
+│  │ Scheduler  │ Memory (heap │  Input subsystem │ │
 │  │ (PIT/PIC)  │  + phys alloc│  (PS/2 + serial) │ │
 │  └────────────┴──────────────┴──────────────────┘ │
 │  ┌──────────────────────────────────────────────┐ │
 │  │  Ramfs  │  UEFI ESP Loader  │  Console/Log   │ │
 │  └──────────────────────────────────────────────┘ │
-├──────────────────────────────────────────────────┤
-│             x86_64 Hardware Abstraction            │
-│   GDT / IDT / TSS  │  PIC  │  PIT  │  Paging     │
-├──────────────────────────────────────────────────┤
-│                  UEFI Firmware                     │
-│        (Boot Services exited after init)           │
-└──────────────────────────────────────────────────┘
+├───────────────────────────────────────────────────┤
+│             x86_64 Hardware Abstraction           │
+│   GDT / IDT / TSS  │  PIC  │  PIT  │  Paging      │
+├───────────────────────────────────────────────────┤
+│                  UEFI Firmware                    │
+│        (Boot Services exited after init)          │
+└───────────────────────────────────────────────────┘
 ```
 
 ## Source Layout
@@ -78,6 +78,8 @@ src/core/
     scheduler.cpp       — Round-robin preemptive scheduler, PIC/PIT init
     input.cpp           — PS/2 keyboard driver + COM1 serial input
     fs.cpp              — Ramfs + UEFI Simple File System Protocol loader
+    kernel_api.cpp      — Kernel API table and user-facing stubs
+    process.cpp         — ELF/PE process loader and task launch
     shell.cpp           — Built-in kernel shell with commands
     uefi.cpp            — UEFI protocol wrappers
 

@@ -8,7 +8,7 @@
  * Run:   vk> run hello.elf
  */
 
-#include <vk.h>
+#include <vkernel/vk.h>
 
 int _start(const vk_api_t* api) {
     vk_init(api);
@@ -18,7 +18,7 @@ int _start(const vk_api_t* api) {
     vk_puts("+---------------------------------+\n");
     vk_puts("\n");
     vk_puts("  Kernel API version : ");
-    vk_print_int((int)__vk_api->api_version);
+    vk_print_int((int)api->api_version);
     vk_puts("\n");
     vk_puts("  Architecture       : x86-64\n");
     vk_puts("  Loader             : vkernel ELF64\n");
