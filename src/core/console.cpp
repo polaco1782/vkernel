@@ -300,6 +300,17 @@ void console::switch_to_framebuffer() {
     g_use_fb = true;
 }
 
+auto console::framebuffer() -> uefi::framebuffer_info {
+    uefi::framebuffer_info fb{};
+    fb.base   = (phys_addr)(u64)g_fb.base;
+    fb.width  = g_fb.width;
+    fb.height = g_fb.height;
+    fb.stride = g_fb.stride;
+    fb.format = g_fb.fmt;
+    fb.valid  = g_fb.base != null && g_fb.width != 0 && g_fb.height != 0;
+    return fb;
+}
+
 /* Initialize the UEFI ConOut subsystem (pre-EBS phase) */
 auto console::init() -> status_code {
     if (uefi::g_system_table == null) {

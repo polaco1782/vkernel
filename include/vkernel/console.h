@@ -71,6 +71,7 @@ void switch_to_serial();
  */
 void init_framebuffer(const uefi::framebuffer_info& fb);
 void switch_to_framebuffer();
+auto framebuffer() -> uefi::framebuffer_info;
 
 void putc(char c);
 void puts(const char* str);

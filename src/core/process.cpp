@@ -112,6 +112,18 @@ static void stub_sleep(vk_u64 ticks) {
     sched::sleep(static_cast<u64>(ticks));
 }
 
+static void stub_framebuffer_info(vk_framebuffer_info_t* out) {
+    if (out == null) return;
+
+    auto fb = console::framebuffer();
+    out->base   = static_cast<vk_u64>(fb.base);
+    out->width  = static_cast<vk_u32>(fb.width);
+    out->height = static_cast<vk_u32>(fb.height);
+    out->stride = static_cast<vk_u32>(fb.stride);
+    out->format = static_cast<vk_pixel_format_t>(fb.format);
+    out->valid  = fb.valid ? 1u : 0u;
+}
+
 static void process_task_main(void* user_data) {
     auto* ctx = static_cast<process_task_context*>(user_data);
     using entry_fn = int (*)(const vk_api_t*);
@@ -133,31 +145,32 @@ bool     s_api_ready = false;
 void init() {
     if (s_api_ready) return;
 
-    s_api = {
-        .api_version  = VK_API_VERSION,
-        /* console output */
-        .puts         = console::puts,
-        .putc         = console::putc,
-        .put_hex      = console::put_hex,
-        .put_dec      = console::put_dec,
-        .clear        = console::clear,
-        /* console input */
-        .getc         = input::getc,
-        .try_getc     = input::try_getc,
-        /* memory */
-        .malloc       = stub_malloc,
-        .free         = stub_free,
-        .memset       = stub_memset,
-        .memcpy       = stub_memcpy,
-        /* filesystem */
-        .file_exists  = stub_file_exists,
-        .file_size    = stub_file_size,
-        .file_read    = stub_file_read,
-        /* process */
-        .exit         = stub_exit,
-        .yield        = stub_yield,
-        .sleep        = stub_sleep
-    };
+    s_api = {};
+    s_api.api_version = VK_API_VERSION;
+    /* console output */
+    s_api.puts = console::puts;
+    s_api.putc = console::putc;
+    s_api.put_hex = console::put_hex;
+    s_api.put_dec = console::put_dec;
+    s_api.clear = console::clear;
+    /* console input */
+    s_api.getc = input::getc;
+    s_api.try_getc = input::try_getc;
+    /* memory */
+    s_api.malloc = stub_malloc;
+    s_api.free = stub_free;
+    s_api.memset = stub_memset;
+    s_api.memcpy = stub_memcpy;
+    /* filesystem */
+    s_api.file_exists = stub_file_exists;
+    s_api.file_size = stub_file_size;
+    s_api.file_read = stub_file_read;
+    /* process */
+    s_api.exit = stub_exit;
+    s_api.yield = stub_yield;
+    s_api.sleep = stub_sleep;
+    /* framebuffer */
+    s_api.framebuffer_info = stub_framebuffer_info;
 
     s_api_ready = true;
 }
