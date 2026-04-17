@@ -19,6 +19,8 @@ A minimal UEFI microkernel for x86_64, written in **C++26** as a hobby project.
 | Physical page allocator | ⚠️ Stub (page count tracked, no free list) |
 | UEFI Simple File System loader | ✅ Working |
 | Ramfs (in-memory flat file table) | ✅ Working |
+| Kernel/userspace ABI header | ✅ Working |
+| Userspace compat layer (`printf`, `FILE`, stubs) | ✅ Working |
 | Kernel input subsystem (PS/2 + serial) | ✅ Working |
 | Built-in kernel shell | ✅ Working |
 | IPC mechanism | ❌ Not yet implemented |
@@ -64,8 +66,19 @@ include/vkernel/        — Public kernel headers
     input.h             — Unified input (PS/2 + serial)
     fs.h                — Ramfs + UEFI ESP loader
     shell.h             — Built-in shell entry point
+    process.h           — ELF/PE loader entry point
+    process_internal.h  — Shared loader internals
     uefi.h              — UEFI protocol bindings
     arch/x86_64/arch.h  — GDT/IDT/TSS/paging/port I/O
+    vk.h                — Canonical kernel/userspace ABI header
+
+userspace/include/
+    vk.h                — libc-style stdio/FILE compatibility wrapper for freestanding ports
+    vkernel/vk.h        — Generated copy of the canonical ABI header
+
+userspace/hello/
+    hello.c             — Sample freestanding binary using printf/FILE support
+    hello.vcxproj       — MSVC project for the sample
 
 src/boot/
     efi_main.cpp        — UEFI entry point, boot phases, self-relocator
@@ -78,7 +91,7 @@ src/core/
     scheduler.cpp       — Round-robin preemptive scheduler, PIC/PIT init
     input.cpp           — PS/2 keyboard driver + COM1 serial input
     fs.cpp              — Ramfs + UEFI Simple File System Protocol loader
-    kernel_api.cpp      — Kernel API table and user-facing stubs
+    kernel_api.cpp      — Kernel API table, file streams, and kernel-backed stubs
     process.cpp         — ELF/PE process loader and task launch
     shell.cpp           — Built-in kernel shell with commands
     uefi.cpp            — UEFI protocol wrappers
@@ -181,6 +194,12 @@ The built-in kernel shell accepts input from both the PS/2 keyboard (QEMU window
 **Position-Independent PE**: The kernel is compiled with `-fpic` and linked at base 0. UEFI loads it at an arbitrary address. Because the `.reloc` section is an empty stub (PE loader applies zero fixups), `self_relocate()` in `efi_main.cpp` manually walks `.data` and adjusts all pointer-sized values that fall within the link-time image range.
 
 **IDT runtime addresses**: ISR stub addresses are computed at runtime via `lea isr_stub_0(%rip)` + stride × vector, avoiding the broken absolute addresses that a `.rodata` table would contain.
+
+**Userspace ABI split**: `include/vkernel/vk.h` is the canonical ABI. Shared helpers that do not need kernel state stay as inline `vk_*` functions there or in the userspace compat wrapper, while kernel-only services remain in `vk_api_t`.
+
+**Userspace stdio layer**: `userspace/include/vk.h` provides a freestanding C-style wrapper with `printf`, `FILE`, `fopen`, `fread`, `fwrite`, and the usual string/memory shims on top of the kernel ABI.
+
+**Exception handling**: CPU exceptions in userspace terminate only the faulting task when a process context exists. Kernel-mode exceptions still panic the kernel.
 
 **No context-switch assembly file**: `sched_switch_to` is a `[[gnu::naked]]` C++ function in `scheduler.cpp`. The only assembly file is `interrupts.S` (256 macro-generated ISR stubs + the common save/restore/iretq path).
 

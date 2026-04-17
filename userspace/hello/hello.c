@@ -8,53 +8,50 @@
  * Run:   vk> run hello.elf
  */
 
-#include <vkernel/vk.h>
+#include "../include/vk.h"
 
 int _start(const vk_api_t* api) {
     vk_init(api);
 
-    vk_puts("+---------------------------------+\n");
-    vk_puts("|   Hello from vkernel userspace! |\n");
-    vk_puts("+---------------------------------+\n");
-    vk_puts("\n");
-    vk_puts("  Kernel API version : ");
-    vk_print_int((int)api->api_version);
-    vk_puts("\n");
-    vk_puts("  Architecture       : x86-64\n");
-    vk_puts("  Loader             : vkernel ELF64\n");
-    vk_puts("\n");
+    printf("+---------------------------------+\n");
+    printf("|   Hello from vkernel userspace! |\n");
+    printf("+---------------------------------+\n");
+    printf("\n");
+    printf("  Kernel API version : %llu\n", (unsigned long long)api->api_version);
+    printf("  Architecture       : x86-64\n");
+    printf("  Loader             : vkernel ELF64\n");
+    printf("\n");
 
     /* Test memory allocation */
-    vk_puts("  Allocating 128 bytes... ");
-    void* p = vk_malloc(128);
+    printf("  Allocating 128 bytes... ");
+    void* p = malloc(128);
     if (p) {
-        vk_puts("OK at 0x");
-        vk_put_hex((vk_u64)(vk_usize)p);
-        vk_puts("\n");
-        vk_memset(p, 0xAB, 128);
-        vk_free(p);
-        vk_puts("  Freed.\n");
+        printf("OK at %p\n", p);
+        memset(p, 0xAB, 128);
+        free(p);
+        printf("  Freed.\n");
     } else {
-        vk_puts("FAILED\n");
+        printf("FAILED\n");
     }
 
-    /* Test file access */
-    vk_puts("  Checking hello.elf in ramfs... ");
-    if (vk_file_exists("hello.elf")) {
-        vk_puts("found, ");
-        vk_put_dec(vk_file_size("hello.elf"));
-        vk_puts(" bytes\n");
+    FILE *f = fopen("hello.elf", "r");
+    if (f) {
+        printf("  fopen hello.elf: success\n");
+        fclose(f);
     } else {
-        vk_puts("not found\n");
+        printf("  fopen hello.elf: failed\n");
     }
 
-    for(int i = 0; i < 100; i++) {
-        vk_puts("  Tick ");
-        vk_put_dec(i);
-        vk_puts("\n");
+    for(int i = 0; i < 10; i++) {
+        printf("  Tick %d\n", i);
         vk_sleep(100); /* Sleep for 100 ticks (1 second) */
     }
 
-    vk_puts("\nGoodbye!\n");
+    // execute a bad opcode to test error handling
+    // Note: this will crash the process, but it's a good sanity check that the kernel doesn't just hang on invalid instructions.
+    // printf("  Executing invalid instruction... ");
+    ((void(*)())0)();
+        
+    printf("\nGoodbye!\n");
     return 0;
 }

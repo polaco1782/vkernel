@@ -38,6 +38,7 @@ extern "C" {
 #endif
 
 typedef unsigned long long vk_u64;
+typedef long long          vk_i64;
 typedef unsigned int       vk_u32;
 #if defined(_MSC_VER)
 typedef unsigned long long vk_usize;
@@ -61,51 +62,70 @@ typedef struct vk_framebuffer_info {
     vk_u32            valid;
 } vk_framebuffer_info_t;
 
+typedef vk_u64 vk_file_handle_t;
+
 /* ============================================================
- * vk_api_t — version 3
+ * vk_api_t — version 6
  *
  * Add new fields only at the END to preserve ABI compatibility.
  * Bump VK_API_VERSION when the layout changes in a breaking way.
  * ============================================================ */
 
 typedef struct vk_api {
-    /* ---- header (offset 0) ---- */
+    /* ---- header ---- */
     vk_u64 api_version;
 
-    /* ---- console output (offset 8) ---- */
-    void (*puts)(const char* s);
-    void (*putc)(char c);
-    void (*put_hex)(vk_u64 v);
-    void (*put_dec)(vk_u64 v);
-    void (*clear)(void);
+    /* ---- console output ---- */
+    void (*vk_puts)(const char* s);
+    void (*vk_putc)(char c);
+    void (*vk_put_hex)(vk_u64 v);
+    void (*vk_put_dec)(vk_u64 v);
+    void (*vk_clear)(void);
 
-    /* ---- console input (offset 48) ---- */
-    char (*getc)(void);
-    char (*try_getc)(void);
+    /* ---- console input ---- */
+    char (*vk_getc)(void);
+    char (*vk_try_getc)(void);
 
-    /* ---- memory (offset 64) ---- */
-    void* (*malloc)(vk_usize size);
-    void  (*free)(void* ptr);
-    void* (*memset)(void* dest, int c, vk_usize n);
-    void* (*memcpy)(void* dest, const void* src, vk_usize n);
+    /* ---- memory ---- */
+    void* (*vk_malloc)(vk_usize size);
+    void  (*vk_free)(void* ptr);
+    void* (*vk_memset)(void* dest, int c, vk_usize n);
+    void* (*vk_memcpy)(void* dest, const void* src, vk_usize n);
+    void* (*vk_memmove)(void* dest, const void* src, vk_usize n);
+    void* (*vk_memchr)(const void* ptr, int ch, vk_usize n);
+    int   (*vk_memcmp)(const void* lhs, const void* rhs, vk_usize n);
+    void* (*vk_realloc)(void* ptr, vk_usize size);
 
-    /* ---- filesystem / ramfs (offset 96) ---- */
-    int         (*file_exists)(const char* name);
-    vk_usize    (*file_size)(const char* name);
-    vk_usize    (*file_read)(const char* name, void* buf, vk_usize buf_size);
+    /* ---- filesystem / ramfs ---- */
+    int         (*vk_file_exists)(const char* name);
+    vk_usize    (*vk_file_size)(const char* name);
+    vk_usize    (*vk_file_read)(const char* name, void* buf, vk_usize buf_size);
 
-    /* ---- process (offset 120) ---- */
-    void (*exit)(int code);
-    void (*yield)(void);
-    void (*sleep)(vk_u64 ticks);
+    /* ---- process ---- */
+    void (*vk_exit)(int code);
+    void (*vk_yield)(void);
+    void (*vk_sleep)(vk_u64 ticks);
 
-    /* ---- framebuffer (offset 144) ---- */
-    void (*framebuffer_info)(vk_framebuffer_info_t* out);
+    /* ---- framebuffer ---- */
+    void (*vk_framebuffer_info)(vk_framebuffer_info_t* out);
+
+    /* ---- file streams and filesystem ops ---- */
+    vk_file_handle_t (*vk_file_open)(const char* path, const char* mode);
+    int              (*vk_file_close)(vk_file_handle_t handle);
+    vk_usize         (*vk_file_read_handle)(vk_file_handle_t handle, void* buf, vk_usize buf_size);
+    vk_usize         (*vk_file_write_handle)(vk_file_handle_t handle, const void* buf, vk_usize buf_size);
+    int              (*vk_file_seek)(vk_file_handle_t handle, vk_i64 offset, int whence);
+    vk_i64           (*vk_file_tell)(vk_file_handle_t handle);
+    int              (*vk_file_eof)(vk_file_handle_t handle);
+    int              (*vk_file_error)(vk_file_handle_t handle);
+    int              (*vk_file_flush)(vk_file_handle_t handle);
+    int              (*vk_file_remove)(const char* path);
+    int              (*vk_file_rename)(const char* old_path, const char* new_path);
 
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 3ULL
+#define VK_API_VERSION 6ULL
 
 /* ============================================================
  * Userspace runtime helpers
@@ -125,76 +145,92 @@ static inline const vk_api_t* vk_get_api(void) {
 }
 
 static inline void vk_puts(const char* s) {
-    vk_get_api()->puts(s);
+    vk_get_api()->vk_puts(s);
 }
 
 static inline void vk_putc(char c) {
-    vk_get_api()->putc(c);
+    vk_get_api()->vk_putc(c);
 }
 
 static inline void vk_put_hex(vk_u64 v) {
-    vk_get_api()->put_hex(v);
+    vk_get_api()->vk_put_hex(v);
 }
 
 static inline void vk_put_dec(vk_u64 v) {
-    vk_get_api()->put_dec(v);
+    vk_get_api()->vk_put_dec(v);
 }
 
 static inline void vk_clear(void) {
-    vk_get_api()->clear();
+    vk_get_api()->vk_clear();
 }
 
 static inline char vk_getc(void) {
-    return vk_get_api()->getc();
+    return vk_get_api()->vk_getc();
 }
 
 static inline char vk_try_getc(void) {
-    return vk_get_api()->try_getc();
+    return vk_get_api()->vk_try_getc();
 }
 
 static inline void* vk_malloc(vk_usize size) {
-    return vk_get_api()->malloc(size);
+    return vk_get_api()->vk_malloc(size);
 }
 
 static inline void vk_free(void* ptr) {
-    vk_get_api()->free(ptr);
+    vk_get_api()->vk_free(ptr);
 }
 
 static inline void* vk_memset(void* dest, int c, vk_usize n) {
-    return vk_get_api()->memset(dest, c, n);
+    return vk_get_api()->vk_memset(dest, c, n);
 }
 
 static inline void* vk_memcpy(void* dest, const void* src, vk_usize n) {
-    return vk_get_api()->memcpy(dest, src, n);
+    return vk_get_api()->vk_memcpy(dest, src, n);
+}
+
+static inline void* vk_memmove(void* dest, const void* src, vk_usize n) {
+    return vk_get_api()->vk_memmove(dest, src, n);
+}
+
+static inline void* vk_memchr(const void* ptr, int ch, vk_usize n) {
+    return vk_get_api()->vk_memchr(ptr, ch, n);
+}
+
+static inline int vk_memcmp(const void* lhs, const void* rhs, vk_usize n) {
+    return vk_get_api()->vk_memcmp(lhs, rhs, n);
+}
+
+static inline void* vk_realloc(void* ptr, vk_usize size) {
+    return vk_get_api()->vk_realloc(ptr, size);
 }
 
 static inline void vk_get_framebuffer_info(vk_framebuffer_info_t* out) {
-    vk_get_api()->framebuffer_info(out);
+    vk_get_api()->vk_framebuffer_info(out);
 }
 
 static inline int vk_file_exists(const char* name) {
-    return vk_get_api()->file_exists(name);
+    return vk_get_api()->vk_file_exists(name);
 }
 
 static inline vk_usize vk_file_size(const char* name) {
-    return vk_get_api()->file_size(name);
+    return vk_get_api()->vk_file_size(name);
 }
 
 static inline vk_usize vk_file_read(const char* name, void* buf, vk_usize buf_size) {
-    return vk_get_api()->file_read(name, buf, buf_size);
+    return vk_get_api()->vk_file_read(name, buf, buf_size);
 }
 
 static inline void vk_exit(int code) {
-    vk_get_api()->exit(code);
+    vk_get_api()->vk_exit(code);
     VK_UNREACHABLE();
 }
 
 static inline void vk_yield(void) {
-    vk_get_api()->yield();
+    vk_get_api()->vk_yield();
 }
 
 static inline void vk_sleep(vk_u64 ticks) {
-    vk_get_api()->sleep(ticks);
+    vk_get_api()->vk_sleep(ticks);
 }
 
 static inline void vk_print_int(int n) {
@@ -203,12 +239,6 @@ static inline void vk_print_int(int n) {
         n = -n;
     }
     vk_put_dec((vk_u64)(unsigned int)n);
-}
-
-static inline vk_usize vk_strlen(const char* s) {
-    vk_usize len = 0;
-    while (s[len]) ++len;
-    return len;
 }
 
 static inline vk_usize vk_getline(char* buf, vk_usize max) {

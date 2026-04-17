@@ -11,6 +11,7 @@
 #include "memory.h"
 #include "scheduler.h"
 #include "panic.h"
+#include "process_internal.h"
 #include "arch/x86_64/arch.h"
 #if defined(_MSC_VER)
 #include "msvc_asm.h"
@@ -191,7 +192,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
     u64 vec = regs->int_no;
 
     if (vec < 32) {
-        /* CPU exception */
+        /* CPU exception — dump diagnostics */
         console::set_color(console_color::white, console_color::red);
         console::puts("\n*** EXCEPTION: ");
         console::puts(s_exception_names[vec]);
@@ -226,6 +227,27 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
         }
 
         console::set_color(console_color::white, console_color::black);
+
+        /*
+         * If the faulting task is a userspace process, kill just
+         * that process instead of bringing down the whole kernel.
+         */
+        auto* ctx = static_cast<process::process_task_context*>(
+            sched::current_task_user_data());
+        if (ctx != null) {
+            console::puts("Terminating process '");
+            console::puts(sched::current_task_name());
+            console::puts("' (task ");
+            console::put_dec(sched::current_task_id());
+            console::puts(") due to ");
+            console::puts(s_exception_names[vec]);
+            console::puts("\n");
+
+            process::cleanup_process_context(ctx, -static_cast<int>(vec));
+            sched::exit_task();
+            /* exit_task never returns */
+        }
+
         vk_panic("arch_init.cpp", __LINE__, "Unhandled CPU exception");
     }
 
