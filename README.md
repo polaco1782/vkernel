@@ -82,6 +82,22 @@ userspace/hello/
     hello.c             — Sample freestanding binary using printf/FILE support
     hello.vcxproj       — MSVC project for the sample
 
+userspace/framebuffer/
+    framebuffer.c       — Framebuffer painting demo
+    framebuffer.vcxproj  — MSVC project for the demo
+
+userspace/framebuffer_text/
+    framebuffer_text.c  — Framebuffer text rendering demo
+    framebuffer_text.vcxproj — MSVC project for the demo
+
+userspace/raytracer/
+    raytracer.c         — Realtime raytracing demo
+    raytracer.vcxproj   — MSVC project for the demo
+
+userspace/ramfs_reader/
+    ramfs_reader.c      — Ramfs file-reading demo
+    ramfs_reader.vcxproj — MSVC project for the demo
+
 src/boot/
     efi_main.cpp        — UEFI entry point, boot phases, self-relocator
     linker.ld           — Custom linker script (base 0, GOT markers)
@@ -137,6 +153,7 @@ make CROSS_PREFIX=x86_64-linux-gnu-
 ```bash
 make              # Release build
 make DEBUG=1      # Debug build (VK_DEBUG_LEVEL=5, extra [DEBUG] output)
+make userspace    # Build all staged userspace ELF examples
 make clean        # Remove build artefacts
 make info         # Print build configuration
 make disasm       # Generate build/vkernel.disasm
@@ -144,8 +161,16 @@ make disasm       # Generate build/vkernel.disasm
 
 ### Visual Studio / MSVC
 
-Open `vkernel.sln` and build the `hello` project. It uses `cl` and writes
-`hello.exe` under `build_vs\hello\<Configuration>\`.
+Open `vkernel.sln` and build the userspace projects (`hello`, `framebuffer`,
+`ramfs_reader`). They use `cl` and write their outputs under
+`build_vs\<project>\<Configuration>\`.
+
+`run_qemu.bat` stages the matching `.exe` files into the Windows ESP image,
+copying `hello.exe`, `framebuffer.exe`, `framebuffer_text.exe`, `raytracer.exe`,
+and `ramfs_reader.exe` from the selected configuration directory.
+
+Pass `Debug` or `Release` to `run_qemu.bat` to choose which MSVC output
+directory gets staged; `Debug` is the default.
 
 Output: `build/vkernel.efi` — a UEFI PE application (~43 KB).
 
@@ -193,6 +218,20 @@ The built-in kernel shell accepts input from both the PS/2 keyboard (QEMU window
 | `clear` | Clear the screen |
 | `uptime` | Tick count since scheduler start |
 
+### Userspace Examples
+
+The boot image now stages multiple freestanding binaries into ramfs. After boot, you can launch them from the shell with `run`:
+
+```text
+vk> run hello.elf
+vk> run framebuffer.elf
+vk> run framebuffer_text.elf
+vk> run raytracer.elf
+vk> run ramfs_reader.elf
+```
+
+On Windows/MSVC builds, the same examples are staged as `.exe` files, so the shell names are `hello.exe`, `framebuffer.exe`, `framebuffer_text.exe`, `raytracer.exe`, and `ramfs_reader.exe`.
+
 ## Key Design Notes
 
 **Position-Independent PE**: The kernel is compiled with `-fpic` and linked at base 0. UEFI loads it at an arbitrary address. Because the `.reloc` section is an empty stub (PE loader applies zero fixups), `self_relocate()` in `efi_main.cpp` manually walks `.data` and adjusts all pointer-sized values that fall within the link-time image range.
@@ -204,6 +243,9 @@ The built-in kernel shell accepts input from both the PS/2 keyboard (QEMU window
 **Userspace ABI split**: `include/vkernel/vk.h` is the canonical ABI. Shared helpers that do not need kernel state stay as inline `vk_*` functions there or in the userspace compat wrapper, while kernel-only services remain in `vk_api_t`.
 
 **Userspace stdio layer**: `userspace/include/vk.h` provides a freestanding C-style wrapper with `printf`, `FILE`, `fopen`, `fread`, `fwrite`, and the usual string/memory shims on top of the kernel ABI.
+
+**Userspace examples**: `userspace/hello` prints runtime and file-system information, `userspace/framebuffer` paints the GOP framebuffer directly, `userspace/framebuffer_text` renders text into the framebuffer, `userspace/raytracer` draws a realtime raytraced scene, and `userspace/ramfs_reader` reads back a staged ELF from ramfs and prints its header bytes.
+`userspace/framebuffer_text` renders text directly into the framebuffer.
 
 **Exception handling**: CPU exceptions in userspace terminate only the faulting task when a process context exists. Kernel-mode exceptions still panic the kernel.
 

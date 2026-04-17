@@ -13,7 +13,11 @@ BOOT_IMG  := $(BUILD_DIR)/$(KERNEL_NAME)_boot.img
 # Userspace programs
 USERSPACE_DIR  := userspace
 HELLO_ELF      := $(USERSPACE_DIR)/hello/hello.elf
-USERSPACE_ELFS := $(HELLO_ELF)
+FRAMEBUFFER_ELF := $(USERSPACE_DIR)/framebuffer/framebuffer.elf
+FRAMEBUFFER_TEXT_ELF := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.elf
+RAYTRACER_ELF := $(USERSPACE_DIR)/raytracer/raytracer.elf
+RAMFS_READER_ELF := $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.elf
+USERSPACE_ELFS := $(HELLO_ELF) $(FRAMEBUFFER_ELF) $(FRAMEBUFFER_TEXT_ELF) $(RAYTRACER_ELF) $(RAMFS_READER_ELF)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -108,6 +112,18 @@ userspace: $(USERSPACE_ELFS)
 $(HELLO_ELF): $(USERSPACE_DIR)/hello/hello.c $(USERSPACE_DIR)/hello/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello
 
+$(FRAMEBUFFER_ELF): $(USERSPACE_DIR)/framebuffer/framebuffer.c $(USERSPACE_DIR)/framebuffer/Makefile
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer
+
+$(FRAMEBUFFER_TEXT_ELF): $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.c $(USERSPACE_DIR)/framebuffer_text/Makefile
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer_text
+
+$(RAYTRACER_ELF): $(USERSPACE_DIR)/raytracer/raytracer.c $(USERSPACE_DIR)/raytracer/Makefile
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer
+
+$(RAMFS_READER_ELF): $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.c $(USERSPACE_DIR)/ramfs_reader/Makefile
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/ramfs_reader
+
 # Disassembly for debugging
 disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@$(OBJDUMP) -d $< > $(BUILD_DIR)/$(KERNEL_NAME).dis
@@ -118,6 +134,10 @@ clean:
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer_text clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/ramfs_reader clean
 
 # QEMU test
 qemu: $(BOOT_IMG)

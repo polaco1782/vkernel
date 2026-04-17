@@ -6,6 +6,14 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vkernel", "vkernel.vcxproj"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "hello", "userspace\hello\hello.vcxproj", "{5F2D6A2B-8AE1-4A4D-9C1A-4D9E6E3D7B20}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "framebuffer", "userspace\framebuffer\framebuffer.vcxproj", "{D3E4F5A6-B789-4CDE-9012-3456789ABCDE}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "framebuffer_text", "userspace\framebuffer_text\framebuffer_text.vcxproj", "{F5A6B7C8-D901-4EF0-B234-56789ABCDEF0}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "raytracer", "userspace\raytracer\raytracer.vcxproj", "{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ramfs_reader", "userspace\ramfs_reader\ramfs_reader.vcxproj", "{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -20,6 +28,22 @@ Global
 		{5F2D6A2B-8AE1-4A4D-9C1A-4D9E6E3D7B20}.Debug|x64.Build.0 = Debug|x64
 		{5F2D6A2B-8AE1-4A4D-9C1A-4D9E6E3D7B20}.Release|x64.ActiveCfg = Release|x64
 		{5F2D6A2B-8AE1-4A4D-9C1A-4D9E6E3D7B20}.Release|x64.Build.0 = Release|x64
+		{D3E4F5A6-B789-4CDE-9012-3456789ABCDE}.Debug|x64.ActiveCfg = Debug|x64
+		{D3E4F5A6-B789-4CDE-9012-3456789ABCDE}.Debug|x64.Build.0 = Debug|x64
+		{D3E4F5A6-B789-4CDE-9012-3456789ABCDE}.Release|x64.ActiveCfg = Release|x64
+		{D3E4F5A6-B789-4CDE-9012-3456789ABCDE}.Release|x64.Build.0 = Release|x64
+		{F5A6B7C8-D901-4EF0-B234-56789ABCDEF0}.Debug|x64.ActiveCfg = Debug|x64
+		{F5A6B7C8-D901-4EF0-B234-56789ABCDEF0}.Debug|x64.Build.0 = Debug|x64
+		{F5A6B7C8-D901-4EF0-B234-56789ABCDEF0}.Release|x64.ActiveCfg = Release|x64
+		{F5A6B7C8-D901-4EF0-B234-56789ABCDEF0}.Release|x64.Build.0 = Release|x64
+		{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}.Debug|x64.ActiveCfg = Debug|x64
+		{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}.Debug|x64.Build.0 = Debug|x64
+		{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}.Release|x64.ActiveCfg = Release|x64
+		{A6B7C8D9-E012-4F01-C345-6789ABCDEF01}.Release|x64.Build.0 = Release|x64
+		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Debug|x64.ActiveCfg = Debug|x64
+		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Debug|x64.Build.0 = Debug|x64
+		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Release|x64.ActiveCfg = Release|x64
+		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

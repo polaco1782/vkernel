@@ -322,6 +322,14 @@ auto loader::load_initrd() -> status_code {
         "\\EFI\\vkernel\\hello.exe",
         "\\EFI\\vkernel\\motd.txt",
         "\\EFI\\vkernel\\hello.elf",
+        "\\EFI\\vkernel\\framebuffer.exe",
+        "\\EFI\\vkernel\\framebuffer.elf",
+        "\\EFI\\vkernel\\framebuffer_text.exe",
+        "\\EFI\\vkernel\\framebuffer_text.elf",
+        "\\EFI\\vkernel\\raytracer.exe",
+        "\\EFI\\vkernel\\raytracer.elf",
+        "\\EFI\\vkernel\\ramfs_reader.exe",
+        "\\EFI\\vkernel\\ramfs_reader.elf",
     };
     constexpr usize file_count = sizeof(files) / sizeof(files[0]);
 

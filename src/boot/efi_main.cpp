@@ -15,6 +15,7 @@
 #include "input.h"
 #include "shell.h"
 #include "panic.h"
+#include "process.h"
 #include "arch/x86_64/arch.h"
 
 namespace vk {

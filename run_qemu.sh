@@ -19,7 +19,13 @@ OVMF_CODE="/usr/share/edk2/ovmf/OVMF_CODE_4M.qcow2"
 OVMF_VARS="/usr/share/edk2/ovmf/OVMF_VARS_4M.qcow2"
 BOOT_IMG="${BUILD_DIR}/vkernel_boot.img"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)/scripts"
-HELLO_ELF="userspace/hello/hello.elf"
+USERSPACE_ELFS=(
+    "userspace/hello/hello.elf"
+    "userspace/framebuffer/framebuffer.elf"
+    "userspace/framebuffer_text/framebuffer_text.elf"
+    "userspace/raytracer/raytracer.elf"
+    "userspace/ramfs_reader/ramfs_reader.elf"
+)
 
 # Fall back to 2M variant
 if [ ! -f "${OVMF_CODE}" ]; then
@@ -36,7 +42,7 @@ if [ ! -f "${OVMF_CODE}" ]; then
 fi
 
 echo "Creating bootable UEFI disk image..."
-bash "${SCRIPT_DIR}/make_disk.sh" "${EFI_FILE}" "${BOOT_IMG}" "${HELLO_ELF}"
+bash "${SCRIPT_DIR}/make_disk.sh" "${EFI_FILE}" "${BOOT_IMG}" "${USERSPACE_ELFS[@]}"
 
 # Writable OVMF_VARS
 TEMP_VARS="/tmp/vkernel_ovmf_vars_$$.fd"

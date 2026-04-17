@@ -11,6 +11,12 @@ set EFI_FILE=%BUILD_DIR%\vkernel.efi
 set ESP_ROOT=%BUILD_DIR%\esp
 set ESP_BOOT=%ESP_ROOT%\EFI\BOOT
 set NVRAM_FILE=%BUILD_DIR%\ovmf_vars.fd
+set BUILD_CONFIG=Debug
+
+if not "%~1"=="" (
+    if /I "%~1"=="Release" set BUILD_CONFIG=Release
+    if /I "%~1"=="Debug" set BUILD_CONFIG=Debug
+)
 
 REM Check if EFI file exists
 if not exist "%EFI_FILE%" (
@@ -51,8 +57,12 @@ if exist "%ESP_ROOT%" rmdir /s /q "%ESP_ROOT%"
 mkdir "%ESP_BOOT%"
 copy /y "%EFI_FILE%" "%ESP_BOOT%\bootx64.efi" >nul
 
-REM Copy userspace hello.exe to ESP
-set HELLO_EXE=%BUILD_DIR%\hello\Debug\hello.exe
+REM Copy userspace .exe files to ESP
+set HELLO_EXE=%BUILD_DIR%\hello\%BUILD_CONFIG%\hello.exe
+set FRAMEBUFFER_EXE=%BUILD_DIR%\framebuffer\%BUILD_CONFIG%\framebuffer.exe
+set FRAMEBUFFER_TEXT_EXE=%BUILD_DIR%\framebuffer_text\%BUILD_CONFIG%\framebuffer_text.exe
+set RAYTRACER_EXE=%BUILD_DIR%\raytracer\%BUILD_CONFIG%\raytracer.exe
+set RAMFS_READER_EXE=%BUILD_DIR%\ramfs_reader\%BUILD_CONFIG%\ramfs_reader.exe
 set ESP_VKERNEL=%ESP_ROOT%\EFI\vkernel
 
 if exist "%HELLO_EXE%" (
@@ -61,6 +71,38 @@ if exist "%HELLO_EXE%" (
     echo Copied %HELLO_EXE% to ESP
 ) else (
     echo Warning: hello.exe not found at %HELLO_EXE%
+)
+
+if exist "%FRAMEBUFFER_EXE%" (
+    if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
+    copy /y "%FRAMEBUFFER_EXE%" "%ESP_VKERNEL%\framebuffer.exe" >nul
+    echo Copied %FRAMEBUFFER_EXE% to ESP
+) else (
+    echo Warning: framebuffer.exe not found at %FRAMEBUFFER_EXE%
+)
+
+if exist "%FRAMEBUFFER_TEXT_EXE%" (
+    if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
+    copy /y "%FRAMEBUFFER_TEXT_EXE%" "%ESP_VKERNEL%\framebuffer_text.exe" >nul
+    echo Copied %FRAMEBUFFER_TEXT_EXE% to ESP
+) else (
+    echo Warning: framebuffer_text.exe not found at %FRAMEBUFFER_TEXT_EXE%
+)
+
+if exist "%RAYTRACER_EXE%" (
+    if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
+    copy /y "%RAYTRACER_EXE%" "%ESP_VKERNEL%\raytracer.exe" >nul
+    echo Copied %RAYTRACER_EXE% to ESP
+) else (
+    echo Warning: raytracer.exe not found at %RAYTRACER_EXE%
+)
+
+if exist "%RAMFS_READER_EXE%" (
+    if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
+    copy /y "%RAMFS_READER_EXE%" "%ESP_VKERNEL%\ramfs_reader.exe" >nul
+    echo Copied %RAMFS_READER_EXE% to ESP
+) else (
+    echo Warning: ramfs_reader.exe not found at %RAMFS_READER_EXE%
 )
 
 REM Run QEMU

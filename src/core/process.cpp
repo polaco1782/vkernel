@@ -126,6 +126,7 @@ auto run(const char* filename) -> i64 {
     ctx->image_base = image_base;
     ctx->image_size = image_size;
 
+	// create a new task and pass the context as user data
     i64 task_id = sched::create_task(filename, process_task_main, ctx);
     if (task_id < 0) {
         console::puts("process: failed to create task\n");
