@@ -1,8 +1,8 @@
 # vkernel userspace - ramfs reader demo
 # Copyright (C) 2026 vkernel authors
 #
-# Builds a freestanding static ELF64 binary suitable for loading
-# with the vkernel ELF loader.
+# Builds a freestanding static binary suitable for loading
+# with the vkernel process loader.
 
 CC      ?= gcc
 OBJCOPY ?= objcopy
@@ -27,7 +27,7 @@ LDFLAGS += -e _start
 LDFLAGS += -Wl,--build-id=none
 LDFLAGS += -Wl,-z,norelro
 
-TARGET  := ramfs_reader.elf
+TARGET  := ramfs_reader.vbin
 
 .PHONY: all clean
 

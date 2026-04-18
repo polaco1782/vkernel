@@ -79,27 +79,27 @@ userspace/include/
 
 userspace/hello/
     hello.c             — Sample freestanding binary using printf/FILE support
-    hello.vcxproj       — MSVC project for the sample
+    hello.vcxproj       — MSVC project for the sample; output: hello.vbin
 
 userspace/framebuffer/
     framebuffer.c       — Framebuffer painting demo
-    framebuffer.vcxproj  — MSVC project for the demo
+    framebuffer.vcxproj  — MSVC project for the demo; output: framebuffer.vbin
 
 userspace/framebuffer_text/
     framebuffer_text.c  — Framebuffer text rendering demo
-    framebuffer_text.vcxproj — MSVC project for the demo
+    framebuffer_text.vcxproj — MSVC project for the demo; output: framebuffer_text.vbin
 
 userspace/raytracer/
     raytracer.c         — Realtime raytracing demo
-    raytracer.vcxproj   — MSVC project for the demo
+    raytracer.vcxproj   — MSVC project for the demo; output: raytracer.vbin
 
 userspace/shell/
     shell.c             — Userspace shell that launches demos
-    shell.vcxproj       — MSVC project for the shell
+    shell.vcxproj       — MSVC project for the shell; output: shell.vbin
 
 userspace/ramfs_reader/
     ramfs_reader.c      — Ramfs file-reading demo
-    ramfs_reader.vcxproj — MSVC project for the demo
+    ramfs_reader.vcxproj — MSVC project for the demo; output: ramfs_reader.vbin
 
 src/boot/
     efi_main.cpp        — UEFI entry point, boot phases, self-relocator
@@ -163,7 +163,7 @@ VS Code includes build tasks for both platforms:
 The shell now runs as a userspace program launched by the kernel. It still reads from the unified keyboard/serial input path and writes to the same console surfaces.
 make              # Release build
 make DEBUG=1      # Debug build (VK_DEBUG_LEVEL=5, extra [DEBUG] output)
-make userspace    # Build all staged userspace ELF examples
+make userspace    # Build all staged userspace binaries
 | `help` | List available commands |
 | `version` | Show shell and ABI version |
 | `mem` | Show memory info |
@@ -181,9 +181,9 @@ make userspace    # Build all staged userspace ELF examples
 `ramfs_reader`). They use `cl` and write their outputs under
 `build_vs\<project>\<Configuration>\`.
 
-`run_qemu.bat` stages the matching `.exe` files into the Windows ESP image,
-copying `hello.exe`, `framebuffer.exe`, `framebuffer_text.exe`, `raytracer.exe`,
-`ramfs_reader.exe`, and `shell.exe` from the selected configuration directory.
+`run_qemu.bat` stages the matching `.vbin` files into the Windows ESP image,
+copying `hello.vbin`, `framebuffer.vbin`, `framebuffer_text.vbin`, `raytracer.vbin`,
+`ramfs_reader.vbin`, and `shell.vbin` from the selected configuration directory.
 
 Pass `Debug` or `Release` to `run_qemu.bat` to choose which MSVC output
 directory gets staged; `Debug` is the default.

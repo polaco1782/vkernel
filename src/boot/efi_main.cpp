@@ -220,6 +220,7 @@ auto efi_main(
     console::switch_to_serial();
     if (fb_info.valid) {
         console::switch_to_framebuffer();
+		console::clear();
     }
     console::write("Boot services exited. Serial + framebuffer console active.");
 
@@ -256,11 +257,7 @@ auto efi_main(
 
     /* Launch the userspace shell binary. */
     console::write("Launching userspace shell...");
-#if defined(_MSC_VER)
-    if (process::run("shell.exe") < 0) {
-#else
-    if (process::run("shell.elf") < 0) {
-#endif
+    if (process::run("shell.vbin") < 0) {
         vk_panic(__FILE__, __LINE__, "Failed to launch userspace shell!");
     }
 

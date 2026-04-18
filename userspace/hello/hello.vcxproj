@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -45,7 +45,7 @@
     <OutDir>$(SolutionDir)build_vs\hello\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)build_vs\hello\obj\$(Configuration)\</IntDir>
     <TargetName>hello</TargetName>
-    <TargetExt>.exe</TargetExt>
+    <TargetExt>.vbin</TargetExt>
   </PropertyGroup>
   <PropertyGroup Label="Vcpkg">
     <VcpkgEnabled>false</VcpkgEnabled>
@@ -96,3 +96,4 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
+

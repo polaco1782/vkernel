@@ -36,7 +36,7 @@
     <OutDir>$(SolutionDir)build_vs\raytracer\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)build_vs\raytracer\obj\$(Configuration)\</IntDir>
     <TargetName>raytracer</TargetName>
-    <TargetExt>.exe</TargetExt>
+    <TargetExt>.vbin</TargetExt>
   </PropertyGroup>
   <PropertyGroup Label="Vcpkg">
     <VcpkgEnabled>false</VcpkgEnabled>
@@ -85,3 +85,4 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
+

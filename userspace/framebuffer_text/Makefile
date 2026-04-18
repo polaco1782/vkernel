@@ -1,8 +1,8 @@
 # vkernel userspace - framebuffer text demo
 # Copyright (C) 2026 vkernel authors
 #
-# Builds a freestanding static ELF64 binary suitable for loading
-# with the vkernel ELF loader.
+# Builds a freestanding static binary suitable for loading
+# with the vkernel process loader.
 
 CC      ?= gcc
 OBJCOPY ?= objcopy
@@ -27,7 +27,7 @@ LDFLAGS += -e _start
 LDFLAGS += -Wl,--build-id=none
 LDFLAGS += -Wl,-z,norelro
 
-TARGET  := framebuffer_text.elf
+TARGET  := framebuffer_text.vbin
 
 .PHONY: all clean
 

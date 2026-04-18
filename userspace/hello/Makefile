@@ -1,8 +1,8 @@
 # vkernel userspace - hello world
 # Copyright (C) 2026 vkernel authors
 #
-# Builds a freestanding static ELF64 binary suitable for loading
-# with the vkernel ELF loader.
+# Builds a freestanding static binary suitable for loading
+# with the vkernel process loader.
 
 # Use the native (or cross) x86-64 GCC toolchain.
 # Override with: make CC=x86_64-linux-gnu-gcc
@@ -29,7 +29,7 @@ LDFLAGS += -e _start
 LDFLAGS += -Wl,--build-id=none
 LDFLAGS += -Wl,-z,norelro
 
-TARGET  := hello.elf
+TARGET  := hello.vbin
 
 .PHONY: all clean
 

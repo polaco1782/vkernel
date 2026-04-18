@@ -319,24 +319,17 @@ auto loader::load_initrd() -> status_code {
 
     ramfs::init();
 
-    /* List of files to attempt loading from the ESP.
-     * These live under \EFI\vkernel\ on the ESP. */
+    // hardcoded for now
     static const char* const files[] = {
         "\\EFI\\vkernel\\shell.txt",
-        "\\EFI\\vkernel\\hello.exe",
+        "\\EFI\\vkernel\\hello.vbin",
         "\\EFI\\vkernel\\motd.txt",
-        "\\EFI\\vkernel\\hello.elf",
-        "\\EFI\\vkernel\\framebuffer.exe",
-        "\\EFI\\vkernel\\framebuffer.elf",
-        "\\EFI\\vkernel\\framebuffer_text.exe",
-        "\\EFI\\vkernel\\framebuffer_text.elf",
-        "\\EFI\\vkernel\\raytracer.exe",
-        "\\EFI\\vkernel\\raytracer.elf",
-        "\\EFI\\vkernel\\ramfs_reader.exe",
-        "\\EFI\\vkernel\\ramfs_reader.elf",
-        "\\EFI\\vkernel\\shell.exe",
-        "\\EFI\\vkernel\\shell.elf",
-        "\\EFI\\vkernel\\doom.exe",
+        "\\EFI\\vkernel\\framebuffer.vbin",
+        "\\EFI\\vkernel\\framebuffer_text.vbin",
+        "\\EFI\\vkernel\\raytracer.vbin",
+        "\\EFI\\vkernel\\ramfs_reader.vbin",
+        "\\EFI\\vkernel\\shell.vbin",
+        "\\EFI\\vkernel\\doom.vbin",
         "\\EFI\\vkernel\\doom1.wad",
     };
     constexpr usize file_count = sizeof(files) / sizeof(files[0]);

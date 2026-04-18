@@ -12,13 +12,13 @@ BOOT_IMG  := $(BUILD_DIR)/$(KERNEL_NAME)_boot.img
 
 # Userspace programs
 USERSPACE_DIR  := userspace
-HELLO_ELF      := $(USERSPACE_DIR)/hello/hello.elf
-FRAMEBUFFER_ELF := $(USERSPACE_DIR)/framebuffer/framebuffer.elf
-FRAMEBUFFER_TEXT_ELF := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.elf
-RAYTRACER_ELF := $(USERSPACE_DIR)/raytracer/raytracer.elf
-RAMFS_READER_ELF := $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.elf
-SHELL_ELF      := $(USERSPACE_DIR)/shell/shell.elf
-USERSPACE_ELFS := $(HELLO_ELF) $(FRAMEBUFFER_ELF) $(FRAMEBUFFER_TEXT_ELF) $(RAYTRACER_ELF) $(RAMFS_READER_ELF) $(SHELL_ELF)
+HELLO_VBIN      := $(USERSPACE_DIR)/hello/hello.vbin
+FRAMEBUFFER_VBIN := $(USERSPACE_DIR)/framebuffer/framebuffer.vbin
+FRAMEBUFFER_TEXT_VBIN := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.vbin
+RAYTRACER_VBIN := $(USERSPACE_DIR)/raytracer/raytracer.vbin
+RAMFS_READER_VBIN := $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.vbin
+SHELL_VBIN      := $(USERSPACE_DIR)/shell/shell.vbin
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(RAMFS_READER_VBIN) $(SHELL_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -101,30 +101,30 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@ls -lh $@
 
 # Create bootable GPT + EFI System Partition disk image
-$(BOOT_IMG): $(EFI_FILE) $(USERSPACE_ELFS) scripts/make_disk.sh
+$(BOOT_IMG): $(EFI_FILE) $(USERSPACE_BINARIES) scripts/make_disk.sh
 	@echo "  DISK    $@"
-	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(USERSPACE_ELFS)
+	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(USERSPACE_BINARIES)
 
-# Build all userspace ELF programs
+# Build all userspace binaries
 .PHONY: userspace
-userspace: $(USERSPACE_ELFS)
+userspace: $(USERSPACE_BINARIES)
 
-$(HELLO_ELF): $(USERSPACE_DIR)/hello/hello.c $(USERSPACE_DIR)/hello/Makefile
+$(HELLO_VBIN): $(USERSPACE_DIR)/hello/hello.c $(USERSPACE_DIR)/hello/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello
 
-$(FRAMEBUFFER_ELF): $(USERSPACE_DIR)/framebuffer/framebuffer.c $(USERSPACE_DIR)/framebuffer/Makefile
+$(FRAMEBUFFER_VBIN): $(USERSPACE_DIR)/framebuffer/framebuffer.c $(USERSPACE_DIR)/framebuffer/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer
 
-$(FRAMEBUFFER_TEXT_ELF): $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.c $(USERSPACE_DIR)/framebuffer_text/Makefile
+$(FRAMEBUFFER_TEXT_VBIN): $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.c $(USERSPACE_DIR)/framebuffer_text/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer_text
 
-$(RAYTRACER_ELF): $(USERSPACE_DIR)/raytracer/raytracer.c $(USERSPACE_DIR)/raytracer/Makefile
+$(RAYTRACER_VBIN): $(USERSPACE_DIR)/raytracer/raytracer.c $(USERSPACE_DIR)/raytracer/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer
 
-$(RAMFS_READER_ELF): $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.c $(USERSPACE_DIR)/ramfs_reader/Makefile
+$(RAMFS_READER_VBIN): $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.c $(USERSPACE_DIR)/ramfs_reader/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/ramfs_reader
 
-$(SHELL_ELF): $(USERSPACE_DIR)/shell/shell.c $(USERSPACE_DIR)/shell/Makefile
+$(SHELL_VBIN): $(USERSPACE_DIR)/shell/shell.c $(USERSPACE_DIR)/shell/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell
 
 # Disassembly for debugging

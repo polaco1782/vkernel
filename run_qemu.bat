@@ -64,71 +64,71 @@ if exist "%ESP_ROOT%" rmdir /s /q "%ESP_ROOT%"
 mkdir "%ESP_BOOT%"
 copy /y "%EFI_FILE%" "%ESP_BOOT%\bootx64.efi" >nul
 
-REM Copy userspace .exe files to ESP
-set DOOM_EXE=userspace\rp2040-doom\build_vs\doom\%BUILD_CONFIG%\doom.exe
-if not exist "%DOOM_EXE%" set DOOM_EXE=%BUILD_DIR%\doom\%BUILD_CONFIG%\doom.exe
-set HELLO_EXE=%BUILD_DIR%\hello\%BUILD_CONFIG%\hello.exe
-set FRAMEBUFFER_EXE=%BUILD_DIR%\framebuffer\%BUILD_CONFIG%\framebuffer.exe
-set FRAMEBUFFER_TEXT_EXE=%BUILD_DIR%\framebuffer_text\%BUILD_CONFIG%\framebuffer_text.exe
-set RAYTRACER_EXE=%BUILD_DIR%\raytracer\%BUILD_CONFIG%\raytracer.exe
-set RAMFS_READER_EXE=%BUILD_DIR%\ramfs_reader\%BUILD_CONFIG%\ramfs_reader.exe
-set SHELL_EXE=%BUILD_DIR%\shell\%BUILD_CONFIG%\shell.exe
+REM Copy userspace .vbin files to ESP
+set DOOM_VBIN=userspace\rp2040-doom\build_vs\doom\%BUILD_CONFIG%\doom.vbin
+if not exist "%DOOM_VBIN%" set DOOM_VBIN=%BUILD_DIR%\doom\%BUILD_CONFIG%\doom.vbin
+set HELLO_VBIN=%BUILD_DIR%\hello\%BUILD_CONFIG%\hello.vbin
+set FRAMEBUFFER_VBIN=%BUILD_DIR%\framebuffer\%BUILD_CONFIG%\framebuffer.vbin
+set FRAMEBUFFER_TEXT_VBIN=%BUILD_DIR%\framebuffer_text\%BUILD_CONFIG%\framebuffer_text.vbin
+set RAYTRACER_VBIN=%BUILD_DIR%\raytracer\%BUILD_CONFIG%\raytracer.vbin
+set RAMFS_READER_VBIN=%BUILD_DIR%\ramfs_reader\%BUILD_CONFIG%\ramfs_reader.vbin
+set SHELL_VBIN=%BUILD_DIR%\shell\%BUILD_CONFIG%\shell.vbin
 set ESP_VKERNEL=%ESP_ROOT%\EFI\vkernel
 
-if exist "%DOOM_EXE%" (
+if exist "%DOOM_VBIN%" (
     mkdir "%ESP_VKERNEL%"
-    copy /y "%DOOM_EXE%" "%ESP_VKERNEL%\doom.exe" >nul
-    echo Copied %DOOM_EXE% to ESP
+    copy /y "%DOOM_VBIN%" "%ESP_VKERNEL%\doom.vbin" >nul
+    echo Copied %DOOM_VBIN% to ESP
 ) else (
-    echo Warning: doom.exe not found at %DOOM_EXE%
+    echo Warning: doom.vbin not found at %DOOM_VBIN%
 )
 
-if exist "%HELLO_EXE%" (
+if exist "%HELLO_VBIN%" (
     mkdir "%ESP_VKERNEL%"
-    copy /y "%HELLO_EXE%" "%ESP_VKERNEL%\hello.exe" >nul
-    echo Copied %HELLO_EXE% to ESP
+    copy /y "%HELLO_VBIN%" "%ESP_VKERNEL%\hello.vbin" >nul
+    echo Copied %HELLO_VBIN% to ESP
 ) else (
-    echo Warning: hello.exe not found at %HELLO_EXE%
+    echo Warning: hello.vbin not found at %HELLO_VBIN%
 )
 
-if exist "%FRAMEBUFFER_EXE%" (
+if exist "%FRAMEBUFFER_VBIN%" (
     if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
-    copy /y "%FRAMEBUFFER_EXE%" "%ESP_VKERNEL%\framebuffer.exe" >nul
-    echo Copied %FRAMEBUFFER_EXE% to ESP
+    copy /y "%FRAMEBUFFER_VBIN%" "%ESP_VKERNEL%\framebuffer.vbin" >nul
+    echo Copied %FRAMEBUFFER_VBIN% to ESP
 ) else (
-    echo Warning: framebuffer.exe not found at %FRAMEBUFFER_EXE%
+    echo Warning: framebuffer.vbin not found at %FRAMEBUFFER_VBIN%
 )
 
-if exist "%FRAMEBUFFER_TEXT_EXE%" (
+if exist "%FRAMEBUFFER_TEXT_VBIN%" (
     if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
-    copy /y "%FRAMEBUFFER_TEXT_EXE%" "%ESP_VKERNEL%\framebuffer_text.exe" >nul
-    echo Copied %FRAMEBUFFER_TEXT_EXE% to ESP
+    copy /y "%FRAMEBUFFER_TEXT_VBIN%" "%ESP_VKERNEL%\framebuffer_text.vbin" >nul
+    echo Copied %FRAMEBUFFER_TEXT_VBIN% to ESP
 ) else (
-    echo Warning: framebuffer_text.exe not found at %FRAMEBUFFER_TEXT_EXE%
+    echo Warning: framebuffer_text.vbin not found at %FRAMEBUFFER_TEXT_VBIN%
 )
 
-if exist "%RAYTRACER_EXE%" (
+if exist "%RAYTRACER_VBIN%" (
     if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
-    copy /y "%RAYTRACER_EXE%" "%ESP_VKERNEL%\raytracer.exe" >nul
-    echo Copied %RAYTRACER_EXE% to ESP
+    copy /y "%RAYTRACER_VBIN%" "%ESP_VKERNEL%\raytracer.vbin" >nul
+    echo Copied %RAYTRACER_VBIN% to ESP
 ) else (
-    echo Warning: raytracer.exe not found at %RAYTRACER_EXE%
+    echo Warning: raytracer.vbin not found at %RAYTRACER_VBIN%
 )
 
-if exist "%RAMFS_READER_EXE%" (
+if exist "%RAMFS_READER_VBIN%" (
     if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
-    copy /y "%RAMFS_READER_EXE%" "%ESP_VKERNEL%\ramfs_reader.exe" >nul
-    echo Copied %RAMFS_READER_EXE% to ESP
+    copy /y "%RAMFS_READER_VBIN%" "%ESP_VKERNEL%\ramfs_reader.vbin" >nul
+    echo Copied %RAMFS_READER_VBIN% to ESP
 ) else (
-    echo Warning: ramfs_reader.exe not found at %RAMFS_READER_EXE%
+    echo Warning: ramfs_reader.vbin not found at %RAMFS_READER_VBIN%
 )
 
-if exist "%SHELL_EXE%" (
+if exist "%SHELL_VBIN%" (
     if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
-    copy /y "%SHELL_EXE%" "%ESP_VKERNEL%\shell.exe" >nul
-    echo Copied %SHELL_EXE% to ESP
+    copy /y "%SHELL_VBIN%" "%ESP_VKERNEL%\shell.vbin" >nul
+    echo Copied %SHELL_VBIN% to ESP
 ) else (
-    echo Warning: shell.exe not found at %SHELL_EXE%
+    echo Warning: shell.vbin not found at %SHELL_VBIN%
 )
 
 REM Copy DOOM WAD file (check multiple search locations)
