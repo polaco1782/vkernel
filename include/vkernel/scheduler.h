@@ -88,6 +88,9 @@ auto tick_count() -> u64;
 /* Sleep current task for at least the given number of ticks */
 void sleep(u64 ticks);
 
+/* Block the calling task until the task with task_id terminates. */
+void wait_for_task(u64 task_id);
+
 /* Terminate the calling task */
 VK_NORETURN void exit_task();
 

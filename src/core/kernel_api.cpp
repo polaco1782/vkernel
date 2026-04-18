@@ -132,6 +132,11 @@ static int stub_poll_key(vk_key_event_t* out) {
     return 0;
 }
 
+static void stub_wait_task(vk_i64 task_id) {
+    if (task_id < 0) return;
+    sched::wait_for_task(static_cast<u64>(task_id));
+}
+
 static vk_u32 stub_ticks_per_sec() {
     return 100;  /* SCHED_HZ = 100 */
 }
@@ -442,6 +447,8 @@ void init() {
     /* raw keyboard */
     s_api.vk_poll_key = stub_poll_key;
     s_api.vk_ticks_per_sec = stub_ticks_per_sec;
+    /* task sync */
+    s_api.vk_wait_task = stub_wait_task;
 
     s_api_ready = true;
 }

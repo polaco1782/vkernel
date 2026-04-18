@@ -222,6 +222,12 @@ static inline void abort(void) {
     vk_exit(134);
 }
 
+/* Block until the task with the given id exits. */
+static inline void vk_wait_task(vk_i64 task_id) {
+    if (vk_get_api()->vk_wait_task)
+        vk_get_api()->vk_wait_task(task_id);
+}
+
 /* ============================================================
  * FILE / stdio compatibility layer
  * ============================================================ */

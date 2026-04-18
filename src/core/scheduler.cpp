@@ -351,6 +351,22 @@ void sched::sleep(u64 ticks) {
     }
 }
 
+void sched::wait_for_task(u64 task_id) {
+    while (true) {
+        bool found = false;
+        for (usize i = 0; i < g_task_count; ++i) {
+            if (g_tasks[i].id == task_id) {
+                found = true;
+                if (g_tasks[i].state == task_state::terminated)
+                    return;
+                break;
+            }
+        }
+        if (!found) return; /* task never existed */
+        yield();
+    }
+}
+
 VK_NORETURN void sched::exit_task() {
     arch::disable_interrupts();
     g_tasks[g_current_task].state = task_state::terminated;

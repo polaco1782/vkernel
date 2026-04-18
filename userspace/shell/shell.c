@@ -120,6 +120,7 @@ static void run_program(const char* arg) {
         printf("run: failed to launch %s\n", path);
     } else {
         printf("run: spawned task %lld\n", (long long)task_id);
+        vk_wait_task(task_id);
     }
 }
 

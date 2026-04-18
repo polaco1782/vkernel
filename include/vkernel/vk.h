@@ -187,10 +187,13 @@ typedef struct vk_api {
     int    (*vk_poll_key)(vk_key_event_t* out);
     vk_u32 (*vk_ticks_per_sec)(void);
 
+    /* ---- task synchronisation ---- */
+    void (*vk_wait_task)(vk_i64 task_id);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 9ULL
+#define VK_API_VERSION 10ULL
 
 /* ============================================================
  * Userspace runtime helpers
