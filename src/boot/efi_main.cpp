@@ -16,9 +16,6 @@
 #include "panic.h"
 #include "process.h"
 #include "arch/x86_64/arch.h"
-#if !defined(_MSC_VER)
-#include "gcc_asm.h"
-#endif
 
 namespace vk {
 

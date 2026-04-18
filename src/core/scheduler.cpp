@@ -16,11 +16,6 @@
 #include "scheduler.h"
 #include "panic.h"
 #include "arch/x86_64/arch.h"
-#if defined(_MSC_VER)
-#include "msvc_asm.h"
-#else
-#include "gcc_asm.h"
-#endif
 
 namespace vk {
 

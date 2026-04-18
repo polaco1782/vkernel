@@ -145,3 +145,215 @@ asm_get_data_end:
 asm_get_end:
     lea  _end(%rip), %rax
     ret
+
+/* ============================================================
+ * Port I/O
+ * First argument (port, u16) arrives in %rdi/%di (SysV AMD64).
+ * The IN/OUT instructions require the port in %dx, so we move
+ * %di → %dx before issuing the instruction.
+ * ============================================================ */
+
+/* u8 asm_inb(u16 port) */
+.global asm_inb
+asm_inb:
+    movw  %di, %dx
+    xorl  %eax, %eax
+    inb   %dx, %al
+    ret
+
+/* void asm_outb(u16 port, u8 value) */
+.global asm_outb
+asm_outb:
+    movb  %sil, %al         /* value (arg2) → AL */
+    movw  %di,  %dx         /* port  (arg1) → DX */
+    outb  %al,  %dx
+    ret
+
+/* u16 asm_inw(u16 port) */
+.global asm_inw
+asm_inw:
+    movw  %di, %dx
+    xorl  %eax, %eax
+    inw   %dx, %ax
+    ret
+
+/* void asm_outw(u16 port, u16 value) */
+.global asm_outw
+asm_outw:
+    movw  %si, %ax          /* value → AX */
+    movw  %di, %dx          /* port  → DX */
+    outw  %ax, %dx
+    ret
+
+/* u32 asm_inl(u16 port) */
+.global asm_inl
+asm_inl:
+    movw  %di, %dx
+    inl   %dx, %eax
+    ret
+
+/* void asm_outl(u16 port, u32 value) */
+.global asm_outl
+asm_outl:
+    movl  %esi, %eax        /* value → EAX */
+    movw  %di,  %dx         /* port  → DX */
+    outl  %eax, %dx
+    ret
+
+/* ============================================================
+ * MSR access
+ * ============================================================ */
+
+/* u64 asm_rdmsr(u32 msr) */
+.global asm_rdmsr
+asm_rdmsr:
+    movl  %edi, %ecx        /* msr → ECX */
+    rdmsr                   /* EDX:EAX = MSR[ECX] */
+    shlq  $32, %rdx
+    orq   %rdx, %rax        /* RAX = (RDX<<32)|EAX */
+    ret
+
+/* void asm_wrmsr(u32 msr, u64 value) */
+.global asm_wrmsr
+asm_wrmsr:
+    movl  %edi, %ecx        /* msr   → ECX */
+    movl  %esi, %eax        /* low32 → EAX */
+    movq  %rsi, %rdx
+    shrq  $32,  %rdx        /* high32 → EDX */
+    wrmsr
+    ret
+
+/* ============================================================
+ * Control register access
+ * ============================================================ */
+
+.global asm_read_cr0
+asm_read_cr0:
+    movq  %cr0, %rax
+    ret
+
+.global asm_write_cr0
+asm_write_cr0:
+    movq  %rdi, %cr0
+    ret
+
+.global asm_read_cr2
+asm_read_cr2:
+    movq  %cr2, %rax
+    ret
+
+.global asm_read_cr3
+asm_read_cr3:
+    movq  %cr3, %rax
+    ret
+
+.global asm_write_cr3
+asm_write_cr3:
+    movq  %rdi, %cr3
+    ret
+
+.global asm_read_cr4
+asm_read_cr4:
+    movq  %cr4, %rax
+    ret
+
+.global asm_write_cr4
+asm_write_cr4:
+    movq  %rdi, %cr4
+    ret
+
+/* ============================================================
+ * General-purpose register reads
+ * ============================================================ */
+
+/* u64 asm_read_rip() — returns the return address (caller's next RIP) */
+.global asm_read_rip
+asm_read_rip:
+    movq  (%rsp), %rax
+    ret
+
+/* u64 asm_read_rsp() — returns caller's stack pointer */
+.global asm_read_rsp
+asm_read_rsp:
+    leaq  8(%rsp), %rax     /* +8: skip the return address slot */
+    ret
+
+/* u64 asm_read_rbp() */
+.global asm_read_rbp
+asm_read_rbp:
+    movq  %rbp, %rax
+    ret
+
+/* u64 asm_read_rflags() */
+.global asm_read_rflags
+asm_read_rflags:
+    pushfq
+    popq  %rax
+    ret
+
+/* ============================================================
+ * Misc CPU instructions
+ * ============================================================ */
+
+/* void asm_cpu_nop() */
+.global asm_cpu_nop
+asm_cpu_nop:
+    nop
+    ret
+
+/* ============================================================
+ * Memory barriers
+ * ============================================================ */
+
+.global asm_memory_barrier
+asm_memory_barrier:
+    mfence
+    ret
+
+.global asm_read_memory_barrier
+asm_read_memory_barrier:
+    lfence
+    ret
+
+.global asm_write_memory_barrier
+asm_write_memory_barrier:
+    sfence
+    ret
+
+/* ============================================================
+ * TLB management
+ * ============================================================ */
+
+/* void asm_invlpg(u64 addr) — %rdi = virtual address to invalidate */
+.global asm_invlpg
+asm_invlpg:
+    invlpg (%rdi)
+    ret
+
+/* ============================================================
+ * Atomic operations
+ * ============================================================ */
+
+/*
+ * u64 asm_atomic_add(volatile u64* ptr, u64 value)
+ *   %rdi = ptr, %rsi = value
+ *   Returns the value that was in *ptr before the add.
+ */
+.global asm_atomic_add
+asm_atomic_add:
+    movq  %rsi, %rax
+    lock xaddq %rax, (%rdi)
+    ret
+
+/*
+ * int asm_atomic_cmpxchg(volatile u64* ptr, u64 expected, u64 new_value)
+ *   %rdi = ptr, %rsi = expected, %rdx = new_value
+ *   Returns 1 if exchange was performed, 0 otherwise.
+ */
+.global asm_atomic_cmpxchg
+asm_atomic_cmpxchg:
+    movq  %rsi, %rax
+    lock cmpxchgq %rdx, (%rdi)
+    sete  %al
+    movzbl %al, %eax
+    ret

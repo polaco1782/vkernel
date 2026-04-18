@@ -9,10 +9,8 @@
 #define VKERNEL_ARCH_X86_64_H
 
 #include "types.h"
-
-#if defined(_MSC_VER)
-#include <intrin.h>
-#endif
+#include "gcc_asm.h"    /* GCC/Clang asm declarations (no-op on MSVC) */
+#include "msvc_asm.h"   /* MSVC asm declarations (no-op on GCC/Clang) */
 
 namespace vk {
 namespace arch {
@@ -168,175 +166,71 @@ inline constexpr u64 EFER_LMA              = (1ULL << 10); /* Long mode active *
 inline constexpr u64 EFER_NXE              = (1ULL << 11); /* No-execute enable */
 
 /* ============================================================
- * Port I/O, MSR, CR, and misc CPU primitives
+ * CPU primitives — thin inline wrappers around arch-specific
+ * assembly routines.  All implementation lives in gcc_asm.S or
+ * msvc_asm.asm; no inline asm or compiler intrinsics here.
  *
- * MSVC x64 forbids inline asm — use compiler intrinsics.
- * GCC / Clang keep the original asm volatile forms.
+ * When porting to a new architecture, provide a new pair of
+ * {gcc_asm.h, gcc_asm.S} (or msvc_asm equivalents) in
+ * include/vkernel/arch/<target>/ and implement the same asm_*
+ * symbols — no changes to this wrapper layer are needed.
  * ============================================================ */
 
-#if defined(_MSC_VER)
-
 /* Port I/O */
-[[nodiscard]] inline auto inb(u16 port) -> u8  { return __inbyte(port); }
-inline auto outb(u16 port, u8 value)  -> void  { __outbyte(port, value); }
-[[nodiscard]] inline auto inw(u16 port) -> u16 { return __inword(port); }
-inline auto outw(u16 port, u16 value) -> void  { __outword(port, value); }
-[[nodiscard]] inline auto inl(u16 port) -> u32 { return __indword(port); }
-inline auto outl(u16 port, u32 value) -> void  { __outdword(port, value); }
+[[nodiscard]] inline auto inb(u16 port) -> u8  { return asm_inb(port); }
+inline auto outb(u16 port, u8 value)  -> void  { asm_outb(port, value); }
+[[nodiscard]] inline auto inw(u16 port) -> u16 { return asm_inw(port); }
+inline auto outw(u16 port, u16 value) -> void  { asm_outw(port, value); }
+[[nodiscard]] inline auto inl(u16 port) -> u32 { return asm_inl(port); }
+inline auto outl(u16 port, u32 value) -> void  { asm_outl(port, value); }
 
 /* MSR access */
-[[nodiscard]] inline auto rdmsr(u32 msr) -> u64 { return __readmsr(msr); }
-inline auto wrmsr(u32 msr, u64 value) -> void   { __writemsr(msr, value); }
+[[nodiscard]] inline auto rdmsr(u32 msr) -> u64 { return asm_rdmsr(msr); }
+inline auto wrmsr(u32 msr, u64 value) -> void   { asm_wrmsr(msr, value); }
 
 /* Control register access */
-[[nodiscard]] inline auto read_cr0() -> u64  { return __readcr0(); }
-inline auto write_cr0(u64 value) -> void     { __writecr0(value); }
-[[nodiscard]] inline auto read_cr2() -> u64  { return __readcr2(); }
-[[nodiscard]] inline auto read_cr3() -> u64  { return __readcr3(); }
-inline auto write_cr3(u64 value) -> void     { __writecr3(value); }
-[[nodiscard]] inline auto read_cr4() -> u64  { return __readcr4(); }
-inline auto write_cr4(u64 value) -> void     { __writecr4(value); }
+[[nodiscard]] inline auto read_cr0() -> u64  { return asm_read_cr0(); }
+inline auto write_cr0(u64 value) -> void     { asm_write_cr0(value); }
+[[nodiscard]] inline auto read_cr2() -> u64  { return asm_read_cr2(); }
+[[nodiscard]] inline auto read_cr3() -> u64  { return asm_read_cr3(); }
+inline auto write_cr3(u64 value) -> void     { asm_write_cr3(value); }
+[[nodiscard]] inline auto read_cr4() -> u64  { return asm_read_cr4(); }
+inline auto write_cr4(u64 value) -> void     { asm_write_cr4(value); }
 
-/* RIP / RSP / RBP — use _ReturnAddress / _AddressOfReturnAddress as proxies */
-[[nodiscard]] inline auto read_rip() -> u64  { return reinterpret_cast<u64>(_ReturnAddress()); }
-[[nodiscard]] inline auto read_rsp() -> u64  { return reinterpret_cast<u64>(_AddressOfReturnAddress()); }
-[[nodiscard]] inline auto read_rbp() -> u64  { return reinterpret_cast<u64>(_AddressOfReturnAddress()) - 8; }
+/* RIP / RSP / RBP */
+[[nodiscard]] inline auto read_rip() -> u64  { return asm_read_rip(); }
+[[nodiscard]] inline auto read_rsp() -> u64  { return asm_read_rsp(); }
+[[nodiscard]] inline auto read_rbp() -> u64  { return asm_read_rbp(); }
 
 /* RFLAGS */
-[[nodiscard]] inline auto read_rflags() -> u64 { return __readeflags(); }
+[[nodiscard]] inline auto read_rflags() -> u64 { return asm_read_rflags(); }
 
 /* Halt / NOP */
-inline auto cpu_halt() -> void { __halt(); }
-inline auto cpu_nop()  -> void { __nop();  }
+inline auto cpu_halt() -> void { asm_hlt(); }
+inline auto cpu_nop()  -> void { asm_cpu_nop(); }
 
 /* Memory barriers */
-inline auto memory_barrier()      -> void { _mm_mfence(); }
-inline auto read_memory_barrier() -> void { _mm_lfence(); }
-inline auto write_memory_barrier()-> void { _mm_sfence(); }
-
-/* Invalidate TLB entry */
-inline auto invlpg(vaddr addr) -> void { __invlpg(reinterpret_cast<void*>(addr)); }
-
-/* Atomic operations */
-[[nodiscard]] inline auto atomic_add(volatile u64* ptr, u64 value) -> u64 {
-    return static_cast<u64>(_InterlockedExchangeAdd64(
-        reinterpret_cast<volatile long long*>(ptr),
-        static_cast<long long>(value)));
-}
-[[nodiscard]] inline auto atomic_cmpxchg(volatile u64* ptr, u64 expected, u64 new_value) -> bool {
-    return _InterlockedCompareExchange64(
-        reinterpret_cast<volatile long long*>(ptr),
-        static_cast<long long>(new_value),
-        static_cast<long long>(expected)) == static_cast<long long>(expected);
-}
-
-#else /* GCC / Clang */
-
-/* Port I/O */
-[[nodiscard]] inline auto inb(u16 port) -> u8 {
-    u8 value;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-inline auto outb(u16 port, u8 value) -> void {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-[[nodiscard]] inline auto inw(u16 port) -> u16 {
-    u16 value;
-    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-inline auto outw(u16 port, u16 value) -> void {
-    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-[[nodiscard]] inline auto inl(u16 port) -> u32 {
-    u32 value;
-    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-inline auto outl(u16 port, u32 value) -> void {
-    asm volatile("outl %0, %1" : : "a"(value), "Nd"(port));
-}
-
-/* MSR access */
-[[nodiscard]] inline auto rdmsr(u32 msr) -> u64 {
-    u32 low, high;
-    asm volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-    return (static_cast<u64>(high) << 32) | low;
-}
-inline auto wrmsr(u32 msr, u64 value) -> void {
-    u32 low = static_cast<u32>(value & 0xFFFFFFFF);
-    u32 high = static_cast<u32>(value >> 32);
-    asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(msr));
-}
-
-/* Control register access */
-[[nodiscard]] inline auto read_cr0() -> u64 {
-    u64 value; asm volatile("mov %%cr0, %0" : "=r"(value)); return value;
-}
-inline auto write_cr0(u64 value) -> void {
-    asm volatile("mov %0, %%cr0" : : "r"(value));
-}
-[[nodiscard]] inline auto read_cr2() -> u64 {
-    u64 value; asm volatile("mov %%cr2, %0" : "=r"(value)); return value;
-}
-[[nodiscard]] inline auto read_cr3() -> u64 {
-    u64 value; asm volatile("mov %%cr3, %0" : "=r"(value)); return value;
-}
-inline auto write_cr3(u64 value) -> void {
-    asm volatile("mov %0, %%cr3" : : "r"(value));
-}
-[[nodiscard]] inline auto read_cr4() -> u64 {
-    u64 value; asm volatile("mov %%cr4, %0" : "=r"(value)); return value;
-}
-inline auto write_cr4(u64 value) -> void {
-    asm volatile("mov %0, %%cr4" : : "r"(value));
-}
-
-/* Get RIP */
-[[nodiscard]] inline auto read_rip() -> u64 {
-    u64 rip; asm volatile("lea (%%rip), %0" : "=r"(rip)); return rip;
-}
-/* Get RSP */
-[[nodiscard]] inline auto read_rsp() -> u64 {
-    u64 rsp; asm volatile("mov %%rsp, %0" : "=r"(rsp)); return rsp;
-}
-/* Get RBP */
-[[nodiscard]] inline auto read_rbp() -> u64 {
-    u64 rbp; asm volatile("mov %%rbp, %0" : "=r"(rbp)); return rbp;
-}
-/* Read RFLAGS */
-[[nodiscard]] inline auto read_rflags() -> u64 {
-    u64 rflags; asm volatile("pushfq; pop %0" : "=r"(rflags)); return rflags;
-}
-
-/* Halt / NOP */
-inline auto cpu_halt() -> void { asm volatile("hlt"); }
-inline auto cpu_nop()  -> void { asm volatile("nop"); }
-
-/* Memory barriers */
-inline auto memory_barrier()       -> void { asm volatile("mfence" ::: "memory"); }
-inline auto read_memory_barrier()  -> void { asm volatile("lfence" ::: "memory"); }
-inline auto write_memory_barrier() -> void { asm volatile("sfence" ::: "memory"); }
+inline auto memory_barrier()       -> void { asm_memory_barrier(); }
+inline auto read_memory_barrier()  -> void { asm_read_memory_barrier(); }
+inline auto write_memory_barrier() -> void { asm_write_memory_barrier(); }
 
 /* Invalidate TLB entry */
 inline auto invlpg(vaddr addr) -> void {
-    asm volatile("invlpg (%0)" : : "r"(addr) : "memory");
+    asm_invlpg(static_cast<unsigned long long>(addr));
 }
 
 /* Atomic operations */
 [[nodiscard]] inline auto atomic_add(volatile u64* ptr, u64 value) -> u64 {
-    asm volatile("lock; xadd %0, %1" : "+r"(value), "+m"(*ptr) : : "memory");
-    return value;
+    return static_cast<u64>(asm_atomic_add(
+        reinterpret_cast<volatile unsigned long long*>(ptr),
+        static_cast<unsigned long long>(value)));
 }
 [[nodiscard]] inline auto atomic_cmpxchg(volatile u64* ptr, u64 expected, u64 new_value) -> bool {
-    u8 result;
-    asm volatile("lock; cmpxchg %2, %1; setz %0"
-        : "=q"(result), "+m"(*ptr) : "r"(new_value), "a"(expected) : "memory");
-    return result != 0;
+    return asm_atomic_cmpxchg(
+        reinterpret_cast<volatile unsigned long long*>(ptr),
+        static_cast<unsigned long long>(expected),
+        static_cast<unsigned long long>(new_value)) != 0;
 }
-
-#endif /* _MSC_VER */
 
 /* Architecture initialization */
 void init();           /* Prepare tables (safe during boot services) */
