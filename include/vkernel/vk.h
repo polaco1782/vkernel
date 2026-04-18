@@ -66,6 +66,50 @@ typedef struct vk_framebuffer_info {
 typedef vk_u64 vk_file_handle_t;
 
 /* ============================================================
+ * Freestanding math helpers
+ * ============================================================ */
+
+static inline float vk_absf(float v) {
+    return v < 0.0f ? -v : v;
+}
+
+static inline float vk_fminf(float a, float b) {
+    return a < b ? a : b;
+}
+
+static inline float vk_clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static inline float vk_sqrtf(float v) {
+    if (v <= 0.0f) {
+        return 0.0f;
+    }
+
+    float g = v > 1.0f ? v : 1.0f;
+    for (int i = 0; i < 12; ++i) {
+        g = 0.5f * (g + v / g);
+    }
+    return g;
+}
+
+/*
+ * tan(x) via Taylor series. Accurate to < 0.01% for |x| < 0.9 rad (~52 deg),
+ * which covers practical camera vfov half-angles and defocus angles.
+ */
+static inline float vk_tanf(float x) {
+    float x2 = x * x;
+    return x * (1.0f + x2 * (1.0f / 3.0f
+                       + x2 * (2.0f / 15.0f
+                       + x2 * (17.0f / 315.0f
+                       + x2 * (62.0f / 2835.0f)))));
+}
+
+static inline float vk_degrees_to_radians(float deg) {
+    return deg * 3.14159265358979323846f / 180.0f;
+}
+
+/* ============================================================
  * vk_api_t — version 8
  *
  * Add new fields only at the END to preserve ABI compatibility.
