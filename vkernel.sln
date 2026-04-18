@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.4.11626.88 stable
+VisualStudioVersion = 18.4.11626.88
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vkernel", "vkernel.vcxproj", "{A7B8C9D0-E1F2-3456-7890-ABCDEF123456}"
 EndProject
@@ -16,7 +16,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "shell", "userspace\shell\sh
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ramfs_reader", "userspace\ramfs_reader\ramfs_reader.vcxproj", "{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "doom", "userspace\rp2040-doom\doom.vcxproj", "{A1B2C3D4-DOOM-4B5C-9D0E-F1A2B3C4D5E6}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "doom", "userspace\rp2040-doom\doom.vcxproj", "{88F73FDB-BB0E-43C7-8A44-7111987649F0}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -52,10 +52,10 @@ Global
 		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Debug|x64.Build.0 = Debug|x64
 		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Release|x64.ActiveCfg = Release|x64
 		{E4F5A6B7-C890-4DEF-A123-456789ABCDEF}.Release|x64.Build.0 = Release|x64
-		{A1B2C3D4-DOOM-4B5C-9D0E-F1A2B3C4D5E6}.Debug|x64.ActiveCfg = Debug|x64
-		{A1B2C3D4-DOOM-4B5C-9D0E-F1A2B3C4D5E6}.Debug|x64.Build.0 = Debug|x64
-		{A1B2C3D4-DOOM-4B5C-9D0E-F1A2B3C4D5E6}.Release|x64.ActiveCfg = Release|x64
-		{A1B2C3D4-DOOM-4B5C-9D0E-F1A2B3C4D5E6}.Release|x64.Build.0 = Release|x64
+		{88F73FDB-BB0E-43C7-8A44-7111987649F0}.Debug|x64.ActiveCfg = Debug|x64
+		{88F73FDB-BB0E-43C7-8A44-7111987649F0}.Debug|x64.Build.0 = Debug|x64
+		{88F73FDB-BB0E-43C7-8A44-7111987649F0}.Release|x64.ActiveCfg = Release|x64
+		{88F73FDB-BB0E-43C7-8A44-7111987649F0}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
