@@ -18,6 +18,8 @@
 #include "arch/x86_64/arch.h"
 #if defined(_MSC_VER)
 #include "msvc_asm.h"
+#else
+#include "gcc_asm.h"
 #endif
 
 namespace vk {
@@ -223,17 +225,21 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
     return id;
 }
 
+static volatile bool g_yield_in_progress = false;
+
 void sched::yield() {
     if (!g_scheduler_active || g_task_count < 2) return;
-#if defined(_MSC_VER)
+    g_yield_in_progress = true;
     asm_int_timer();
-#else
-    asm volatile("int $32");  /* Software interrupt → timer vector */
-#endif
 }
 
 auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
-    ++g_tick_count;
+    /* Only count real PIT hardware ticks, not software yields */
+    if (g_yield_in_progress) {
+        g_yield_in_progress = false;
+    } else {
+        ++g_tick_count;
+    }
     wake_sleeping_tasks();
 
     if (!g_scheduler_active || g_task_count < 2) {
@@ -277,41 +283,9 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
  * On MSVC this is implemented in msvc_asm.asm as asm_sched_switch_to.
  * On GCC/Clang we use a naked function with inline asm.
  */
-#if defined(_MSC_VER)
-
-static inline void sched_switch_to(u64 rsp) {
+[[noreturn]] static inline void sched_switch_to(u64 rsp) {
     asm_sched_switch_to(rsp);
 }
-
-#else
-
-[[gnu::naked, noreturn]] static void sched_switch_to(u64 /* rsp in %rdi */) {
-    asm volatile(
-        "movq %%rdi, %%rsp\n\t"
-        /* Restore GPRs */
-        "popq %%rax\n\t"
-        "popq %%rbx\n\t"
-        "popq %%rcx\n\t"
-        "popq %%rdx\n\t"
-        "popq %%rsi\n\t"
-        "popq %%rdi\n\t"
-        "popq %%rbp\n\t"
-        "popq %%r8\n\t"
-        "popq %%r9\n\t"
-        "popq %%r10\n\t"
-        "popq %%r11\n\t"
-        "popq %%r12\n\t"
-        "popq %%r13\n\t"
-        "popq %%r14\n\t"
-        "popq %%r15\n\t"
-        /* Skip FS, GS, int_no, error_code */
-        "addq $32, %%rsp\n\t"
-        "iretq"
-        ::: "memory"
-    );
-}
-
-#endif
 
 VK_NORETURN void sched::start() {
     if (g_task_count == 0) {

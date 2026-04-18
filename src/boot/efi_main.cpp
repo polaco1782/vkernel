@@ -16,6 +16,9 @@
 #include "panic.h"
 #include "process.h"
 #include "arch/x86_64/arch.h"
+#if !defined(_MSC_VER)
+#include "gcc_asm.h"
+#endif
 
 namespace vk {
 
@@ -45,8 +48,7 @@ static void self_relocate() {
     (void)ImageBase;
 #else
     /* Runtime address of ImageBase via RIP-relative LEA */
-    u64 runtime_base;
-    asm volatile("lea ImageBase(%%rip), %0" : "=r"(runtime_base));
+    u64 runtime_base = asm_get_image_base();
 
     /* Link-time base is 0 (from linker script: ImageBase = 0) */
     const u64 delta = runtime_base;
@@ -56,16 +58,12 @@ static void self_relocate() {
     /* Scan ALL of .data for pointer-like values.
      * A value is a link-time pointer if it falls within the
      * image range [0x1000, _edata).  We add delta to relocate. */
-    u64* data_start;
-    u64* data_end;
-    u64  end_val;
-    asm volatile("lea _data(%%rip), %0"  : "=r"(data_start));
-    asm volatile("lea _edata(%%rip), %0" : "=r"(data_end));
+    u64* data_start = reinterpret_cast<u64*>(asm_get_data_start());
+    u64* data_end   = reinterpret_cast<u64*>(asm_get_data_end());
     /* _end includes BSS — use it as upper bound for pointer detection.
      * Compute link-time value: runtime__end - delta */
-    u64* end_ptr;
-    asm volatile("lea _end(%%rip), %0" : "=r"(end_ptr));
-    end_val = reinterpret_cast<u64>(end_ptr) - delta;
+    u64* end_ptr = reinterpret_cast<u64*>(asm_get_end());
+    u64  end_val = reinterpret_cast<u64>(end_ptr) - delta;
 
     for (u64* p = data_start; p < data_end; ++p) {
         /* Link-time pointers fall in [0x1000, link-time _end) */
