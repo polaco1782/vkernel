@@ -65,6 +65,8 @@ mkdir "%ESP_BOOT%"
 copy /y "%EFI_FILE%" "%ESP_BOOT%\bootx64.efi" >nul
 
 REM Copy userspace .exe files to ESP
+set DOOM_EXE=userspace\rp2040-doom\build_vs\doom\%BUILD_CONFIG%\doom.exe
+if not exist "%DOOM_EXE%" set DOOM_EXE=%BUILD_DIR%\doom\%BUILD_CONFIG%\doom.exe
 set HELLO_EXE=%BUILD_DIR%\hello\%BUILD_CONFIG%\hello.exe
 set FRAMEBUFFER_EXE=%BUILD_DIR%\framebuffer\%BUILD_CONFIG%\framebuffer.exe
 set FRAMEBUFFER_TEXT_EXE=%BUILD_DIR%\framebuffer_text\%BUILD_CONFIG%\framebuffer_text.exe
@@ -72,6 +74,14 @@ set RAYTRACER_EXE=%BUILD_DIR%\raytracer\%BUILD_CONFIG%\raytracer.exe
 set RAMFS_READER_EXE=%BUILD_DIR%\ramfs_reader\%BUILD_CONFIG%\ramfs_reader.exe
 set SHELL_EXE=%BUILD_DIR%\shell\%BUILD_CONFIG%\shell.exe
 set ESP_VKERNEL=%ESP_ROOT%\EFI\vkernel
+
+if exist "%DOOM_EXE%" (
+    mkdir "%ESP_VKERNEL%"
+    copy /y "%DOOM_EXE%" "%ESP_VKERNEL%\doom.exe" >nul
+    echo Copied %DOOM_EXE% to ESP
+) else (
+    echo Warning: doom.exe not found at %DOOM_EXE%
+)
 
 if exist "%HELLO_EXE%" (
     mkdir "%ESP_VKERNEL%"
@@ -119,6 +129,19 @@ if exist "%SHELL_EXE%" (
     echo Copied %SHELL_EXE% to ESP
 ) else (
     echo Warning: shell.exe not found at %SHELL_EXE%
+)
+
+REM Copy DOOM WAD file (check multiple search locations)
+set DOOM_WAD=
+if exist "userspace\rp2040-doom\doom1.wad" set DOOM_WAD=userspace\rp2040-doom\doom1.wad
+if exist "doom1.wad" set DOOM_WAD=doom1.wad
+if not "%DOOM_WAD%"=="" (
+    if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
+    copy /y "%DOOM_WAD%" "%ESP_VKERNEL%\doom1.wad" >nul
+    echo Copied %DOOM_WAD% to ESP
+) else (
+    echo Warning: doom1.wad not found - DOOM will not be able to find its IWAD
+    echo   Place doom1.wad in the repo root or userspace\rp2040-doom\ to fix this
 )
 
 REM Run QEMU

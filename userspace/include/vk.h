@@ -549,6 +549,47 @@ static inline void vk__sink_emit_signed(vk_format_sink_t* sink, long long value)
     }
 }
 
+/* Emit an integer with optional width, precision, zero-pad, and left-align. */
+static inline void vk__sink_emit_int_padded(vk_format_sink_t* sink,
+        unsigned long long value, unsigned int base, int uppercase,
+        int is_neg, int flag_zero, int flag_left, int width, int precision) {
+    char digits[32];
+    size_t ndigits = vk__u64_to_text(value, base, uppercase, digits);
+    /* precision 0 with value 0 produces no digits */
+    if (precision == 0 && value == 0) { ndigits = 0; digits[0] = '\0'; }
+    /* minimum digits from precision */
+    int min_digits = (precision > 0) ? precision : 0;
+    int zero_fill = (min_digits > (int)ndigits) ? (min_digits - (int)ndigits) : 0;
+    int content = (is_neg ? 1 : 0) + zero_fill + (int)ndigits;
+    int pad = (width > content) ? (width - content) : 0;
+    /* right-align with spaces */
+    if (!flag_left && !(flag_zero && precision < 0))
+        for (int i = 0; i < pad; i++) vk__sink_emit(sink, ' ');
+    if (is_neg) vk__sink_emit(sink, '-');
+    /* right-align with zeros (flag_zero applies only when no precision) */
+    if (!flag_left && flag_zero && precision < 0)
+        for (int i = 0; i < pad; i++) vk__sink_emit(sink, '0');
+    /* precision zero-fill */
+    for (int i = 0; i < zero_fill; i++) vk__sink_emit(sink, '0');
+    for (size_t i = 0; i < ndigits; i++) vk__sink_emit(sink, digits[i]);
+    /* left-align padding */
+    if (flag_left)
+        for (int i = 0; i < pad; i++) vk__sink_emit(sink, ' ');
+}
+
+/* Emit a string with optional width and precision (max chars). */
+static inline void vk__sink_emit_str_padded(vk_format_sink_t* sink,
+        const char* s, int flag_left, int width, int precision) {
+    if (s == NULL) s = "(null)";
+    size_t slen = 0;
+    while (s[slen] != '\0') slen++;
+    size_t outlen = (precision >= 0 && (size_t)precision < slen) ? (size_t)precision : slen;
+    int pad = (width > (int)outlen) ? (width - (int)outlen) : 0;
+    if (!flag_left) for (int i = 0; i < pad; i++) vk__sink_emit(sink, ' ');
+    for (size_t i = 0; i < outlen; i++) vk__sink_emit(sink, s[i]);
+    if (flag_left)  for (int i = 0; i < pad; i++) vk__sink_emit(sink, ' ');
+}
+
 static inline void vk__format_to_sink(vk_format_sink_t* sink, const char* fmt, va_list args) {
     while (*fmt != '\0') {
         if (*fmt != '%') {
@@ -563,6 +604,34 @@ static inline void vk__format_to_sink(vk_format_sink_t* sink, const char* fmt, v
             continue;
         }
 
+        /* Parse flags */
+        int flag_zero = 0, flag_left = 0;
+        for (;;) {
+            if      (*fmt == '0') { flag_zero = 1; ++fmt; }
+            else if (*fmt == '-') { flag_left = 1; ++fmt; }
+            else if (*fmt == ' ' || *fmt == '+' || *fmt == '#') { ++fmt; }
+            else break;
+        }
+
+        /* Parse width */
+        int width = 0;
+        while (*fmt >= '1' && *fmt <= '9') {
+            width = width * 10 + (*fmt - '0');
+            ++fmt;
+        }
+
+        /* Parse precision */
+        int precision = -1;
+        if (*fmt == '.') {
+            ++fmt;
+            precision = 0;
+            while (*fmt >= '0' && *fmt <= '9') {
+                precision = precision * 10 + (*fmt - '0');
+                ++fmt;
+            }
+        }
+
+        /* Parse length modifier */
         vk_format_length_t length = VK_FMT_LEN_DEFAULT;
         if (*fmt == 'l') {
             ++fmt;
@@ -581,51 +650,47 @@ static inline void vk__format_to_sink(vk_format_sink_t* sink, const char* fmt, v
         switch (spec) {
             case 'c': {
                 int value = va_arg(args, int);
+                int pad = (width > 1) ? (width - 1) : 0;
+                if (!flag_left) for (int i = 0; i < pad; i++) vk__sink_emit(sink, ' ');
                 vk__sink_emit(sink, (char)value);
+                if (flag_left)  for (int i = 0; i < pad; i++) vk__sink_emit(sink, ' ');
                 break;
             }
             case 's': {
                 const char* value = va_arg(args, const char*);
-                vk__sink_emit_cstr(sink, value);
+                vk__sink_emit_str_padded(sink, value, flag_left, width, precision);
                 break;
             }
             case 'd':
             case 'i': {
-                if (length == VK_FMT_LEN_LLONG) {
-                    vk__sink_emit_signed(sink, va_arg(args, long long));
-                } else if (length == VK_FMT_LEN_LONG) {
-                    vk__sink_emit_signed(sink, va_arg(args, long));
-                } else if (length == VK_FMT_LEN_SIZE) {
-                    vk__sink_emit_signed(sink, (long long)va_arg(args, size_t));
-                } else {
-                    vk__sink_emit_signed(sink, va_arg(args, int));
-                }
+                long long sv;
+                if      (length == VK_FMT_LEN_LLONG) sv = va_arg(args, long long);
+                else if (length == VK_FMT_LEN_LONG)  sv = va_arg(args, long);
+                else if (length == VK_FMT_LEN_SIZE)  sv = (long long)va_arg(args, size_t);
+                else                                  sv = va_arg(args, int);
+                int is_neg = (sv < 0);
+                unsigned long long uv = is_neg ? (unsigned long long)(-(sv + 1)) + 1ULL : (unsigned long long)sv;
+                vk__sink_emit_int_padded(sink, uv, 10, 0, is_neg, flag_zero, flag_left, width, precision);
                 break;
             }
             case 'u': {
-                if (length == VK_FMT_LEN_LLONG) {
-                    vk__sink_emit_unsigned(sink, va_arg(args, unsigned long long), 10, 0);
-                } else if (length == VK_FMT_LEN_LONG) {
-                    vk__sink_emit_unsigned(sink, va_arg(args, unsigned long), 10, 0);
-                } else if (length == VK_FMT_LEN_SIZE) {
-                    vk__sink_emit_unsigned(sink, (unsigned long long)va_arg(args, size_t), 10, 0);
-                } else {
-                    vk__sink_emit_unsigned(sink, va_arg(args, unsigned int), 10, 0);
-                }
+                unsigned long long uv;
+                if      (length == VK_FMT_LEN_LLONG) uv = va_arg(args, unsigned long long);
+                else if (length == VK_FMT_LEN_LONG)  uv = va_arg(args, unsigned long);
+                else if (length == VK_FMT_LEN_SIZE)  uv = (unsigned long long)va_arg(args, size_t);
+                else                                  uv = va_arg(args, unsigned int);
+                vk__sink_emit_int_padded(sink, uv, 10, 0, 0, flag_zero, flag_left, width, precision);
                 break;
             }
             case 'x':
             case 'X': {
                 int uppercase = (spec == 'X');
-                if (length == VK_FMT_LEN_LLONG) {
-                    vk__sink_emit_unsigned(sink, va_arg(args, unsigned long long), 16, uppercase);
-                } else if (length == VK_FMT_LEN_LONG) {
-                    vk__sink_emit_unsigned(sink, va_arg(args, unsigned long), 16, uppercase);
-                } else if (length == VK_FMT_LEN_SIZE) {
-                    vk__sink_emit_unsigned(sink, (unsigned long long)va_arg(args, size_t), 16, uppercase);
-                } else {
-                    vk__sink_emit_unsigned(sink, va_arg(args, unsigned int), 16, uppercase);
-                }
+                unsigned long long uv;
+                if      (length == VK_FMT_LEN_LLONG) uv = va_arg(args, unsigned long long);
+                else if (length == VK_FMT_LEN_LONG)  uv = va_arg(args, unsigned long);
+                else if (length == VK_FMT_LEN_SIZE)  uv = (unsigned long long)va_arg(args, size_t);
+                else                                  uv = va_arg(args, unsigned int);
+                vk__sink_emit_int_padded(sink, uv, 16, uppercase, 0, flag_zero, flag_left, width, precision);
                 break;
             }
             case 'p': {

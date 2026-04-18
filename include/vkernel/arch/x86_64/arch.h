@@ -98,9 +98,9 @@ struct register_state {
     u64 r14;
     u64 r15;
     
-    /* Segment registers */
-    u64 gs;
+    /* Segment registers (pushed: FS at lower address, GS at higher) */
     u64 fs;
+    u64 gs;
     
     /* Interrupt number and error code */
     u64 int_no;

@@ -63,6 +63,7 @@ static void print_known_files(void) {
         "shell.exe",
         "hello.elf",
         "hello.exe",
+        "doom.exe",
         "framebuffer.elf",
         "framebuffer.exe",
         "framebuffer_text.elf",

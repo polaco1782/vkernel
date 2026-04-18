@@ -20,6 +20,7 @@
 #include "scheduler.h"
 #include "input.h"
 #include "arch/x86_64/arch.h"
+#include "vk.h"
 
 namespace vk {
 namespace input {
@@ -140,6 +141,58 @@ static auto ps2_try_read() -> char {
 }
 
 /* ============================================================
+ * Raw PS/2 scancode reader — for poll_key()
+ * Returns the full scancode with make/break info preserved.
+ * ============================================================ */
+
+static bool s_ctrl = false;
+static bool s_alt  = false;
+
+static auto ps2_try_read_raw(vk_key_event_t& ev) -> bool {
+    if (!(arch::inb(PS2_STATUS) & 0x01)) return false;
+
+    u8 sc = arch::inb(PS2_DATA);
+
+    if (sc == 0xE0) { s_ext = true; return false; }
+
+    bool ext = s_ext;
+    s_ext = false;
+
+    bool released = (sc & 0x80) != 0;
+    u8 make = sc & 0x7F;
+
+    /* Track modifier state */
+    if (make == 0x2A || make == 0x36) s_shift = released ? false : true;
+    if (make == 0x1D)                 s_ctrl  = released ? false : true;
+    if (make == 0x38)                 s_alt   = released ? false : true;
+    if (make == 0x3A && !released)    s_caps  = !s_caps;
+
+    /* For extended keys, offset scancode by 0x80 to distinguish */
+    u32 code = ext ? (make | 0x80u) : make;
+
+    ev.scancode  = code;
+    ev.pressed   = released ? 0u : 1u;
+    ev.modifiers = (s_shift ? 1u : 0u)
+                 | (s_ctrl  ? 2u : 0u)
+                 | (s_alt   ? 4u : 0u);
+
+    /* ASCII translation for printable make codes (non-extended only) */
+    ev.ascii = '\0';
+    if (!ext && !released && make < 128) {
+        char c = s_shift ? s_sc_shifted[make] : s_sc_normal[make];
+        bool letter = (s_sc_normal[make] >= 'a' && s_sc_normal[make] <= 'z');
+        if (letter) {
+            bool upper = s_caps ^ s_shift;
+            c = upper ? s_sc_shifted[make] : s_sc_normal[make];
+        }
+        ev.ascii = c;
+    }
+    ev._pad[0] = ev._pad[1] = ev._pad[2] = 0;
+
+    return true;
+}
+
+/* ============================================================
  * COM1 serial input
  * ============================================================ */
 
@@ -182,6 +235,10 @@ auto getc() -> char {
         if (c != '\0') return c;
         sched::yield();
     }
+}
+
+auto poll_key(vk_key_event_t& ev) -> bool {
+    return ps2_try_read_raw(ev);
 }
 
 } // namespace input

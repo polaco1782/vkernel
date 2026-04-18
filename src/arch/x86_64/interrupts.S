@@ -97,15 +97,24 @@ ISR_NOERR 31
 /* Common path: save all GPRs, call C dispatcher, restore, iret */
 /* ------------------------------------------------------------ */
 isr_common:
-    /* Save segment registers */
-    pushq %rax          /* placeholder for GS */
-    movw  %gs, %ax
-    movq  %rax, (%rsp)
-    pushq %rax          /* placeholder for FS */
-    movw  %fs, %ax
+    /* Allocate slots for FS and GS on the stack */
+    subq  $16, %rsp
+    /* Stack: [FS_slot][GS_slot][int_no][error_code][iretq frame] */
+
+    /* Temporarily store original RAX in FS slot so we can use RAX as scratch */
     movq  %rax, (%rsp)
 
-    /* Save general-purpose registers */
+    /* Read and store GS */
+    movw  %gs, %ax
+    movzwq %ax, %rax
+    movq  %rax, 8(%rsp)          /* GS slot = GS value */
+
+    /* Read FS, then swap with original RAX to restore it */
+    movw  %fs, %ax
+    movzwq %ax, %rax
+    xchgq %rax, (%rsp)           /* FS slot = FS value, RAX = original value */
+
+    /* Save general-purpose registers (RAX is the correct original value) */
     pushq %r15
     pushq %r14
     pushq %r13
@@ -124,9 +133,7 @@ isr_common:
 
     /* First argument = pointer to register_state (RSP) */
     movq %rsp, %rdi
-    /* Ensure 16-byte stack alignment for the call.
-     * Save the pre-call RSP in R12 (callee-saved) in case
-     * interrupt_dispatch returns the same pointer. */
+    /* Ensure 16-byte stack alignment for the call. */
     pushq %rbp
     movq  %rsp, %rbp
     andq  $~0xF, %rsp
@@ -153,14 +160,17 @@ isr_common:
     popq %r14
     popq %r15
 
-    /* Restore segment registers */
-    popq %rax           /* FS */
-    movw %ax, %fs
-    popq %rax           /* GS */
-    movw %ax, %gs
+    /* Restore segment registers without corrupting RAX */
+    /* Stack: [FS][GS][int_no][error_code][iretq frame] */
+    pushq %rax                   /* temporarily save restored RAX */
+    movq  8(%rsp), %rax          /* read FS value */
+    movw  %ax, %fs
+    movq  16(%rsp), %rax         /* read GS value */
+    movw  %ax, %gs
+    popq  %rax                   /* restore RAX */
 
-    /* Remove int_no and error_code */
-    addq $16, %rsp
+    /* Remove FS, GS, int_no and error_code (4 * 8 = 32 bytes) */
+    addq  $32, %rsp
 
     iretq
 

@@ -28,7 +28,7 @@ enum class task_state : u8 {
  * Task Control Block (TCB)
  * ============================================================ */
 
-inline constexpr usize TASK_STACK_SIZE = 16384;  /* 16 KB per task */
+inline constexpr usize TASK_STACK_SIZE = 262144;  /* 256 KB per task (enough for Doom) */
 inline constexpr usize MAX_TASKS = 64;
 
 using task_entry_fn = void(*)(void*);

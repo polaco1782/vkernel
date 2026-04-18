@@ -89,17 +89,24 @@ ENDM
 ; ============================================================
 ALIGN 16
 isr_common PROC
-    ; Save segment registers
-    push rax
-    mov  ax, gs
-    movzx rax, ax
-    mov  [rsp], rax
-    push rax
-    mov  ax, fs
-    movzx rax, ax
+    ; Allocate slots for FS and GS on the stack
+    sub  rsp, 16
+    ; Stack: [FS_slot][GS_slot][int_no][error_code][iretq frame]
+
+    ; Temporarily store original RAX in FS slot so we can use RAX as scratch
     mov  [rsp], rax
 
-    ; Save general-purpose registers
+    ; Read and store GS
+    mov  ax, gs
+    movzx rax, ax
+    mov  [rsp + 8], rax          ; GS slot = GS value
+
+    ; Read FS, then swap with original RAX to restore it
+    mov  ax, fs
+    movzx rax, ax
+    xchg rax, [rsp]              ; FS slot = FS value, RAX = original value
+
+    ; Save general-purpose registers (RAX is the correct original value)
     push r15
     push r14
     push r13
@@ -147,14 +154,17 @@ isr_common PROC
     pop r14
     pop r15
 
-    ; Restore segment registers
-    pop rax              ; FS
-    mov fs, ax
-    pop rax              ; GS
-    mov gs, ax
+    ; Restore segment registers without corrupting RAX
+    ; Stack: [FS][GS][int_no][error_code][iretq frame]
+    push rax                     ; temporarily save restored RAX
+    mov  rax, [rsp + 8]          ; read FS value
+    mov  fs, ax
+    mov  rax, [rsp + 16]         ; read GS value
+    mov  gs, ax
+    pop  rax                     ; restore RAX
 
-    ; Remove int_no and error_code
-    add rsp, 16
+    ; Remove FS, GS, int_no and error_code (4 * 8 = 32 bytes)
+    add  rsp, 32
 
     iretq
 isr_common ENDP

@@ -122,6 +122,20 @@ static void stub_reboot() {
     arch::reboot();
 }
 
+static int stub_poll_key(vk_key_event_t* out) {
+    if (out == null) return 0;
+    vk_key_event_t ev{};
+    if (input::poll_key(ev)) {
+        *out = ev;
+        return 1;
+    }
+    return 0;
+}
+
+static vk_u32 stub_ticks_per_sec() {
+    return 100;  /* SCHED_HZ = 100 */
+}
+
 static void stub_framebuffer_info(vk_framebuffer_info_t* out) {
     if (out == null) return;
 
@@ -190,8 +204,21 @@ static void* stub_realloc(void* ptr, vk_usize size) {
         return null;
     }
 
-    /* The kernel heap does not expose block sizes yet. */
-    return null;
+    /* Recover the block size from the heap_block header preceding the data. */
+    auto* blk = reinterpret_cast<heap_block*>(
+        static_cast<u8*>(ptr) - sizeof(heap_block));
+    vk_usize old_size = blk->size;
+
+    if (size <= old_size) {
+        return ptr;           /* fits in current block */
+    }
+
+    void* new_ptr = g_kernel_heap.allocate(size);
+    if (new_ptr == null) return null;
+
+    memory::memory_copy(new_ptr, ptr, old_size);
+    g_kernel_heap.free(ptr);
+    return new_ptr;
 }
 
 struct kernel_file_stream {
@@ -412,6 +439,9 @@ void init() {
     s_api.vk_file_flush = stub_file_flush;
     s_api.vk_file_remove = stub_file_remove;
     s_api.vk_file_rename = stub_file_rename;
+    /* raw keyboard */
+    s_api.vk_poll_key = stub_poll_key;
+    s_api.vk_ticks_per_sec = stub_ticks_per_sec;
 
     s_api_ready = true;
 }

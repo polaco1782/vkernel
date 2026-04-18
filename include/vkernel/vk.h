@@ -63,6 +63,14 @@ typedef struct vk_framebuffer_info {
     vk_u32            valid;
 } vk_framebuffer_info_t;
 
+typedef struct vk_key_event {
+    vk_u32 scancode;   /* PS/2 scan code set 1 make code (0x01-0x58) */
+    vk_u32 pressed;    /* 1 = key down (make), 0 = key up (break)   */
+    char   ascii;      /* ASCII translation if available, '\0' else */
+    char   _pad[3];
+    vk_u32 modifiers;  /* bit 0=shift, bit 1=ctrl, bit 2=alt         */
+} vk_key_event_t;
+
 typedef vk_u64 vk_file_handle_t;
 
 /* ============================================================
@@ -175,26 +183,44 @@ typedef struct vk_api {
     void (*vk_dump_idt)(void);
     void (*vk_reboot)(void);
 
+    /* ---- raw keyboard input ---- */
+    int    (*vk_poll_key)(vk_key_event_t* out);
+    vk_u32 (*vk_ticks_per_sec)(void);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 8ULL
+#define VK_API_VERSION 9ULL
 
 /* ============================================================
  * Userspace runtime helpers
+ *
+ * The API pointer must be a true global so that all translation
+ * units in a multi-file program share the same instance.
+ * On MSVC __declspec(selectany) makes the linker merge all
+ * copies into one; on GCC/Clang __attribute__((weak)) does the
+ * same.  This avoids needing a separate "implementation" TU.
  * ============================================================ */
 
-static inline const vk_api_t** vk_api_slot(void) {
-    static const vk_api_t* api;
-    return &api;
-}
+#if defined(_MSC_VER)
+__declspec(selectany) const vk_api_t* _vk_api_ptr = 0;
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) const vk_api_t* _vk_api_ptr = 0;
+#else
+/* Fallback: exactly one TU must define VK_IMPLEMENT */
+#if defined(VK_IMPLEMENT)
+const vk_api_t* _vk_api_ptr = 0;
+#else
+extern const vk_api_t* _vk_api_ptr;
+#endif
+#endif
 
 static inline void vk_init(const vk_api_t* api) {
-    *vk_api_slot() = api;
+    _vk_api_ptr = api;
 }
 
 static inline const vk_api_t* vk_get_api(void) {
-    return *vk_api_slot();
+    return _vk_api_ptr;
 }
 
 static inline void vk_puts(const char* s) {
@@ -308,6 +334,14 @@ static inline void vk_dump_idt(void) {
 
 static inline void vk_reboot(void) {
     vk_get_api()->vk_reboot();
+}
+
+static inline int vk_poll_key(vk_key_event_t* out) {
+    return vk_get_api()->vk_poll_key(out);
+}
+
+static inline vk_u32 vk_ticks_per_sec(void) {
+    return vk_get_api()->vk_ticks_per_sec();
 }
 
 static inline void vk_print_int(int n) {

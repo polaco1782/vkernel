@@ -557,8 +557,8 @@ int _start(const vk_api_t* api) {
     float   inv_samples = 1.0f / (float)SAMPLES_PER_PIXEL;
 
     for (vk_u32 j = 0; j < render_h; ++j) {
-        if ((j & 0xFu) == 0u)
-            printf("  Row %u / %u\n", j, render_h);
+        //if ((j & 0xFu) == 0u)
+        //   printf("  Row %u / %u\n", j, render_h);
 
         for (vk_u32 i = 0; i < render_w; ++i) {
             vec3_t pixel_color = v3(0.0f, 0.0f, 0.0f);

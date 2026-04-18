@@ -16,6 +16,7 @@
 #define VKERNEL_INPUT_H
 
 #include "types.h"
+#include "vk.h"
 
 namespace vk {
 namespace input {
@@ -38,6 +39,12 @@ auto getc() -> char;
  * Non-blocking poll.  Returns '\0' if no character is available.
  */
 auto try_getc() -> char;
+
+/*
+ * Non-blocking raw key event poll.
+ * Returns true and fills ev if a PS/2 scancode is available.
+ */
+auto poll_key(vk_key_event_t& ev) -> bool;
 
 } // namespace input
 } // namespace vk
