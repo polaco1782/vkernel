@@ -65,8 +65,8 @@ mkdir "%ESP_BOOT%"
 copy /y "%EFI_FILE%" "%ESP_BOOT%\bootx64.efi" >nul
 
 REM Copy userspace .vbin files to ESP
-set DOOM_VBIN=userspace\rp2040-doom\build_vs\doom\%BUILD_CONFIG%\doom.vbin
-if not exist "%DOOM_VBIN%" set DOOM_VBIN=%BUILD_DIR%\doom\%BUILD_CONFIG%\doom.vbin
+set DOOM_VBIN=%BUILD_DIR%\doom\%BUILD_CONFIG%\doom.vbin
+if not exist "%DOOM_VBIN%" set DOOM_VBIN=userspace\rp2040-doom\build_vs\doom\%BUILD_CONFIG%\doom.vbin
 set HELLO_VBIN=%BUILD_DIR%\hello\%BUILD_CONFIG%\hello.vbin
 set FRAMEBUFFER_VBIN=%BUILD_DIR%\framebuffer\%BUILD_CONFIG%\framebuffer.vbin
 set FRAMEBUFFER_TEXT_VBIN=%BUILD_DIR%\framebuffer_text\%BUILD_CONFIG%\framebuffer_text.vbin
@@ -133,15 +133,15 @@ if exist "%SHELL_VBIN%" (
 
 REM Copy DOOM WAD file (check multiple search locations)
 set DOOM_WAD=
-if exist "userspace\rp2040-doom\doom1.wad" set DOOM_WAD=userspace\rp2040-doom\doom1.wad
-if exist "doom1.wad" set DOOM_WAD=doom1.wad
+if exist "userspace\rp2040-doom\doom2.wad" set DOOM_WAD=userspace\rp2040-doom\doom2.wad
+if exist "doom2.wad" set DOOM_WAD=doom2.wad
 if not "%DOOM_WAD%"=="" (
     if not exist "%ESP_VKERNEL%" mkdir "%ESP_VKERNEL%"
-    copy /y "%DOOM_WAD%" "%ESP_VKERNEL%\doom1.wad" >nul
+    copy /y "%DOOM_WAD%" "%ESP_VKERNEL%\doom2.wad" >nul
     echo Copied %DOOM_WAD% to ESP
 ) else (
-    echo Warning: doom1.wad not found - DOOM will not be able to find its IWAD
-    echo   Place doom1.wad in the repo root or userspace\rp2040-doom\ to fix this
+    echo Warning: doom2.wad not found - DOOM will not be able to find its IWAD
+    echo   Place doom2.wad in the repo root or userspace\rp2040-doom\ to fix this
 )
 
 REM Run QEMU

@@ -12,6 +12,8 @@ BOOT_IMG  := $(BUILD_DIR)/$(KERNEL_NAME)_boot.img
 
 # Userspace programs
 USERSPACE_DIR  := userspace
+LIBC_DIR       := $(USERSPACE_DIR)/libc
+SYSROOT_DIR    := $(USERSPACE_DIR)/sysroot
 HELLO_VBIN      := $(USERSPACE_DIR)/hello/hello.vbin
 FRAMEBUFFER_VBIN := $(USERSPACE_DIR)/framebuffer/framebuffer.vbin
 FRAMEBUFFER_TEXT_VBIN := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.vbin
@@ -106,11 +108,25 @@ $(BOOT_IMG): $(EFI_FILE) $(USERSPACE_BINARIES) scripts/make_disk.sh
 	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(USERSPACE_BINARIES)
 
 # Build all userspace binaries
-.PHONY: userspace
+.PHONY: userspace libc-glue newlib-setup
 userspace: $(USERSPACE_BINARIES)
 
-$(HELLO_VBIN): $(USERSPACE_DIR)/hello/hello.c $(USERSPACE_DIR)/hello/Makefile
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello
+# newlib sysroot (headers + libc.a/libm.a) — run once
+newlib-setup:
+	@if [ ! -f $(SYSROOT_DIR)/lib/libc.a ]; then \
+		echo "  NEWLIB  Building sysroot..."; \
+		bash scripts/setup_newlib.sh; \
+	else \
+		echo "  NEWLIB  sysroot already built"; \
+	fi
+
+# CRT glue library (crt0.o + libvksys.a) — depends on sysroot
+libc-glue: newlib-setup
+	@$(MAKE) --no-print-directory -C $(LIBC_DIR) CC=$(CROSS_PREFIX)gcc
+
+# hello.vbin depends on the CRT glue (newlib-based program)
+$(HELLO_VBIN): $(USERSPACE_DIR)/hello/hello.c $(USERSPACE_DIR)/hello/Makefile libc-glue
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello CC=$(CROSS_PREFIX)gcc
 
 $(FRAMEBUFFER_VBIN): $(USERSPACE_DIR)/framebuffer/framebuffer.c $(USERSPACE_DIR)/framebuffer/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer
@@ -136,12 +152,19 @@ disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
 clean:
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
+	@$(MAKE) --no-print-directory -C $(LIBC_DIR) clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer_text clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/ramfs_reader clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell clean
+
+# Deep clean — also remove newlib sysroot and source (requires re-running setup_newlib.sh)
+distclean: clean
+	@echo "Removing newlib sysroot and build..."
+	@bash scripts/setup_newlib.sh clean 2>/dev/null || true
+	@rm -rf $(SYSROOT_DIR)
 
 # QEMU test
 qemu: $(BOOT_IMG)
@@ -180,6 +203,6 @@ info:
 	@echo "  Objects:      $(ALL_OBJS)"
 
 # Phony targets
-.PHONY: all clean disasm qemu qemu-debug info userspace disk
+.PHONY: all clean distclean disasm qemu qemu-debug info userspace disk newlib-setup libc-glue
 
 disk: $(BOOT_IMG)

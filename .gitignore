@@ -41,6 +41,13 @@ Thumbs.db
 toolchain/
 cross/
 
+# Newlib source, build artifacts, and sysroot
+userspace/newlib/
+userspace/newlib-build/
+userspace/sysroot/
+userspace/libc/*.o
+userspace/libc/*.a
+
 # Temporary files
 *.tmp
 *.log

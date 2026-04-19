@@ -2,16 +2,23 @@
  * vkernel userspace - hello world
  * Copyright (C) 2026 vkernel authors
  *
- * hello.c - Minimal freestanding ELF64 program for vkernel
+ * hello.c - Minimal userspace program for vkernel (newlib C runtime).
  *
  * Build: see Makefile (Linux) or hello.vcxproj (Visual Studio).
- * Run:   vk> run hello.elf
+ * Run:   vk> run hello.vbin
  */
 
-#include "../include/vk.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-int _start(const vk_api_t* api) {
-    vk_init(api);
+#include "../include/vk.h"       /* vkernel-specific APIs */
+
+int main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
+
+    const vk_api_t* api = vk_get_api();
 
     printf("+---------------------------------+\n");
     printf("|   Hello from vkernel userspace! |\n");
@@ -19,7 +26,7 @@ int _start(const vk_api_t* api) {
     printf("\n");
     printf("  Kernel API version : %llu\n", (unsigned long long)api->api_version);
     printf("  Architecture       : x86-64\n");
-    printf("  Loader             : vkernel ELF64\n");
+    printf("  Runtime            : newlib\n");
     printf("\n");
 
     /* Test memory allocation */
@@ -34,15 +41,15 @@ int _start(const vk_api_t* api) {
         printf("FAILED\n");
     }
 
-    FILE *f = fopen("hello.elf", "r");
+    FILE *f = fopen("hello.vbin", "r");
     if (f) {
-        printf("  fopen hello.elf: success\n");
+        printf("  fopen hello.vbin: success\n");
         fclose(f);
     } else {
-        printf("  fopen hello.elf: failed\n");
+        printf("  fopen hello.vbin: failed\n");
     }
 
-    for(int i = 0; i < 10; i++) {
+    for (int i = 0; i < 10; i++) {
         printf("  Tick %d\n", i);
         vk_sleep(100); /* Sleep for 100 ticks (1 second) */
     }

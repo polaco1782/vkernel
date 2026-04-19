@@ -97,7 +97,7 @@ auto ramfs::add_file_nocopy(const char* name, u8* data, usize size) -> status_co
 }
 
 auto ramfs::find(const char* name) -> const file_entry* {
-    /* Normalize: strip leading "./" so "./doom1.wad" matches "doom1.wad" */
+    /* Normalize: strip leading "./" so "./doom2.wad" matches "doom2.wad" */
     if (name != null && name[0] == '.' && name[1] == '/') {
         name += 2;
     }
@@ -330,7 +330,7 @@ auto loader::load_initrd() -> status_code {
         "\\EFI\\vkernel\\ramfs_reader.vbin",
         "\\EFI\\vkernel\\shell.vbin",
         "\\EFI\\vkernel\\doom.vbin",
-        "\\EFI\\vkernel\\doom1.wad",
+        "\\EFI\\vkernel\\doom2.wad",
     };
     constexpr usize file_count = sizeof(files) / sizeof(files[0]);
 
