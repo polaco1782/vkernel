@@ -165,6 +165,7 @@ if "%DEBUG_QEMU%"=="1" (
     -drive if=ide,index=0,media=disk,format=raw,file="fat:rw:%ESP_ROOT%" ^
     -m 256M ^
     -net none ^
+    -device sb16 ^
     -serial stdio ^
     -no-reboot ^
     -no-shutdown %DEBUG_ARGS%

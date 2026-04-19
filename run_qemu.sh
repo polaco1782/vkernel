@@ -78,6 +78,7 @@ exec ${QEMU} \
     -drive if=ide,format=raw,file="${BOOT_IMG}" \
     -m 512M \
     -net none \
+    -device sb16 \
     ${DISPLAY_ARGS} \
     -serial mon:stdio \
     -no-reboot \

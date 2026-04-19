@@ -35,20 +35,22 @@ static int has_prefix(const char* text, const char* prefix) {
 
 static void print_help(void) {
     printf("Available commands:\n");
-    printf("  help      - Show this message\n");
-    printf("  version   - Show API version\n");
-    printf("  mem       - Show memory info\n");
-    printf("  tasks     - Show scheduler tasks\n");
-    printf("  ls        - Show staged files\n");
-    printf("  cat <f>   - Print a ramfs file\n");
-    printf("  clear     - Clear the screen\n");
-    printf("  uptime    - Show tick count\n");
-    printf("  reboot    - Reboot the machine\n");
-    printf("  idt       - Dump interrupt descriptor table\n");
-    printf("  alloc     - Allocate and free a test block\n");
-    printf("  run <f>   - Launch a userspace program\n");
-    printf("  panic     - Trigger a userspace fault\n");
-    printf("  exit      - Exit the shell\n");
+    printf("  help         - Show this message\n");
+    printf("  version      - Show API version\n");
+    printf("  mem          - Show memory info\n");
+    printf("  tasks        - Show scheduler tasks\n");
+    printf("  ls           - Show staged files\n");
+    printf("  cat <f>      - Print a ramfs file\n");
+    printf("  clear        - Clear the screen\n");
+    printf("  uptime       - Show tick count\n");
+    printf("  reboot       - Reboot the machine\n");
+    printf("  idt          - Dump interrupt descriptor table\n");
+    printf("  alloc        - Allocate and free a test block\n");
+    printf("  run <f>      - Launch a userspace program\n");
+    printf("  drvload <d>  - Load a driver (e.g. drvload sb16.vko)\n");
+    printf("  drvunload <d>- Unload a driver\n");
+    printf("  panic        - Trigger a userspace fault\n");
+    printf("  exit         - Exit the shell\n");
 }
 
 static void print_version(const vk_api_t* api) {
@@ -120,6 +122,35 @@ static void run_program(const char* arg) {
 
 static void print_memory_info(void) {
     vk_dump_memory();
+}
+
+static void do_drvload(const char* arg) {
+    const char* name = skip_spaces(arg);
+    if (*name == '\0') {
+        printf("Usage: drvload <driver_name>\n");
+        printf("Example: drvload sb16.vko\n");
+        return;
+    }
+    int result = vk_drv_load(name);
+    if (result == 0) {
+        printf("Driver loaded successfully.\n");
+    } else {
+        printf("Failed to load driver: %s\n", name);
+    }
+}
+
+static void do_drvunload(const char* arg) {
+    const char* name = skip_spaces(arg);
+    if (*name == '\0') {
+        printf("Usage: drvunload <driver_name>\n");
+        return;
+    }
+    int result = vk_drv_unload(name);
+    if (result == 0) {
+        printf("Driver unloaded.\n");
+    } else {
+        printf("Failed to unload driver: %s\n", name);
+    }
 }
 
 static void print_tasks(void) {
@@ -205,6 +236,10 @@ int _start(const vk_api_t* api) {
             do_alloc_test();
         } else if (has_prefix(command, "run ")) {
             run_program(command + 4);
+        } else if (has_prefix(command, "drvload ")) {
+            do_drvload(command + 8);
+        } else if (has_prefix(command, "drvunload ")) {
+            do_drvunload(command + 10);
         } else if (strcmp(command, "panic") == 0) {
             do_panic_test();
         } else if (strcmp(command, "exit") == 0) {

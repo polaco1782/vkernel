@@ -190,10 +190,21 @@ typedef struct vk_api {
     /* ---- task synchronisation ---- */
     void (*vk_wait_task)(vk_i64 task_id);
 
+    /* ---- sound ---- */
+    int  (*vk_snd_play)(const void* samples, vk_u32 length, vk_u32 format);
+    void (*vk_snd_stop)(void);
+    int  (*vk_snd_is_playing)(void);
+    int  (*vk_snd_set_sample_rate)(vk_u32 rate_hz);
+    void (*vk_snd_set_volume)(vk_u32 left, vk_u32 right);
+
+    /* ---- driver management ---- */
+    int  (*vk_drv_load)(const char* name);
+    int  (*vk_drv_unload)(const char* name);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 10ULL
+#define VK_API_VERSION 11ULL
 
 /* ============================================================
  * Userspace runtime helpers
@@ -345,6 +356,38 @@ static inline int vk_poll_key(vk_key_event_t* out) {
 
 static inline vk_u32 vk_ticks_per_sec(void) {
     return vk_get_api()->vk_ticks_per_sec();
+}
+
+/* Sound format constants for vk_snd_play() */
+#define VK_SND_FORMAT_UNSIGNED_8   0
+#define VK_SND_FORMAT_SIGNED_16    1
+
+static inline int vk_snd_play(const void* samples, vk_u32 length, vk_u32 format) {
+    return vk_get_api()->vk_snd_play(samples, length, format);
+}
+
+static inline void vk_snd_stop(void) {
+    vk_get_api()->vk_snd_stop();
+}
+
+static inline int vk_snd_is_playing(void) {
+    return vk_get_api()->vk_snd_is_playing();
+}
+
+static inline int vk_snd_set_sample_rate(vk_u32 rate_hz) {
+    return vk_get_api()->vk_snd_set_sample_rate(rate_hz);
+}
+
+static inline void vk_snd_set_volume(vk_u32 left, vk_u32 right) {
+    vk_get_api()->vk_snd_set_volume(left, right);
+}
+
+static inline int vk_drv_load(const char* name) {
+    return vk_get_api()->vk_drv_load(name);
+}
+
+static inline int vk_drv_unload(const char* name) {
+    return vk_get_api()->vk_drv_unload(name);
 }
 
 static inline void vk_print_int(int n) {

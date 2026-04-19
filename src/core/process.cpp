@@ -31,6 +31,16 @@ void cleanup_process_context(process_task_context* ctx, int exit_code) {
     console::put_dec(static_cast<u64>(static_cast<u32>(exit_code)));
     console::puts("\n");
 
+    #if VK_DEBUG_LEVEL >= 4
+    console::puts("[DEBUG] Cleaning up process context: entry=0x");
+    console::put_hex(ctx->entry);
+    console::puts(", image_base=0x");
+    console::put_hex(reinterpret_cast<u64>(ctx->image_base));
+    console::puts(", image_size=0x");
+    console::put_hex(ctx->image_size);
+    console::puts("\n");
+    #endif
+
     g_kernel_heap.free(ctx->image_base);
     g_kernel_heap.free(ctx);
 }

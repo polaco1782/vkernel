@@ -136,7 +136,11 @@ public:
 
     auto init(span<const memory_map_entry> map) -> status_code;
 
-    auto allocate_pages(u32 page_count, u32 alignment = PAGE_SIZE_4K) -> phys_addr;
+    /* Allocate page_count pages with the given byte alignment.
+     * If max_addr != 0 the returned address + size must be <= max_addr. */
+    auto allocate_pages(u32 page_count,
+                        u32       alignment = PAGE_SIZE_4K,
+                        phys_addr max_addr  = 0) -> phys_addr;
     void free_pages(phys_addr addr, u32 page_count);
 
     [[nodiscard]] auto total_pages() const -> size_phys { return total_pages_; }

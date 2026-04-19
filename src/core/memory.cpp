@@ -17,6 +17,26 @@ namespace vk {
 static memory_map_entry g_memory_map[config::max_memory_map_entries];
 static u32 g_memory_map_count = 0;
 
+/* Pool of memory_region nodes for the physical allocator.
+ * A slot with size == 0 is unallocated (static storage = zero-init). */
+static constexpr u32 REGION_POOL_SIZE = 512;
+static memory_region g_region_pool[REGION_POOL_SIZE];
+
+static auto alloc_region_node() -> memory_region* {
+    for (u32 i = 0; i < REGION_POOL_SIZE; ++i) {
+        if (g_region_pool[i].size == 0)
+            return &g_region_pool[i];
+    }
+    return null;
+}
+
+static void free_region_node(memory_region* node) {
+    node->start = 0;
+    node->size  = 0;
+    node->used  = false;
+    node->next  = null;
+}
+
 /* Physical allocator state */
 phys_allocator g_phys_alloc;
 
@@ -81,13 +101,54 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
     used_pages_ = 0;
     free_pages_ = 0;
     
-    /* Add conventional memory to the free pool */
+    /* Build the free list from all conventional memory regions in the map.
+     * Memory map entries from UEFI are already sorted by physical address. */
+    memory_region* tail = null;
+
     for (const auto& entry : map) {
-        if (entry.type == memory_type::conventional) {
-            /* TODO: Add to free list */
-            total_pages_ += entry.number_of_pages;
-            free_pages_ += entry.number_of_pages;
+        total_pages_ += entry.number_of_pages;
+
+        /* After ExitBootServices (which runs before memory::init()),
+         * boot-services regions are fully reclaimed and available as
+         * general-purpose memory.  Treat them as free.
+         * (Loader regions contain our own image — not reclaimable.) */
+        const bool is_free =
+            entry.type == memory_type::conventional ||
+            entry.type == memory_type::boot_services_code ||
+            entry.type == memory_type::boot_services_data;
+
+        if (!is_free) continue;
+        if (entry.number_of_pages == 0) continue;
+
+        auto node = alloc_region_node();
+        if (node == null) {
+            console::puts("phys_alloc: region pool exhausted\n");
+            break;
         }
+
+        node->start = entry.physical_start;
+        node->size  = entry.number_of_pages * PAGE_SIZE_4K;
+        node->used  = false;
+        node->next  = null;
+
+        /* Never hand out physical page 0 — it holds the real-mode IVT/BDA
+         * and 0 is used as the "allocation failed" sentinel.  Trim it. */
+        if (node->start == 0) {
+            if (node->size <= PAGE_SIZE_4K) {
+                free_region_node(node);
+                continue;           /* entire region is just page 0 */
+            }
+            node->start = PAGE_SIZE_4K;
+            node->size -= PAGE_SIZE_4K;
+        }
+
+        if (tail == null) {
+            free_list_ = node;
+        } else {
+            tail->next = node;
+        }
+        tail = node;
+        free_pages_ += entry.number_of_pages;
     }
 
 #if VK_DEBUG_LEVEL >= 4
@@ -101,20 +162,106 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
     return status_code::success;
 }
 
-/* Allocate physical pages */
-auto phys_allocator::allocate_pages(u32 page_count, u32 alignment) -> phys_addr {
-    /* TODO: Implement proper page allocation */
-    (void)page_count;
-    (void)alignment;
-    
-    return 0;
+/* Allocate physical pages - first-fit with alignment and optional upper-bound.
+ * Returns the physical address of the first page, or 0 on failure. */
+auto phys_allocator::allocate_pages(u32 page_count, u32 alignment, phys_addr max_addr) -> phys_addr {
+    if (page_count == 0) return 0;
+
+    size_phys req_size = static_cast<size_phys>(page_count) * PAGE_SIZE_4K;
+
+    for (auto region = free_list_; region != null; region = region->next) {
+        if (region->used) continue;
+
+        /* Find the lowest aligned start address inside this region */
+        phys_addr aligned_start = align_up(region->start, static_cast<usize>(alignment));
+        phys_addr region_end    = region->start + region->size;
+
+        if (aligned_start + req_size > region_end) continue;
+        if (max_addr != 0 && aligned_start + req_size > max_addr) continue;
+
+        size_phys pre_size  = aligned_start - region->start;
+        size_phys post_size = region_end - (aligned_start + req_size);
+
+        if (pre_size == 0) {
+            /* Region is already aligned - reuse its node for the allocation */
+            if (post_size > 0) {
+                auto tail_node = alloc_region_node();
+                if (tail_node) {
+                    tail_node->start = aligned_start + req_size;
+                    tail_node->size  = post_size;
+                    tail_node->used  = false;
+                    tail_node->next  = region->next;
+                    region->next     = tail_node;
+                    region->size     = req_size;
+                }
+                /* If pool is exhausted the tail bytes are folded into the allocation */
+            }
+            region->used = true;
+        } else {
+            /* Need a new node for the aligned allocation chunk */
+            auto alloc_node = alloc_region_node();
+            if (!alloc_node) continue; /* try the next region */
+
+            alloc_node->start = aligned_start;
+            alloc_node->size  = req_size;
+            alloc_node->used  = true;
+            alloc_node->next  = region->next;
+
+            region->size = pre_size; /* keep pre-alignment fragment as free */
+            region->next = alloc_node;
+
+            if (post_size > 0) {
+                auto tail_node = alloc_region_node();
+                if (tail_node) {
+                    tail_node->start = aligned_start + req_size;
+                    tail_node->size  = post_size;
+                    tail_node->used  = false;
+                    tail_node->next  = alloc_node->next;
+                    alloc_node->next = tail_node;
+                }
+            }
+        }
+
+        used_pages_ += page_count;
+        free_pages_ -= page_count;
+        return aligned_start;
+    }
+
+    return 0; /* out of memory */
 }
 
-/* Free physical pages */
+/* Free physical pages - marks the region free and coalesces adjacent free regions */
 void phys_allocator::free_pages(phys_addr addr, u32 page_count) {
-    /* TODO: Implement page deallocation */
-    (void)addr;
-    (void)page_count;
+    if (addr == 0 || page_count == 0) return;
+
+    memory_region* prev = null;
+    for (auto region = free_list_; region != null; region = region->next) {
+        if (region->start == addr && region->used) {
+            region->used = false;
+            used_pages_ -= page_count;
+            free_pages_ += page_count;
+
+            /* Coalesce with the next region if it is free and contiguous */
+            if (region->next != null && !region->next->used &&
+                region->start + region->size == region->next->start) {
+                auto next = region->next;
+                region->size += next->size;
+                region->next  = next->next;
+                free_region_node(next);
+            }
+
+            /* Coalesce with the previous region if it is free and contiguous */
+            if (prev != null && !prev->used &&
+                prev->start + prev->size == region->start) {
+                prev->size += region->size;
+                prev->next  = region->next;
+                free_region_node(region);
+            }
+
+            return;
+        }
+        prev = region;
+    }
 }
 
 /* Kernel heap initialization */

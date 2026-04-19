@@ -13,6 +13,8 @@
 #include "input.h"
 #include "scheduler.h"
 #include "arch/x86_64/arch.h"
+#include "sound.h"
+#include "driver.h"
 #include "process.h"
 #include "vk.h"
 #include "process_internal.h"
@@ -135,6 +137,42 @@ static int stub_poll_key(vk_key_event_t* out) {
 static void stub_wait_task(vk_i64 task_id) {
     if (task_id < 0) return;
     sched::wait_for_task(static_cast<u64>(task_id));
+}
+
+/* ---- sound ---- */
+
+static int stub_snd_play(const void* samples, vk_u32 length, vk_u32 format) {
+    if (samples == null || length == 0) return 0;
+    auto fmt = static_cast<sound_format>(format);
+    return sound::play(static_cast<const u8*>(samples), length, fmt) ? 1 : 0;
+}
+
+static void stub_snd_stop() {
+    sound::stop();
+}
+
+static int stub_snd_is_playing() {
+    return sound::is_playing() ? 1 : 0;
+}
+
+static int stub_snd_set_sample_rate(vk_u32 rate_hz) {
+    return sound::set_sample_rate(rate_hz) ? 1 : 0;
+}
+
+static void stub_snd_set_volume(vk_u32 left, vk_u32 right) {
+    sound::set_volume(static_cast<u8>(left & 0xFF), static_cast<u8>(right & 0xFF));
+}
+
+/* ---- driver management ---- */
+
+static int stub_drv_load(const char* name) {
+    if (name == null) return -1;
+    return driver::load(name);
+}
+
+static int stub_drv_unload(const char* name) {
+    if (name == null) return -1;
+    return driver::unload(name);
 }
 
 static vk_u32 stub_ticks_per_sec() {
@@ -449,6 +487,15 @@ void init() {
     s_api.vk_ticks_per_sec = stub_ticks_per_sec;
     /* task sync */
     s_api.vk_wait_task = stub_wait_task;
+    /* sound */
+    s_api.vk_snd_play = stub_snd_play;
+    s_api.vk_snd_stop = stub_snd_stop;
+    s_api.vk_snd_is_playing = stub_snd_is_playing;
+    s_api.vk_snd_set_sample_rate = stub_snd_set_sample_rate;
+    s_api.vk_snd_set_volume = stub_snd_set_volume;
+    /* driver management */
+    s_api.vk_drv_load = stub_drv_load;
+    s_api.vk_drv_unload = stub_drv_unload;
 
     s_api_ready = true;
 }

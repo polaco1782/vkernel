@@ -16,8 +16,12 @@
 #include "panic.h"
 #include "process.h"
 #include "arch/x86_64/arch.h"
+#include "driver.h"
 
 namespace vk {
+
+/* Forward declarations for built-in driver registration */
+namespace sb16_driver { void register_builtin(); }
 
 /* ============================================================
  * Self-relocator for the GOT
@@ -239,8 +243,13 @@ auto efi_main(
     console::write("Kernel initialization complete.");
 
     /* ============================================================
-    * Phase 4 — Scheduler + Userspace Shell
+     * Phase 4 — Driver framework + Scheduler + Userspace Shell
      * ============================================================ */
+
+    /* Initialize the driver framework and register built-in drivers */
+    driver::init();
+    sb16_driver::register_builtin();
+    console::write("Driver framework initialised (1 built-in driver registered).");
 
     /* Initialize the scheduler (sets up PIC + PIT) */
     if (auto status = sched::init(); status != status_code::success) {

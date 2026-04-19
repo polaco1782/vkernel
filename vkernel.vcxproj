@@ -99,6 +99,9 @@
     <ClCompile Include="src\core\console.cpp" />
     <ClCompile Include="src\core\uefi.cpp" />
     <ClCompile Include="src\core\memory.cpp" />
+    <ClCompile Include="src\core\driver.cpp" />
+    <ClCompile Include="src\core\sound.cpp" />
+    <ClCompile Include="src\core\sound_sb16.cpp" />
     <ClCompile Include="src\arch\x86_64\arch_init.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -109,6 +112,8 @@
     <ClInclude Include="include\vkernel\console.h" />
     <ClInclude Include="include\vkernel\memory.h" />
     <ClInclude Include="include\vkernel\vk.h" />
+    <ClInclude Include="include\vkernel\sound.h" />
+    <ClInclude Include="include\vkernel\driver.h" />
     <ClInclude Include="include\vkernel\arch\x86_64\arch.h" />
     <ClInclude Include="src\core\process_internal.h" />
   </ItemGroup>

@@ -13,6 +13,11 @@
 #include "panic.h"
 #include "process_internal.h"
 #include "arch/x86_64/arch.h"
+#if defined(_MSC_VER)
+#include "msvc_asm.h"
+#else
+#include "gcc_asm.h"
+#endif
 
 namespace vk {
 namespace arch {
@@ -254,12 +259,22 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
     return regs;
 }
 
-/* ISR stub anchor — defined in interrupts.S / interrupts.asm.
- * All 256 stubs are .align 16, so stub[i] = isr_stub_0 + i * 16.
- * Runtime address is obtained via asm_get_isr_stub_base() to ensure
- * RIP-relative addressing on both GCC and MSVC. */
+/* ISR stub anchor — defined in interrupts.S.
+ * All 256 stubs are .align 16, so stub[i] = isr_stub_0 + i * 16. */
+extern "C" void isr_stub_0();
 
 static constexpr usize ISR_STUB_STRIDE = 16;
+
+/* Force RIP-relative addressing to get the runtime address of isr_stub_0.
+ * The compiler/linker will otherwise use an absolute link-time constant
+ * because we're not linked as -pie. */
+static inline auto get_isr_stub_base() -> u64 {
+#if defined(_MSC_VER)
+    return reinterpret_cast<u64>(&isr_stub_0);
+#else
+    return asm_get_isr_stub_base();
+#endif
+}
 
 void init_idt() {
     log::info("Preparing IDT...");
@@ -268,7 +283,7 @@ void init_idt() {
     g_idt_ptr.base  = reinterpret_cast<u64>(&g_idt);
 
     /* Compute runtime base address of the first ISR stub */
-    u64 base = asm_get_isr_stub_base();
+    u64 base = get_isr_stub_base();
 
 #if VK_DEBUG_LEVEL >= 4
     console::puts("[DEBUG] IDT: isr_stub_0=0x");
