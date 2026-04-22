@@ -1,0 +1,66 @@
+# vkernel - UEFI Microkernel
+# Git ignore file
+
+# Build directories
+build/
+build_vs/
+*.efi
+*.elf
+*.dis
+*.img
+*.vbin
+
+# Object files
+*.o
+*.obj
+*.lib
+*.dll
+*.exe
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+ipch/
+
+# IDE files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Toolchain (if built locally)
+toolchain/
+cross/
+
+# Newlib source, build artifacts, and sysroot
+userspace/newlib/
+userspace/newlib-build/
+userspace/sysroot/
+userspace/libc/*.o
+userspace/libc/*.a
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+
+# QEMU
+*.fd
+/tmp/vkernel_ovmf_vars.fd
+
+# Test artifacts
+tests/output/
+tests/coverage/
+
+# Shareware doom wad files (not redistributable, must be provided by user)
+doom2.wad

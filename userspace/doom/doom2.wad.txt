@@ -1,0 +1,4 @@
+drvload ac97
+run raytracer.vbin
+run rotozoom.vbin
+run modplay.vbin
