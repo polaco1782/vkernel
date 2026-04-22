@@ -19,10 +19,11 @@ set -e
 for arg in "$@"; do
     case "$arg" in
         --debug|-d) DEBUG_QEMU=1 ;;
+        --verbose|-d) VERBOSE=1 ;;
     esac
 done
 
-if [ ${DEBUG_QEMU} -eq 1 ]; then
+if [ ${VERBOSE} -eq 1 ]; then
     make clean
     make DEBUG=1
     make userspace DEBUG=1
