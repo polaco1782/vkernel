@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 #include "i_timer.h"
-#include "../../include/vkernel/vk.h"
+#include "../include/vk.h"
 
 static uint32_t basetime = 0;
 static int basetime_set = 0;

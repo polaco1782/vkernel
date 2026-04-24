@@ -756,5 +756,9 @@ int main(char **argv, int argc){
              0xFFFFFFFFu);
     blit_all(fb_pixels, fb.stride);
 
+    for(;;) {
+        VK_CALL(yield);
+    }
+
     return 0;
 }

@@ -9,7 +9,7 @@
  * then call the user's main().
  */
 
-#include "../../include/vkernel/vk.h"
+#include "../include/vk.h"
 
 /* Provided by the user program */
 extern int main(int argc, char** argv);

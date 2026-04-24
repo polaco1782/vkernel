@@ -27,19 +27,11 @@ namespace vk {
 namespace process {
 
 void cleanup_process_context(process_task_context* ctx, int exit_code) {
-    console::puts("Process exited with code ");
-    console::put_dec(static_cast<u64>(static_cast<u32>(exit_code)));
-    console::puts("\n");
-
-    #if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] Cleaning up process context: entry=0x");
-    console::put_hex(ctx->entry);
-    console::puts(", image_base=0x");
-    console::put_hex(reinterpret_cast<u64>(ctx->image_base));
-    console::puts(", image_size=0x");
-    console::put_hex(ctx->image_size);
-    console::puts("\n");
-    #endif
+    log::printk("Process exited with code %d\n", exit_code);
+    log::debug("Cleaning up process context: entry=%#llx, image_base=%p, image_size=%#llx",
+               static_cast<unsigned long long>(ctx->entry),
+               ctx->image_base,
+               static_cast<unsigned long long>(ctx->image_size));
 
     if (ctx->image_from_phys) {
         u32 page_count = static_cast<u32>(
@@ -70,17 +62,11 @@ auto run(const char* filename) -> i64 {
     /* Look up the file in ramfs */
     const file_entry* f = ramfs::find(filename);
     if (f == null) {
-        console::puts("process: file not found: ");
-        console::puts(filename);
-        console::puts("\n");
+        log::warn("process: file not found: %s", filename);
         return -1;
     }
 
-    console::puts("Loading binary: ");
-    console::puts(filename);
-    console::puts(" (");
-    console::put_dec(f->size);
-    console::puts(" bytes)\n");
+    log::info("Loading binary: %s (%zu bytes)", filename, f->size);
 
     const u8*  data = f->data;
     const usize sz  = f->size;
@@ -102,9 +88,7 @@ auto run(const char* filename) -> i64 {
     if (is_elf) {
         auto result = elf::load(data, sz);
         if (result.error != elf::elf_error::ok) {
-            console::puts("process: ELF load failed: ");
-            console::puts(elf::error_string(result.error));
-            console::puts("\n");
+            log::error("process: ELF load failed: %s", elf::error_string(result.error));
             return -1;
         }
         entry_addr      = result.entry;
@@ -114,29 +98,25 @@ auto run(const char* filename) -> i64 {
     } else if (is_pe) {
         auto result = pe::load(data, sz);
         if (result.error != pe::pe_error::ok) {
-            console::puts("process: PE load failed: ");
-            console::puts(pe::error_string(result.error));
-            console::puts("\n");
+            log::error("process: PE load failed: %s", pe::error_string(result.error));
             return -1;
         }
         entry_addr = result.entry;
         image_base = result.image_base;
         image_size = result.image_size;
     } else {
-        console::puts("process: unknown binary format (not ELF or PE)\n");
+        log::error("process: unknown binary format (not ELF or PE)");
         return -1;
     }
 
-    console::puts("Executing at 0x");
-    console::put_hex(entry_addr);
-    console::puts("\n");
+    log::info("Executing at %#llx", static_cast<unsigned long long>(entry_addr));
 
     /* Ensure the API table is ready */
     kernel_api::init();
 
     auto* ctx = static_cast<process_task_context*>(g_kernel_heap.allocate(sizeof(process_task_context)));
     if (ctx == null) {
-        console::puts("process: out of memory while creating task context\n");
+        log::error("process: out of memory while creating task context");
         if (image_from_phys) {
             u32 pc = static_cast<u32>(
                 (image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
@@ -156,7 +136,7 @@ auto run(const char* filename) -> i64 {
 	// create a new task and pass the context as user data
     i64 task_id = sched::create_task(filename, process_task_main, ctx);
     if (task_id < 0) {
-        console::puts("process: failed to create task\n");
+        log::error("process: failed to create task");
         g_kernel_heap.free(ctx);
         if (image_from_phys) {
             u32 pc = static_cast<u32>(
@@ -169,11 +149,8 @@ auto run(const char* filename) -> i64 {
         return -1;
     }
 
-    console::puts("Spawned task id ");
-    console::put_dec(static_cast<u64>(task_id));
-    console::puts(" for ");
-    console::puts(filename);
-    console::puts("\n");
+    log::info("Spawned task id %llu for %s",
+              static_cast<unsigned long long>(task_id), filename);
 
     return task_id;
 }

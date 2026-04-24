@@ -122,7 +122,7 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
 
         auto node = alloc_region_node();
         if (node == null) {
-            console::puts("phys_alloc: region pool exhausted\n");
+            log::warn("phys_alloc: region pool exhausted");
             break;
         }
 
@@ -151,13 +151,9 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
         free_pages_ += entry.number_of_pages;
     }
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] phys_alloc: ");
-    console::put_dec(total_pages_);
-    console::puts(" pages free (");
-    console::put_dec((total_pages_ * PAGE_SIZE_4K) / (1024 * 1024));
-    console::puts(" MB)\n");
-#endif
+    log::debug("phys_alloc: %llu pages free (%llu MB)",
+               static_cast<unsigned long long>(total_pages_),
+               static_cast<unsigned long long>((total_pages_ * PAGE_SIZE_4K) / (1024 * 1024)));
 
     return status_code::success;
 }
@@ -272,13 +268,9 @@ auto kernel_heap::init(void* base, size_phys size) -> status_code {
     free_list_->next = null;
     free_list_->prev = null;
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] heap: base=0x");
-    console::put_hex(reinterpret_cast<u64>(base));
-    console::puts(", capacity=");
-    console::put_dec(size / (1024 * 1024));
-    console::puts(" MB\n");
-#endif
+    log::debug("heap: base=%p, capacity=%llu MB",
+               base,
+               static_cast<unsigned long long>(size / (1024 * 1024)));
 
     return status_code::success;
 }
@@ -341,6 +333,8 @@ void kernel_heap::free(void* ptr) {
     if (ptr == null) {
         return;
     }
+
+    log::debug("heap: freeing block at %p", ptr);
     
     /* Find the block header */
     auto block = reinterpret_cast<heap_block*>(
@@ -444,9 +438,9 @@ auto memory::init(span<const memory_map_entry> map) -> status_code {
         return status;
     }
     
-    log::info("Memory subsystem initialized");
-    /* TODO: Print page count with variadic logging */
-    (void)g_phys_alloc.total_pages();
+    log::info("Memory subsystem initialized (%llu pages total, %llu MB)",
+              static_cast<unsigned long long>(g_phys_alloc.total_pages()),
+              static_cast<unsigned long long>((g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024)));
     
     return status_code::success;
 }
@@ -468,31 +462,20 @@ auto memory::find_entry(phys_addr addr) -> const memory_map_entry* {
 
 /* Dump memory map */
 void memory::dump_map() {
-    console::puts("\nMemory Map:\n");
-    console::puts("========================================\n");
-    
+    log::info("Memory Map:");
+    log::info("========================================");
     for (u32 i = 0; i < g_memory_map_count; ++i) {
-        console::puts("Entry ");
-        char buf[8];
-        buf[0] = static_cast<char>('0' + (i / 100));
-        buf[1] = static_cast<char>('0' + ((i / 10) % 10));
-        buf[2] = static_cast<char>('0' + (i % 10));
-        buf[3] = '\0';
-        console::puts(buf);
-        console::puts(": ");
-        console::puts(g_memory_map[i].type_string());
-        console::puts("\n");
+        log::info("Entry %u: %s", i, g_memory_map[i].type_string());
     }
-    
-    console::puts("========================================\n\n");
+    log::info("========================================\n");
 }
 
 /* Dump kernel heap allocations */
 void memory::dump_heap() {
-    console::puts("\nKernel Heap Allocations:\n");
-    console::puts("========================================\n");
-    console::puts("  Address          Size       Status\n");
-    console::puts("  ---------------  ---------  -------\n");
+    log::info("Kernel Heap Allocations:");
+    log::info("========================================");
+    log::info("  Address          Size       Status");
+    log::info("  ---------------  ---------  -------");
     
     auto block = g_kernel_heap.get_free_list();
     u64 used_total = 0;
@@ -501,47 +484,26 @@ void memory::dump_heap() {
     u32 free_count = 0;
     
     while (block != null) {
-        console::puts("  0x");
-        console::put_hex(reinterpret_cast<u64>(block->data()));
-        console::puts("  ");
+        log::info("  0x%016llx  %9llu  %s",
+                  reinterpret_cast<u64>(block->data()),
+                  static_cast<unsigned long long>(block->size),
+                  block->used ? "USED" : "FREE");
         
-        if (block->size < 1000) {
-            console::putc(' ');
-        }
-        if (block->size < 100) {
-            console::putc(' ');
-        }
-        if (block->size < 10) {
-            console::putc(' ');
-        }
-        console::put_dec(block->size);
-        
-        console::puts("  ");
         if (block->used) {
-            console::puts("USED\n");
             used_total += block->size;
             used_count++;
         } else {
-            console::puts("FREE\n");
             free_total += block->size;
             free_count++;
         }
-        
+
         block = block->next;
     }
     
-    console::puts("----------------------------------------\n");
-    console::puts("  Total Used:  ");
-    console::put_dec(used_count);
-    console::puts(" blocks, ");
-    console::put_dec(used_total);
-    console::puts(" bytes\n");
-    console::puts("  Total Free:  ");
-    console::put_dec(free_count);
-    console::puts(" blocks, ");
-    console::put_dec(free_total);
-    console::puts(" bytes\n");
-    console::puts("========================================\n\n");
+    log::info("----------------------------------------");
+    log::info("  Total Used:  %u blocks, %llu bytes", used_count, used_total);
+    log::info("  Total Free:  %u blocks, %llu bytes", free_count, free_total);
+    log::info("========================================\n\n");
 }
 
 } // namespace vk

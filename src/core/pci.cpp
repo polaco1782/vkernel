@@ -148,9 +148,7 @@ void init() {
         }
     }
 
-    console::puts("pci: enumerated ");
-    console::put_dec(s_count);
-    console::puts(" device(s)\n");
+    log::info("pci: enumerated %zu device(s)", s_count);
 }
 
 /* ============================================================
@@ -191,26 +189,13 @@ auto get_device(usize index) -> const pci_device* {
  * ============================================================ */
 
 void list_devices() {
-    console::puts("PCI devices:\n");
+    log::info("PCI devices:");
     for (usize i = 0; i < s_count; ++i) {
         auto& d = s_devices[i];
-        console::puts("  ");
-        console::put_hex(d.addr.bus);
-        console::puts(":");
-        console::put_hex(d.addr.device);
-        console::puts(".");
-        console::put_hex(d.addr.function);
-        console::puts(" vendor=");
-        console::put_hex(d.vendor_id);
-        console::puts(" device=");
-        console::put_hex(d.device_id);
-        console::puts(" class=");
-        console::put_hex(d.class_code);
-        console::puts(":");
-        console::put_hex(d.subclass);
-        console::puts(" irq=");
-        console::put_dec(d.irq_line);
-        console::puts("\n");
+        log::info("  %#02x:%#02x.%#x vendor=%#04x device=%#04x class=%#02x:%#02x irq=%u",
+                  d.addr.bus, d.addr.device, d.addr.function,
+                  d.vendor_id, d.device_id,
+                  d.class_code, d.subclass, d.irq_line);
     }
 }
 

@@ -76,13 +76,7 @@ static void pic_remap() {
 static void pit_init() {
     u16 divisor = static_cast<u16>(PIT_FREQ / SCHED_HZ);
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] PIT: divisor=0x");
-    console::put_hex(divisor);
-    console::puts(" (target ");
-    console::put_dec(SCHED_HZ);
-    console::puts(" Hz)\n");
-#endif
+    log::debug("PIT: divisor=%#x (target %u Hz)", divisor, SCHED_HZ);
 
     /* Channel 0, lobyte/hibyte, rate generator */
     arch::outb(PIT_CMD, 0x36);
@@ -111,10 +105,9 @@ static void str_copy(char* dst, const char* src, usize max) {
 }
 
 /* ============================================================
- * Task trampoline — wraps the entry function so we can clean up
+ * Scheduler internals
  * ============================================================ */
-
-static void task_trampoline() {
+[[maybe_unused]] static void task_trampoline(void* user_data) {
     auto& t = g_tasks[g_current_task];
     if (t.entry) t.entry(t.user_data);
     sched::exit_task();
@@ -129,6 +122,38 @@ static void wake_sleeping_tasks() {
 }
 
 /* ============================================================
+ * Entry point validation helper (freestanding-safe)
+ * ============================================================ */
+
+[[maybe_unused]] static bool validate_entry_point(u64 entry_va) {
+    const u8* bytes = reinterpret_cast<const u8*>(entry_va);
+    
+    /* Check for obvious fill patterns (0x00, 0xFF, 0xCC) */
+    bool has_real_code = false;
+    for (int i = 0; i < 16; ++i) {
+        u8 b = bytes[i];
+        if (b != 0x00 && b != 0xFF && b != 0xCC && b != 0x90) {
+            has_real_code = true;
+            break;
+        }
+    }
+    return has_real_code;
+}
+
+[[maybe_unused]] static void dump_entry_bytes(u64 entry_va, usize count = 32) {
+    const u8* bytes = reinterpret_cast<const u8*>(entry_va);
+
+    log::debug("Dumping %zu bytes at entry point %#llx:", count, static_cast<unsigned long long>(entry_va));
+
+    for (usize i = 0; i < count; ++i) {
+        log::debug("  [%02zu] %#02x", i, bytes[i]);
+
+        if ((i + 1) % 16 == 0 && i + 1 < count)
+            log::debug("");
+    }
+}
+
+/* ============================================================
  * Scheduler API
  * ============================================================ */
 
@@ -139,7 +164,7 @@ auto sched::init() -> status_code {
     g_scheduler_active = false;
     g_tick_count = 0;
 
-    /* Remap PIC so IRQ0 → vector 32 */
+    /* Remap PIC so IRQ0 -> vector 32 */
     pic_remap();
 
     /* Init PIT for periodic ticks */
@@ -196,26 +221,37 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
 
     t.rsp = reinterpret_cast<u64>(stack_top - 24);
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] task '" );
-    console::puts(name);
-    console::puts("': entry=0x");
-    console::put_hex(reinterpret_cast<u64>(entry));
-    console::puts(" trampoline=0x");
-    console::put_hex(reinterpret_cast<u64>(&task_trampoline));
-    console::puts(" rsp=0x");
-    console::put_hex(t.rsp);
-    console::puts("\n");
-#endif
+    if constexpr (log::debug_enabled()) {
+        log::debug("task '%s': entry=%#llx user_data=%p rsp=%#llx",
+                   name,
+                   static_cast<unsigned long long>(reinterpret_cast<u64>(entry)),
+                   user_data,
+                   static_cast<unsigned long long>(t.rsp));
+
+        if (!validate_entry_point(reinterpret_cast<u64>(entry))) {
+            log::warn("Task '%s' entry point may contain fill pattern", name);
+            dump_entry_bytes(reinterpret_cast<u64>(entry), 32);
+        } else {
+            log::debug("Task '%s' entry point looks like valid code", name);
+            dump_entry_bytes(reinterpret_cast<u64>(entry), 16);
+        }
+
+        auto* frame = reinterpret_cast<u64*>(t.rsp);
+        log::debug("Initial frame @%#llx: RIP=%#llx CS=%#llx RFLAGS=%#llx RSP=%#llx SS=%#llx RCX=%#llx",
+                   static_cast<unsigned long long>(t.rsp),
+                   static_cast<unsigned long long>(frame[19]),
+                   static_cast<unsigned long long>(frame[20]),
+                   static_cast<unsigned long long>(frame[21]),
+                   static_cast<unsigned long long>(frame[22]),
+                   static_cast<unsigned long long>(frame[23]),
+                   static_cast<unsigned long long>(frame[16]));
+    }
 
     i64 id = static_cast<i64>(g_task_count);
     ++g_task_count;
 
-    console::puts("  Task created: ");
-    console::puts(name);
-    console::puts(" (id=");
-    console::put_dec(static_cast<u64>(id));
-    console::puts(")\n");
+    log::info("Task created: %s (id=%llu)",
+              name, static_cast<unsigned long long>(id));
 
     return id;
 }
@@ -282,7 +318,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     asm_sched_switch_to(rsp);
 }
 
-VK_NORETURN void sched::start() {
+[[noreturn]] void sched::start() {
     if (g_task_count == 0) {
         vk_panic(__FILE__, __LINE__, "No tasks to schedule");
     }
@@ -294,19 +330,35 @@ VK_NORETURN void sched::start() {
     /* Unmask IRQ0 and enable interrupts */
     pic_unmask_irq0();
 
-    console::write("Scheduler starting...");
+    log::info("Scheduler starting...");
 
-#if VK_DEBUG_LEVEL >= 4
-    {
+    if constexpr (log::debug_enabled()) {
         auto* s = reinterpret_cast<u64*>(g_tasks[0].rsp);
-        console::puts("[DEBUG] First task initial frame:\n");
-        console::puts("  RSP=0x");       console::put_hex(g_tasks[0].rsp); console::puts("\n");
-        console::puts("  RIP=0x");       console::put_hex(s[19]);          console::puts("\n");
-        console::puts("  CS=0x");        console::put_hex(s[20]);          console::puts("\n");
-        console::puts("  RFLAGS=0x");    console::put_hex(s[21]);          console::puts("\n");
-        console::puts("  trampoline=0x"); console::put_hex(reinterpret_cast<u64>(&task_trampoline)); console::puts("\n");
+        log::debug("=== FIRST TASK INITIAL FRAME ===");
+        log::debug("Task: %s", g_tasks[0].name);
+        log::debug("Frame base (RSP on iretq): %#llx", static_cast<unsigned long long>(g_tasks[0].rsp));
+        log::debug("RIP=%#llx CS=%#llx RFLAGS=%#llx RSP=%#llx SS=%#llx RCX=%#llx RDX=%#llx R8=%#llx R9=%#llx",
+                   static_cast<unsigned long long>(s[19]),
+                   static_cast<unsigned long long>(s[20]),
+                   static_cast<unsigned long long>(s[21]),
+                   static_cast<unsigned long long>(s[22]),
+                   static_cast<unsigned long long>(s[23]),
+                   static_cast<unsigned long long>(s[16]),
+                   static_cast<unsigned long long>(s[15]),
+                   static_cast<unsigned long long>(s[12]),
+                   static_cast<unsigned long long>(s[11]));
+
+        u64 entry = s[19];
+        if (!validate_entry_point(entry)) {
+            log::error("Entry point contains fill pattern - aborting");
+            dump_entry_bytes(entry, 64);
+            __builtin_trap();
+        }
+
+        log::debug("Entry point first 32 bytes:");
+        dump_entry_bytes(entry, 32);
+        log::debug("=====================================");
     }
-#endif
 
     /* Jump into the first task — naked asm, no compiler interference */
     sched_switch_to(g_tasks[0].rsp);
@@ -362,12 +414,10 @@ void sched::wait_for_task(u64 task_id) {
     }
 }
 
-VK_NORETURN void sched::exit_task() {
+[[noreturn]] void sched::exit_task() {
     arch::disable_interrupts();
     g_tasks[g_current_task].state = task_state::terminated;
-    console::puts("[sched] Task terminated: ");
-    console::puts(g_tasks[g_current_task].name);
-    console::puts("\n");
+    log::debug("Task terminated: %s", g_tasks[g_current_task].name);
     arch::enable_interrupts();
     /* Yield to let scheduler pick another task */
     while (true) { sched::yield(); arch::cpu_halt(); }
@@ -375,20 +425,15 @@ VK_NORETURN void sched::exit_task() {
 }
 
 void sched::dump_tasks() {
-    console::puts("\nTask list:\n");
+    log::info("Task list:");
     for (usize i = 0; i < g_task_count; ++i) {
-        console::puts("  [");
-        console::put_dec(g_tasks[i].id);
-        console::puts("] ");
-        console::puts(g_tasks[i].name);
-        console::puts(" - ");
-        switch (g_tasks[i].state) {
-            case task_state::ready:      console::puts("ready");      break;
-            case task_state::running:    console::puts("running");    break;
-            case task_state::blocked:    console::puts("blocked");    break;
-            case task_state::terminated: console::puts("terminated"); break;
-        }
-        console::puts("\n");
+        log::info("  [%llu] %s - %s",
+                  static_cast<unsigned long long>(g_tasks[i].id),
+                  g_tasks[i].name,
+                  (g_tasks[i].state == task_state::ready) ? "ready" :
+                  (g_tasks[i].state == task_state::running) ? "running" :
+                  (g_tasks[i].state == task_state::blocked) ? "blocked" :
+                  (g_tasks[i].state == task_state::terminated) ? "terminated" : "unknown");
     }
 }
 

@@ -100,14 +100,9 @@ auto efi_main(
     }
     
     /* Print welcome message */
-    console::puts("vkernel ");
-    console::puts(config::version_string);
-    console::puts(" - UEFI Microkernel\n");
-    console::puts("Booting on ");
-    console::puts(config::arch_name);
-    console::puts(" using ");
-    console::puts(config::compiler_name);
-    console::puts("\n\n");
+    log::printk("vkernel %s - UEFI Microkernel\n", config::version_string);
+    log::printk("Booting on %s using %s\n\n",
+                config::arch_name, config::compiler_name);
     
     /* Prepare architecture tables (GDT/IDT in memory, not yet loaded) */
     arch::init();
@@ -118,11 +113,11 @@ auto efi_main(
      * ============================================================ */
 
     /* Query the UEFI memory map */
-    console::write("Querying UEFI memory map...");
+    log::info("Querying UEFI memory map...");
     auto raw = uefi::query_memory_map();
     if (raw.count == 0) {
-        console::write("ERROR: Failed to query UEFI memory map");
-        return uefi::status::load_error;
+        log::error("Failed to query UEFI memory map");
+        vk_panic(__FILE__, __LINE__, "Failed to query UEFI memory map");
     }
 
     /* Convert raw UEFI descriptors → kernel memory_map_entry */
@@ -145,9 +140,7 @@ auto efi_main(
         entry.attribute = d->attribute;
     }
 
-    console::puts("  Found ");
-    console::put_dec(map_count);
-    console::puts(" memory map entries\n");
+    log::info("Found %u memory map entries", map_count);
 
     /* Print summary before we lose console access */
     u64 total_conventional_pages = 0;
@@ -156,32 +149,22 @@ auto efi_main(
             total_conventional_pages += s_map[i].number_of_pages;
         }
     }
-    console::puts("  Conventional memory: ");
-    console::put_dec((total_conventional_pages * 0x1000ULL) / (1024 * 1024));
-    console::puts(" MB\n");
+    log::info("Conventional memory: %llu MB",
+              (total_conventional_pages * 0x1000ULL) / (1024 * 1024));
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] memory map: ");
-    console::put_dec(map_count);
-    console::puts(" entries, ");
-    console::put_dec(total_conventional_pages);
-    console::puts(" conventional pages\n");
-#endif
+    log::debug("memory map: %u entries, %llu conventional pages",
+               map_count, total_conventional_pages);
 
     /* Query the GOP framebuffer (must happen before ExitBootServices) */
-    console::puts("Querying framebuffer...\n");
+    log::info("Querying framebuffer...");
     auto fb_info = uefi::query_gop();
     if (fb_info.valid) {
-        console::puts("  Framebuffer: ");
-        console::put_dec(fb_info.width);
-        console::puts("x");
-        console::put_dec(fb_info.height);
-        console::puts(" @ 0x");
-        console::put_hex(fb_info.base);
-        console::puts("\n");
+        log::info("Framebuffer: %ux%u @ %#llx",
+                  fb_info.width, fb_info.height,
+                  static_cast<unsigned long long>(fb_info.base));
         console::init_framebuffer(fb_info);
     } else {
-        console::puts("  No framebuffer available.\n");
+        log::warn("No framebuffer available");
     }
 
     /* Load files from ESP into ramfs (must happen before ExitBootServices) */
@@ -191,7 +174,7 @@ auto efi_main(
      * Phase 2 — Exit Boot Services
      * ============================================================ */
 
-    console::write("Exiting UEFI boot services...");
+    log::info("Exiting UEFI boot services...");
 
     /* Disable interrupts: prevents UEFI timer callbacks from modifying
      * the memory map between GetMemoryMap and ExitBootServices, which
@@ -212,8 +195,9 @@ auto efi_main(
             if (ebs_status != uefi::status::success) {
                 /* Boot services still active here — safe to print via ConOut */
                 arch::enable_interrupts();
-                console::write("FATAL: ExitBootServices failed after 2 attempts");
-                while (true) { arch::disable_interrupts(); arch::cpu_halt(); }
+                log::error("ExitBootServices failed after 2 attempts");
+
+                vk_panic(__FILE__, __LINE__, "Failed to exit UEFI boot services");
             }
         }
     }
@@ -223,9 +207,9 @@ auto efi_main(
     console::switch_to_serial();
     if (fb_info.valid) {
         console::switch_to_framebuffer();
-		console::clear();
+		//console::clear();
     }
-    console::write("Boot services exited. Serial + framebuffer console active.");
+    log::printk("Boot services exited. Serial + framebuffer console active.\n");
 
     /* ============================================================
      * Phase 3 — we own the machine
@@ -242,7 +226,7 @@ auto efi_main(
         vk_panic(__FILE__, __LINE__, "Memory subsystem initialization failed");
     }
 
-    console::write("Kernel initialization complete.");
+    log::info("Kernel initialization complete");
 
     /* ============================================================
      * Phase 4 — Driver framework + Scheduler + Userspace Shell
@@ -256,7 +240,7 @@ auto efi_main(
     driver::init();
     sb16_driver::register_builtin();
     ac97_driver::register_builtin();
-    console::write("Driver framework initialised (2 built-in drivers registered).");
+    log::info("Driver framework initialised (2 built-in drivers registered)");
 
     /* Initialize the scheduler (sets up PIC + PIT) */
     if (auto status = sched::init(); status != status_code::success) {
@@ -264,12 +248,12 @@ auto efi_main(
     }
 
     /* Create the idle task (task 0) — just halts when nothing else runs */
-    sched::create_task("idle", [](void*) {
+    (void)sched::create_task("idle", [](void*) {
         while (true) { arch::cpu_halt(); }
     });
 
     /* Launch the userspace shell binary. */
-    console::write("Launching userspace shell...");
+    log::info("Launching userspace shell...");
     if (process::run("shell.vbin") < 0) {
         vk_panic(__FILE__, __LINE__, "Failed to launch userspace shell!");
     }

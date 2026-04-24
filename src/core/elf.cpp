@@ -140,25 +140,22 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     u64 image_size = align_up(vaddr_max - vaddr_min, 4096ULL);
     auto* image_base = static_cast<u8*>(g_kernel_heap.allocate_zero(image_size));
 
-    console::puts("[elf] vaddr range ");
-    console::put_hex(vaddr_min);
-    console::puts(" - ");
-    console::put_hex(vaddr_max);
-    console::puts(" (size ");
-    console::put_hex(image_size);
-    console::puts(" bytes)\n");
+    log::debug("elf: vaddr range %#llx - %#llx (size %llu bytes)",
+               static_cast<unsigned long long>(vaddr_min),
+               static_cast<unsigned long long>(vaddr_max),
+               static_cast<unsigned long long>(image_size));
 
     if (image_base == null) {
         /* Heap too small — fall back to the physical allocator.  The
          * physical allocator works in pages; cast the phys_addr to a
          * pointer (valid because the kernel runs identity-mapped). */
-        console::puts("[elf] heap allocation failed, trying physical allocator...\n");
+        log::warn("elf: heap allocation failed, trying physical allocator");
         u32 page_count = static_cast<u32>(
             (image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
         phys_addr phys = g_phys_alloc.allocate_pages(
             page_count, static_cast<u32>(PAGE_SIZE_4K), 0);
         if (phys == 0) {
-            console::puts("[elf] physical allocation failed\n");
+            log::error("elf: physical allocation failed");
             result.error = elf_error::no_memory;
             return result;
         }
@@ -239,15 +236,10 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     result.image_size = image_size;
     result.error      = elf_error::ok;
 
-#if VK_DEBUG_LEVEL >= 3
-    console::puts("[elf] loaded: image_base=0x");
-    console::put_hex(reinterpret_cast<u64>(image_base));
-    console::puts(" size=");
-    console::put_dec(image_size);
-    console::puts(" entry=0x");
-    console::put_hex(result.entry);
-    console::puts("\n");
-#endif
+    log::debug("elf: loaded image_base=%p size=%llu entry=%#llx",
+               image_base,
+               static_cast<unsigned long long>(image_size),
+               static_cast<unsigned long long>(result.entry));
 
     return result;
 }

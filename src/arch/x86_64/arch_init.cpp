@@ -119,7 +119,7 @@ void init_gdt() {
     gdt_set_entry(4, 0, 0xFFFFF, 0xF2, 0x00); /* User Data */
 
     /* TSS */
-    vk::memory::memory_set(&g_tss, 0, sizeof(tss));
+    memory::memory_set(&g_tss, 0, sizeof(tss));
     g_tss.iomap_base = sizeof(tss);
     gdt_set_tss(5, reinterpret_cast<u64>(&g_tss), sizeof(tss) - 1);
 
@@ -129,12 +129,22 @@ void init_gdt() {
     log::info("GDT prepared");
 }
 
-/* Load the GDT, reload segments, and load the TSS.
- * Must be called AFTER ExitBootServices — UEFI firmware
- * expects its own GDT while boot services are active. */
-static void activate_gdt() {
+/* Load the GDT descriptor table register only.
+ * Keep this separate from selector/TSS reload so activate() can
+ * place additional diagnostics around the risky transition steps. */
+static void load_gdt() {
     asm_lgdt(&g_gdt_ptr);
+}
+
+/* Reload CS/DS/ES/SS to the kernel descriptors from our GDT. */
+static void reload_kernel_segments() {
     asm_reload_segments(static_cast<u64>(SEG_KERNEL_CODE), static_cast<u64>(SEG_KERNEL_DATA));
+}
+
+/* Load the task register with our TSS selector.
+ * Seed rsp0 so privilege transitions have a valid ring-0 stack. */
+static void activate_tss() {
+    g_tss.rsp0 = read_rsp();
     asm_ltr(SEG_TSS);
 }
 
@@ -165,55 +175,63 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
 
     if (vec < 32) {
         /* CPU exception — dump diagnostics */
-        console::set_color(console_color::white, console_color::red);
-        console::puts("\n*** EXCEPTION: ");
-        console::puts(s_exception_names[vec]);
-        console::puts(" (vector ");
-        console::put_dec(vec);
-        console::puts(") ***\n");
+        log::crash("\n*** EXCEPTION: %s (vector %llu) ***",
+                   s_exception_names[vec],
+                   static_cast<unsigned long long>(vec));
 
-        console::puts("  Error code: ");
-        console::put_hex(regs->error_code);
-        console::puts("\n");
+        log::crash("  Error code: %#llx",
+                   static_cast<unsigned long long>(regs->error_code));
 
-        console::puts("  RIP:    "); console::put_hex(regs->frame.rip);    console::puts("\n");
-        console::puts("  CS:     "); console::put_hex(regs->frame.cs);     console::puts("\n");
-        console::puts("  RFLAGS: "); console::put_hex(regs->frame.rflags); console::puts("\n");
-        console::puts("  RSP:    "); console::put_hex(regs->frame.rsp);    console::puts("\n");
-        console::puts("  SS:     "); console::put_hex(regs->frame.ss);     console::puts("\n");
+        log::crash("  RIP:    %#llx", static_cast<unsigned long long>(regs->frame.rip));
+        log::crash("  CS:     %#llx", static_cast<unsigned long long>(regs->frame.cs));
+        log::crash("  RFLAGS: %#llx", static_cast<unsigned long long>(regs->frame.rflags));
+        log::crash("  RSP:    %#llx", static_cast<unsigned long long>(regs->frame.rsp));
+        log::crash("  SS:     %#llx", static_cast<unsigned long long>(regs->frame.ss));
 
-        console::puts("\n  General purpose registers:\n");
-        console::puts("  RAX: "); console::put_hex(regs->rax); console::puts("  RBX: "); console::put_hex(regs->rbx); console::puts("\n");
-        console::puts("  RCX: "); console::put_hex(regs->rcx); console::puts("  RDX: "); console::put_hex(regs->rdx); console::puts("\n");
-        console::puts("  RSI: "); console::put_hex(regs->rsi); console::puts("  RDI: "); console::put_hex(regs->rdi); console::puts("\n");
-        console::puts("  RBP: "); console::put_hex(regs->rbp); console::puts("  R8:  "); console::put_hex(regs->r8);  console::puts("\n");
-        console::puts("  R9:  "); console::put_hex(regs->r9);  console::puts("  R10: "); console::put_hex(regs->r10); console::puts("\n");
-        console::puts("  R11: "); console::put_hex(regs->r11); console::puts("  R12: "); console::put_hex(regs->r12); console::puts("\n");
-        console::puts("  R13: "); console::put_hex(regs->r13); console::puts("  R14: "); console::put_hex(regs->r14); console::puts("\n");
-        console::puts("  R15: "); console::put_hex(regs->r15); console::puts("\n");
+        log::crash("\n  General purpose registers:");
+        log::crash("  RAX: %#llx  RBX: %#llx",
+                   static_cast<unsigned long long>(regs->rax),
+                   static_cast<unsigned long long>(regs->rbx));
+        log::crash("  RCX: %#llx  RDX: %#llx",
+                   static_cast<unsigned long long>(regs->rcx),
+                   static_cast<unsigned long long>(regs->rdx));
+        log::crash("  RSI: %#llx  RDI: %#llx",
+                   static_cast<unsigned long long>(regs->rsi),
+                   static_cast<unsigned long long>(regs->rdi));
+        log::crash("  RBP: %#llx  R8:  %#llx",
+                   static_cast<unsigned long long>(regs->rbp),
+                   static_cast<unsigned long long>(regs->r8));
+        log::crash("  R9:  %#llx  R10: %#llx",
+                   static_cast<unsigned long long>(regs->r9),
+                   static_cast<unsigned long long>(regs->r10));
+        log::crash("  R11: %#llx  R12: %#llx",
+                   static_cast<unsigned long long>(regs->r11),
+                   static_cast<unsigned long long>(regs->r12));
+        log::crash("  R13: %#llx  R14: %#llx",
+                   static_cast<unsigned long long>(regs->r13),
+                   static_cast<unsigned long long>(regs->r14));
+        log::crash("  R15: %#llx", static_cast<unsigned long long>(regs->r15));
 
         if (vec == 14) {
-            console::puts("  CR2 (fault addr): ");
-            console::put_hex(read_cr2());
-            console::puts("\n");
+            log::crash("  CR2 (fault addr): %#llx",
+                       static_cast<unsigned long long>(read_cr2()));
         }
 
         /* Print instruction bytes at RIP for diagnosis */
         {
-            console::puts("  Bytes @ RIP:  ");
             const u8* ip = reinterpret_cast<const u8*>(regs->frame.rip);
+            static constexpr char hex[] = "0123456789ABCDEF";
+            char bytes_buf[16 * 3 + 1];
+            usize pos = 0;
             for (int b = 0; b < 16; ++b) {
                 u8 byte = ip[b];
-                const char hex[] = "0123456789ABCDEF";
-                char tmp[3] = { hex[byte >> 4], hex[byte & 0xF], ' ' };
-                console::putc(tmp[0]);
-                console::putc(tmp[1]);
-                console::putc(' ');
+                bytes_buf[pos++] = hex[byte >> 4];
+                bytes_buf[pos++] = hex[byte & 0xF];
+                bytes_buf[pos++] = ' ';
             }
-            console::puts("\n");
+            bytes_buf[pos] = '\0';
+            log::crash("  Bytes @ RIP:  %s", bytes_buf);
         }
-
-        console::set_color(console_color::white, console_color::black);
 
         /*
          * If the faulting task is a userspace process, kill just
@@ -222,13 +240,10 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
         auto* ctx = static_cast<process::process_task_context*>(
             sched::current_task_user_data());
         if (ctx != null) {
-            console::puts("Terminating process '");
-            console::puts(sched::current_task_name());
-            console::puts("' (task ");
-            console::put_dec(sched::current_task_id());
-            console::puts(") due to ");
-            console::puts(s_exception_names[vec]);
-            console::puts("\n");
+            log::warn("Terminating process '%s' (task %llu) due to %s",
+                      sched::current_task_name(),
+                      static_cast<unsigned long long>(sched::current_task_id()),
+                      s_exception_names[vec]);
 
             process::cleanup_process_context(ctx, -static_cast<int>(vec));
             sched::exit_task();
@@ -245,11 +260,8 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
 
     /* Vectors 33-255: other IRQs / software interrupts — not yet wired */
     if (vec >= 32) {
-#if VK_DEBUG_LEVEL >= 4
-        console::puts("[DEBUG] IRQ: unhandled vector ");
-        console::put_dec(vec);
-        console::puts("\n");
-#endif
+    log::debug("IRQ: unhandled vector %llu",
+           static_cast<unsigned long long>(vec));
         /* Send EOI for any other IRQ */
         if (vec >= 40) arch::outb(0xA0, 0x20); /* PIC2 EOI */
         arch::outb(0x20, 0x20); /* PIC1 EOI */
@@ -285,13 +297,8 @@ void init_idt() {
     /* Compute runtime base address of the first ISR stub */
     u64 base = get_isr_stub_base();
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] IDT: isr_stub_0=0x");
-    console::put_hex(base);
-    console::puts(", stride=");
-    console::put_dec(ISR_STUB_STRIDE);
-    console::puts("\n");
-#endif
+    log::debug("IDT: isr_stub_0=%#llx, stride=%zu",
+               static_cast<unsigned long long>(base), ISR_STUB_STRIDE);
 
     /* Wire all 256 vectors to their assembly stub */
     for (u32 i = 0; i < 256; ++i) {
@@ -324,12 +331,7 @@ static u32 fpu_avx_check_support() {
     u32 eax, ebx, ecx_out, edx_out;
     asm_cpuid(1, &eax, &ebx, &ecx_out, &edx_out);
 
-    //log::info("FPU: CPUID ECX = 0x%x  EDX = 0x%x", ecx_out, edx_out);
-    console::puts("FPU: CPUID ECX = 0x");
-    console::put_hex(ecx_out);
-    console::puts("  EDX = 0x");
-    console::put_hex(edx_out);
-    console::puts("\n");
+    log::debug("FPU: CPUID ECX = %#x  EDX = %#x", ecx_out, edx_out);
 
     if (!(edx_out & (1u << 25))) return 1; /* no SSE   */
     if (!(ecx_out & (1u << 26))) return 2; /* no XSAVE */
@@ -353,11 +355,9 @@ static void activate_fpu_state() {
     log::info("FPU: checking CPUID...");
     u32 err = fpu_avx_check_support();
 
-    console::puts("FPU: CPUID check result = ");
-    console::put_dec(err);
-    console::puts(" (0=OK, 1=no SSE, 2=no XSAVE, 3=no AVX)\n");
+    log::debug("FPU: CPUID check result = %u (0=OK, 1=no SSE, 2=no XSAVE, 3=no AVX)", err);
 
-    log::info("FPU: writing CR0...");
+    log::debug("FPU: writing CR0...");
     u64 cr0 = read_cr0();
     cr0 &= ~(u64)(1u << 2);   /* clear EM */
     cr0 &= ~(u64)(1u << 3);   /* clear TS */
@@ -365,9 +365,9 @@ static void activate_fpu_state() {
     cr0 |=  (u64)(1u << 5);   /* set   NE */
     write_cr0(cr0);
 
-    log::info("FPU: fninit...");
+    log::debug("FPU: fninit...");
     asm_fninit();
-    log::info("FPU: fldcw...");
+    log::debug("FPU: fldcw...");
     asm_fldcw(0x037F);
 
     if (err != 0) {
@@ -375,19 +375,17 @@ static void activate_fpu_state() {
         //return;
     }
 
-    log::info("FPU: writing CR4 OSFXSR+OSXMMEXCPT...");
+    log::debug("FPU: writing CR4 OSFXSR+OSXMMEXCPT...");
     write_cr4(read_cr4() | (u64)(1u << 9) | (u64)(1u << 10));
 
-    log::info("FPU: ldmxcsr...");
+    log::debug("FPU: ldmxcsr...");
     asm_ldmxcsr(0x1F80u);
 
-    log::info("FPU: writing CR4 OSXSAVE...");
+    log::debug("FPU: writing CR4 OSXSAVE...");
     {
         u64 cr4 = read_cr4();
-        //log::info("FPU: CR4 before OSXSAVE = 0x%llx", cr4);
-        console::puts("FPU: CR4 before OSXSAVE = 0x");
-        console::put_hex(cr4);
-        console::puts("\n");
+        log::debug("FPU: CR4 before OSXSAVE = %#llx",
+               static_cast<unsigned long long>(cr4));
 
         if (!(cr4 & (u64)(1u << 18))) {
             write_cr4(cr4 | (u64)(1u << 18));
@@ -400,17 +398,17 @@ static void activate_fpu_state() {
                     "skipping AVX init");
             return;
         }
-        log::info("FPU: CR4.OSXSAVE active (confirmed via CPUID)");
+        log::debug("FPU: CR4.OSXSAVE active (confirmed via CPUID)");
     }
 
-    log::info("FPU: xgetbv...");
+    log::debug("FPU: xgetbv...");
     u64 xcr0 = asm_xgetbv(0);
-    //log::info("FPU: XCR0 before = 0x%llx", xcr0);
+    log::debug("FPU: XCR0 before = 0x%llx", xcr0);
     xcr0 |= (u64)(0x7);
-    log::info("FPU: xsetbv...");
+    log::debug("FPU: xsetbv...");
     asm_xsetbv(0, static_cast<u32>(xcr0), static_cast<u32>(xcr0 >> 32));
 
-    log::info("FPU: vzeroall...");
+    log::debug("FPU: vzeroall...");
     asm_vzeroall();
 
     log::info("FPU/SSE/AVX initialized");
@@ -436,7 +434,7 @@ void init_paging() {
     u64 cr0 = read_cr0();
     if (!(cr0 & CR0_WRITE_PROTECT)) {
         write_cr0(cr0 | CR0_WRITE_PROTECT);
-        log::info("  CR0.WP enabled");
+        log::debug("  CR0.WP enabled");
     }
 
     /* EFER: enable NX (No-Execute) */
@@ -444,10 +442,10 @@ void init_paging() {
     u64 efer = rdmsr(EFER_MSR);
     if (!(efer & EFER_NXE)) {
         wrmsr(EFER_MSR, efer | EFER_NXE);
-        log::info("  EFER.NXE enabled");
+        log::debug("  EFER.NXE enabled");
     }
 
-    log::info("Paging hardened (WP + NXE)");
+    log::debug("Paging hardened (WP + NXE)");
 }
 
 /* ============================================================
@@ -486,9 +484,11 @@ auto reboot() -> void {
  * ============================================================ */
 
 void dump_idt() {
-    console::puts("IDT dump (256 vectors):\n");
-    console::puts("  Vec  Handler             Sel    IST  Type\n");
-    console::puts("  ---  ------------------  -----  ---  ----\n");
+    log::info("Dumping IDT...");
+    log::info("IDT base = %#llx  limit = %#x",
+               static_cast<unsigned long long>(g_idt_ptr.base),
+               static_cast<unsigned int>(g_idt_ptr.limit));
+
     for (u32 i = 0; i < 256; ++i) {
         const auto& e = g_idt[i];
         u64 handler = static_cast<u64>(e.offset_low)
@@ -497,22 +497,11 @@ void dump_idt() {
         /* Skip null (uninstalled) entries */
         if (handler == 0 && e.selector == 0) continue;
 
-        console::puts("  ");
-        /* Vector (3 digits) */
-        if (i < 100) console::putc(' ');
-        if (i < 10)  console::putc(' ');
-        console::put_dec(i);
-        console::puts("  0x");
-        console::put_hex(handler);
-        console::puts("  0x");
-        console::put_hex(e.selector);
-        console::puts("  ");
-        console::put_dec(e.ist);
-        console::puts("    0x");
-        console::put_hex(e.type_attr);
-        console::putc('\n');
+        log::info("Vector %3u: handler=%#llx selector=%#x ist=%u type_attr=%#x",
+                   i, static_cast<unsigned long long>(handler), e.selector, e.ist, e.type_attr);
     }
-    console::puts("IDT dump complete.\n");
+
+    log::info("IDT dump complete.");
 }
 
 /* ============================================================
@@ -532,13 +521,24 @@ void init() {
 void activate() {
     log::info("Activating x86_64 descriptor tables...");
 
-    /* Load our own GDT, reload all segment registers, load TSS */
-    activate_gdt();
-    log::info("GDT loaded, segments reloaded, TSS active");
+    /* Load our own GDT first so selector 0x08 in the IDT points at
+     * our kernel code segment. */
+    load_gdt();
+    log::info("GDT loaded");
 
-    /* Load our own IDT */
+    /* Load our IDT before reloading CS/SS/TSS so faults during the
+     * transition are handled by our exception path instead of dying
+     * silently under whatever firmware state remained after EBS. */
     activate_idt();
     log::info("IDT loaded");
+
+    /* Reload all visible segment selectors to our own descriptors. */
+    reload_kernel_segments();
+    log::info("Kernel code/data segments reloaded");
+
+    /* Finally load the task register once GDT + IDT are already live. */
+    activate_tss();
+    log::info("TSS active");
 
     /* Initialize FPU/SSE/AVX state, if supported. Must be done after loading our own GDT/TSS. */
     activate_fpu_state();

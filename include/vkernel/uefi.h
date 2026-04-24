@@ -239,10 +239,12 @@ struct framebuffer_info {
 
 /* Result returned by query_memory_map() */
 struct memory_map_result {
-    const memory_descriptor* entries;       /* pointer into internal static buffer */
-    usize                    count;         /* number of valid entries */
-    usize                    descriptor_size; /* per-entry byte stride (may be > sizeof(memory_descriptor)) */
-    usize                    map_key;       /* needed for ExitBootServices */
+    const memory_descriptor* entries = null;       /* pointer into internal raw buffer */
+    usize                    count = 0;            /* number of valid entries */
+    usize                    descriptor_size = 0;  /* per-entry byte stride (may be > sizeof(memory_descriptor)) */
+    usize                    map_key = 0;          /* needed for ExitBootServices */
+    status                   query_status = status::not_ready;
+    usize                    required_size = 0;    /* firmware-reported byte size for the map */
 };
 
 /* UEFI System Table */

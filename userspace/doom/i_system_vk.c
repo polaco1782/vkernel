@@ -24,7 +24,7 @@
 #include "w_wad.h"
 #include "z_zone.h"
 
-#include "../../include/vkernel/vk.h"
+#include "../include/vk.h"
 
 #define DEFAULT_RAM 16 /* MiB */
 #define MIN_RAM     4  /* MiB */

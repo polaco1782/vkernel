@@ -20,19 +20,19 @@ shift 2
 EXTRA_ELFS=("$@")   # remaining args are ELF binaries to stage under EFI/vkernel/
 
 if [ -z "${EFI_FILE}" ] || [ -z "${OUTPUT}" ]; then
-    echo "Usage: $0 <efi_file> <output_image> [elf_file ...]" >&2
+    echo "Usage: $0 <efi_file> <output_image> [elf_file ...]"
     exit 1
 fi
 
 if [ ! -f "${EFI_FILE}" ]; then
-    echo "Error: EFI file not found: ${EFI_FILE}" >&2
+    echo "Error: EFI file not found: ${EFI_FILE}"
     exit 1
 fi
 
 for tool in truncate parted mformat mmd mcopy; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
-        echo "Error: '${tool}' not found." >&2
-        echo "Install with: dnf install parted mtools  # or: apt install parted mtools" >&2
+        echo "Error: '${tool}' not found."
+        echo "Install with: dnf install parted mtools  # or: apt install parted mtools"
         exit 1
     fi
 done
@@ -71,6 +71,9 @@ mformat -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" -F \
 echo "  Staging EFI application..."
 mmd    -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI ::/EFI/BOOT
 mcopy  -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${EFI_FILE}" ::/EFI/BOOT/bootx64.efi
+
+# add doom2.wad to extra ELF files to stage it as well
+EXTRA_ELFS+=("userspace/doom/doom2.wad")
 
 if [ ${#EXTRA_ELFS[@]} -gt 0 ]; then
     echo "  Staging userspace binaries... (${#EXTRA_ELFS[@]} ELF files)"

@@ -11,7 +11,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "../../include/vkernel/vk.h"
+#include "../include/vk.h"
 #include "modplay.h"
 
 /* ---- tunables ---- */
@@ -214,23 +214,28 @@ static void draw_visualizer(vk_u32 *pixels, ModPlayerStatus_t *mp_st,
         int amplitude = scope_h / 4 - 2;
         if (amplitude < 1) amplitude = 1;
 
-        vk_u32 grid = pack_pixel(30, 30, 50);
-        for (int x = 10; x < fb_w - 10; x++) {
-            put_pixel(pixels, x, mid_l, grid);
-            put_pixel(pixels, x, mid_r, grid);
-        }
+        // vk_u32 grid = pack_pixel(30, 30, 50);
+        // for (int x = 0; x < fb_w; x++) {
+        //     put_pixel(pixels, x, mid_l, grid);
+        //     put_pixel(pixels, x, mid_r, grid);
+        // }
 
         vk_u32 col_l = pack_pixel(0, 200, 255);
         vk_u32 col_r = pack_pixel(255, 100, 0);
 
-        int draw_w = fb_w - 20;
-        int step = buf_len > draw_w ? buf_len / draw_w : 1;
-        int count = buf_len < draw_w ? buf_len : draw_w;
+        /* Expand the oscilloscope to fill the framebuffer width.
+         * Map buffer samples across the full width using a floating
+         * scale so the waveform stretches when there are fewer samples
+         * than pixels, and decimates when there are more.
+         */
+        int draw_w = fb_w;
+        int count = draw_w;
+        double scale = buf_len > 0 ? (double)buf_len / (double)draw_w : 1.0;
 
         int prev_ly = mid_l, prev_ry = mid_r;
 
         for (int i = 0; i < count; i++) {
-            int si = i * step;
+            int si = (int)(i * scale);
             if (si >= buf_len) si = buf_len - 1;
 
             int sl = buf[si * 2];
@@ -238,7 +243,7 @@ static void draw_visualizer(vk_u32 *pixels, ModPlayerStatus_t *mp_st,
 
             int ly = mid_l - (sl * amplitude / 32768);
             int ry = mid_r - (sr * amplitude / 32768);
-            int x = 10 + i;
+            int x = i;
 
             int y0, y1;
             y0 = prev_ly < ly ? prev_ly : ly;
@@ -253,8 +258,8 @@ static void draw_visualizer(vk_u32 *pixels, ModPlayerStatus_t *mp_st,
             prev_ry = ry;
         }
 
-        fill_rect(pixels, 2, mid_l - 3, 3, 6, col_l);
-        fill_rect(pixels, 2, mid_r - 3, 3, 6, col_r);
+        //fill_rect(pixels, 2, mid_l - 3, 3, 6, col_l);
+        //fill_rect(pixels, 2, mid_r - 3, 3, 6, col_r);
     }
 
     /* Separator lines */

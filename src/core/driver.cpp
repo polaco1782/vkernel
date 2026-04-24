@@ -65,9 +65,7 @@ static bool name_match(const char* query, const char* driver_name) {
 void register_driver(const driver_descriptor* desc) {
     if (!s_initialised) init();
     if (s_driver_count >= MAX_DRIVERS) {
-        console::puts("driver: registry full, cannot register ");
-        console::puts(desc->name);
-        console::puts("\n");
+        log::warn("driver: registry full, cannot register %s", desc->name);
         return;
     }
     s_drivers[s_driver_count].desc = desc;
@@ -88,15 +86,11 @@ auto load(const char* name) -> i32 {
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc && name_match(name, s_drivers[i].desc->name)) {
             if (s_drivers[i].loaded) {
-                console::puts("driver: ");
-                console::puts(s_drivers[i].desc->name);
-                console::puts(" already loaded\n");
+                log::info("driver: %s already loaded", s_drivers[i].desc->name);
                 return 0;
             }
 
-            console::puts("driver: loading ");
-            console::puts(s_drivers[i].desc->name);
-            console::puts("...\n");
+            log::info("driver: loading %s...", s_drivers[i].desc->name);
 
             /* Activate based on type */
             switch (s_drivers[i].desc->type) {
@@ -104,31 +98,23 @@ auto load(const char* name) -> i32 {
                     if (s_drivers[i].desc->sound) {
                         sound::register_driver(s_drivers[i].desc->sound);
                         if (!sound::init_active()) {
-                            console::puts("driver: sound init failed for ");
-                            console::puts(s_drivers[i].desc->name);
-                            console::puts("\n");
+                            log::error("driver: sound init failed for %s", s_drivers[i].desc->name);
                             return -1;
                         }
                     }
                     break;
                 default:
-                    console::puts("driver: unknown type for ");
-                    console::puts(s_drivers[i].desc->name);
-                    console::puts("\n");
+                    log::error("driver: unknown type for %s", s_drivers[i].desc->name);
                     return -1;
             }
 
             s_drivers[i].loaded = true;
-            console::puts("driver: ");
-            console::puts(s_drivers[i].desc->name);
-            console::puts(" loaded successfully\n");
+            log::info("driver: %s loaded successfully", s_drivers[i].desc->name);
             return 0;
         }
     }
 
-    console::puts("driver: not found: ");
-    console::puts(name);
-    console::puts("\n");
+    log::warn("driver: not found: %s", name);
     return -1;
 }
 
@@ -136,9 +122,7 @@ auto unload(const char* name) -> i32 {
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc && name_match(name, s_drivers[i].desc->name)) {
             if (!s_drivers[i].loaded) {
-                console::puts("driver: ");
-                console::puts(s_drivers[i].desc->name);
-                console::puts(" not loaded\n");
+                log::warn("driver: %s not loaded", s_drivers[i].desc->name);
                 return -1;
             }
 
@@ -151,16 +135,12 @@ auto unload(const char* name) -> i32 {
             }
 
             s_drivers[i].loaded = false;
-            console::puts("driver: ");
-            console::puts(s_drivers[i].desc->name);
-            console::puts(" unloaded\n");
+            log::info("driver: %s unloaded", s_drivers[i].desc->name);
             return 0;
         }
     }
 
-    console::puts("driver: not found: ");
-    console::puts(name);
-    console::puts("\n");
+    log::warn("driver: not found: %s", name);
     return -1;
 }
 
@@ -168,41 +148,31 @@ void list_loaded() {
     bool any = false;
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].loaded && s_drivers[i].desc) {
-            console::puts("  [loaded] ");
-            console::puts(s_drivers[i].desc->name);
+            log::info("driver: found loaded driver %s", s_drivers[i].desc->name);
             switch (s_drivers[i].desc->type) {
-                case driver_type::sound: console::puts(" (sound)"); break;
-                default: console::puts(" (unknown)"); break;
+                case driver_type::sound: log::info(" (sound)"); break;
+                default: log::info(" (unknown)"); break;
             }
-            console::puts("\n");
             any = true;
         }
     }
     if (!any) {
-        console::puts("  (no drivers loaded)\n");
+        log::info("  (no drivers loaded)");
     }
 }
 
 void list_available() {
     if (s_driver_count == 0) {
-        console::puts("  (no drivers registered)\n");
+        log::info("  (no drivers registered)");
         return;
     }
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc) {
-            console::puts("  ");
-            if (s_drivers[i].loaded) {
-                console::puts("[*] ");
-            } else {
-                console::puts("[ ] ");
-            }
-            console::puts(s_drivers[i].desc->name);
-            console::puts(".vko");
+            log::info("driver: found available driver %s", s_drivers[i].desc->name);
             switch (s_drivers[i].desc->type) {
-                case driver_type::sound: console::puts(" (sound)"); break;
-                default: console::puts(" (unknown)"); break;
+                case driver_type::sound: log::info(" (sound)"); break;
+                default: log::info(" (unknown)"); break;
             }
-            console::puts("\n");
         }
     }
 }

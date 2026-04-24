@@ -147,7 +147,7 @@ inline constexpr bool feature_virtual_memory   = true;
  * ============================================================ */
 
 inline constexpr u32 max_cpus              = 64;
-inline constexpr u32 max_memory_map_entries = 256;
+inline constexpr u32 max_memory_map_entries = 1024;
 inline constexpr u32 max_tasks             = 256;
 inline constexpr u32 max_ipc_endpoints     = 1024;
 inline constexpr u32 max_devices           = 128;
@@ -163,7 +163,7 @@ inline constexpr u32 max_devices           = 128;
     inline constexpr u64 user_space_limit   = 0x0000800000000000ULL;
 #endif
 
-VK_STATIC_ASSERT(max_cpus <= 256);
+static_assert(max_cpus <= 256);
 
 } // namespace config
 } // namespace vk

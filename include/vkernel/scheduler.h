@@ -2,19 +2,20 @@
  * vkernel - UEFI Microkernel
  * Copyright (C) 2026 vkernel authors
  *
- * scheduler.h - Cooperative/preemptive round-robin task scheduler
+ * scheduler.h - Round-robin preemptive scheduler interface
  */
 
 #ifndef VKERNEL_SCHEDULER_H
 #define VKERNEL_SCHEDULER_H
 
+#include "config.h"
 #include "types.h"
 #include "arch/x86_64/arch.h"
 
 namespace vk {
 
 /* ============================================================
- * Task state
+ * Task configuration
  * ============================================================ */
 
 enum class task_state : u8 {
@@ -53,49 +54,52 @@ struct task {
 };
 
 /* ============================================================
- * Scheduler interface
+ * Scheduler API
  * ============================================================ */
 
 namespace sched {
 
-auto init() -> status_code;
+[[nodiscard]] auto init() -> status_code;
 
-/* Create a new kernel task. Returns task ID or -1 on failure. */
-auto create_task(const char* name, task_entry_fn entry, void* user_data = null) -> i64;
-
-/* Yield CPU to next ready task (cooperative) */
-void yield();
-
-/* Called from timer IRQ to preempt the current task.
- * Returns pointer to the register_state to restore (may differ on switch). */
-auto preempt(arch::register_state* regs) -> arch::register_state*;
+/*
+ * Create a new task.
+ * @param name     Human-readable task name (copied internally)
+ * @param entry    Entry point function (MSVC x64 ABI: arg in RCX)
+ * @param user_data First argument passed to entry function
+ * @return Task ID on success, -1 on failure
+ */
+[[nodiscard]] auto create_task(const char* name, task_entry_fn entry, void* user_data = null) -> i64;
 
 /* Start the scheduler — does not return */
-VK_NORETURN void start();
+[[noreturn]] void start();
 
-/* Get current task ID */
-auto current_task_id() -> u64;
+/* Yield CPU to next runnable task */
+void yield();
 
-/* Get current task name */
-auto current_task_name() -> const char*;
-
-/* Get current task user data */
-auto current_task_user_data() -> void*;
-
-/* Get current scheduler tick count */
-auto tick_count() -> u64;
-
-/* Sleep current task for at least the given number of ticks */
+/* Block current task for N scheduler ticks */
 void sleep(u64 ticks);
 
-/* Block the calling task until the task with task_id terminates. */
+/* Wait until specified task terminates */
 void wait_for_task(u64 task_id);
 
-/* Terminate the calling task */
-VK_NORETURN void exit_task();
+/* Terminate current task — does not return to caller */
+[[noreturn]] void exit_task();
 
-/* Dump task list */
+/* Query current task info */
+[[nodiscard]] auto current_task_id() -> u64;
+[[nodiscard]] auto current_task_name() -> const char*;
+[[nodiscard]] auto current_task_user_data() -> void*;
+[[nodiscard]] auto tick_count() -> u64;
+
+/* Debug: print task list */
 void dump_tasks();
+
+/*
+ * Preemption handler — called from timer ISR.
+ * Saves current context, picks next task, returns new context pointer.
+ * The assembly ISR stub uses the returned value to restore registers.
+ */
+[[nodiscard]] auto preempt(arch::register_state* regs) -> arch::register_state*;
 
 } // namespace sched
 

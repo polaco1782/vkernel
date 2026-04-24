@@ -18,30 +18,9 @@
 #ifndef VKERNEL_VK_H
 #define VKERNEL_VK_H
 
-#ifndef VK_UNREACHABLE
-    #if defined(_MSC_VER)
-        #define VK_UNREACHABLE() __assume(0)
-    #else
-        #define VK_UNREACHABLE() __builtin_unreachable()
-    #endif
-#endif
-
-#ifndef VK_NORETURN
-    #if defined(_MSC_VER)
-        #define VK_NORETURN __declspec(noreturn)
-    #else
-        #define VK_NORETURN __attribute__((noreturn))
-    #endif
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// I'm too lazy to write a proper header for the userspace side, so this header is shared by both kernel and userspace.
-// To avoid including kernel-only definitions in userspace, the API stubs and internal types are defined in kernel_api.cpp instead of here.
-// If this header gets too cluttered, we can split it into vk.h (userspace) and vk_internal.h (kernel), but for now it's manageable.
-#define VK_CALL(fn, ...) (vk_get_api()->vk_##fn(__VA_ARGS__))
 
 typedef unsigned long long vk_u64;
 typedef long long          vk_i64;

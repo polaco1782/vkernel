@@ -161,17 +161,6 @@ enum class status_code : i32 {
  * Attributes and macros
  * ============================================================ */
 
-#define VK_NORETURN    [[noreturn]]
-#define VK_INLINE      inline
-#if defined(_MSC_VER)
-#define VK_FORCEINLINE __forceinline
-#else
-#define VK_FORCEINLINE [[gnu::always_inline]] inline
-#endif
-
-/* Compile-time assert */
-#define VK_STATIC_ASSERT(cond) static_assert(cond, #cond)
-
 #if defined(_MSC_VER)
 #include <stddef.h>
 #define container_of(ptr, type, member) \
@@ -218,16 +207,8 @@ inline constexpr usize PAGE_SIZE_4K  = 0x1000ULL;
 inline constexpr usize PAGE_SIZE_2MB = 0x200000ULL;
 inline constexpr usize PAGE_SIZE_1GB = 0x40000000ULL;
 
-/* Assert */
-#define VK_ASSERT(cond) \
-    do { \
-        if (!(cond)) { \
-            vk_panic(__FILE__, __LINE__, #cond); \
-        } \
-    } while(0)
-
 /* Forward declarations */
-VK_NORETURN void vk_panic(const char* file, unsigned int line, const char* condition);
+[[noreturn]] void vk_panic(const char* file, unsigned int line, const char* condition);
 
 /* Compiler-specific unreachable hint */
 #if defined(_MSC_VER)

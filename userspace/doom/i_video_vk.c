@@ -28,7 +28,7 @@
 #include "d_loop.h"
 #include "deh_str.h"
 
-#include "../../include/vkernel/vk.h"
+#include "../include/vk.h"
 
 /* ---- framebuffer state ---- */
 static vk_framebuffer_info_t vk_fb;

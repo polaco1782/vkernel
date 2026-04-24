@@ -24,7 +24,7 @@
 #include <errno.h>
 #include <reent.h>
 
-#include "../../include/vkernel/vk.h"
+#include "../include/vk.h"
 
 /* ============================================================
  * File-descriptor table

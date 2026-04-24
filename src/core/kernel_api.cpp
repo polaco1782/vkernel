@@ -73,9 +73,7 @@ static void stub_exit(int code) {
     if (ctx != null) {
         process::cleanup_process_context(ctx, code);
     } else {
-        console::puts("Process exited with code ");
-        console::put_dec(static_cast<u64>(static_cast<u32>(code)));
-        console::puts("\n");
+        log::printk("Process exited with code %d\n", code);
     }
 
     sched::exit_task();
@@ -98,16 +96,11 @@ static vk_u64 stub_tick_count() {
 }
 
 static void stub_dump_memory() {
-    console::puts("Physical allocator:\n");
-    console::puts("  Total pages: ");
-    console::put_dec(g_phys_alloc.total_pages());
-    console::puts("\n  Free pages:  ");
-    console::put_dec(g_phys_alloc.free_pages());
-    console::puts("\n  Used pages:  ");
-    console::put_dec(g_phys_alloc.used_pages());
-    console::puts("\n  Total RAM:   ");
-    console::put_dec((g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024));
-    console::puts(" MB\n\n");
+    log::info("Physical allocator: total=%zu pages, free=%zu pages, used=%zu pages, total RAM=%zu MB",
+              g_phys_alloc.total_pages(),
+              g_phys_alloc.free_pages(),
+              g_phys_alloc.used_pages(),
+              (g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024));
 
     memory::dump_heap();
 }

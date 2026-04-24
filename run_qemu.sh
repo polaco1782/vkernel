@@ -79,6 +79,8 @@ cp -va "userspace/shell/shell_exec.txt" "${ESP_VKERNEL}/shell.txt"
 cp -va "userspace/MODPlay/makemove.mod" "${ESP_VKERNEL}/makemove.mod"
 cp -va "userspace/rotozoom/head.bmp" "${ESP_VKERNEL}/head.bmp"
 
+cp -va framebuffer.vbin "${ESP_VKERNEL}/framebuffer.vbin"
+
 # Writable OVMF_VARS
 cp "${OVMF_VARS}" "${NVRAM_FILE}"
 

@@ -207,25 +207,21 @@ static void mixer_write(u8 reg, u8 value) {
 
 static bool sb16_init() {
     if (!dsp_reset()) {
-        console::puts("sb16: DSP reset failed — hardware not found\n");
+        log::warn("sb16: DSP reset failed - hardware not found");
         return false;
     }
 
     /* Get version */
     if (!dsp_write(DSP_CMD_GET_VERSION)) {
-        console::puts("sb16: failed to query DSP version\n");
+        log::error("sb16: failed to query DSP version");
         return false;
     }
     u8 major = dsp_read();
     u8 minor = dsp_read();
-    console::puts("sb16: DSP version ");
-    console::put_dec(major);
-    console::puts(".");
-    console::put_dec(minor);
-    console::puts("\n");
+    log::info("sb16: DSP version %u.%u", major, minor);
 
     if (major < 4) {
-        console::puts("sb16: DSP version < 4 — not a true SB16\n");
+        log::warn("sb16: DSP version < 4 - not a true SB16");
         /* Still usable for 8-bit, proceed anyway */
     }
 
@@ -239,17 +235,14 @@ static bool sb16_init() {
         ISA_DMA_CEILING                    /* must be < 16 MB  */
     );
     if (dma_phys == 0) {
-        console::puts("sb16: failed to allocate DMA buffer below 16 MB\n");
+        log::error("sb16: failed to allocate DMA buffer below 16 MB");
         return false;
     }
     s_dma_phys_addr = static_cast<u32>(dma_phys);
     s_dma_buffer    = reinterpret_cast<u8*>(dma_phys); /* identity-mapped */
 
-    console::puts("sb16: DMA buffer at physical 0x");
-    console::put_hex(s_dma_phys_addr);
-    console::puts(" (");
-    console::put_dec(DMA_BUFFER_SIZE);
-    console::puts(" bytes)\n");
+    log::debug("sb16: DMA buffer at physical %#x (%u bytes)",
+               s_dma_phys_addr, DMA_BUFFER_SIZE);
 
     /* Turn speaker on */
     (void)dsp_write(DSP_CMD_SPEAKER_ON);
@@ -262,7 +255,7 @@ static bool sb16_init() {
     s_programmed_rate = 0;
     s_playing = false;
 
-    console::puts("sb16: initialised\n");
+    log::info("sb16: initialised");
     return true;
 }
 
@@ -271,7 +264,7 @@ static void sb16_shutdown() {
     (void)dsp_write(DSP_CMD_STOP_16BIT);
     (void)dsp_write(DSP_CMD_SPEAKER_OFF);
     s_playing = false;
-    console::puts("sb16: shutdown\n");
+    log::info("sb16: shutdown");
 }
 
 static bool sb16_set_sample_rate(u32 rate_hz) {

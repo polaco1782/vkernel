@@ -22,7 +22,7 @@
 #include "z_zone.h"
 #include "d_mode.h"
 
-#include "../../include/vkernel/vk.h"
+#include "../include/vk.h"
 
 /* ---- per-channel playback end-time (in kernel ticks) ---- */
 static vk_u64 channel_end_tick[8];

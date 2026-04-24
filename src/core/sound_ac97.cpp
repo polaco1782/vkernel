@@ -144,42 +144,26 @@ static bool ac97_init() {
         dev = pci::find_by_class(pci_ids::CLASS_MULTIMEDIA, pci_ids::SUBCLASS_AUDIO);
     }
     if (!dev) {
-        console::puts("ac97: no AC'97 PCI device found\n");
+        log::warn("ac97: no AC'97 PCI device found");
         return false;
     }
 
     s_pci_addr = dev->addr;
 
-    console::puts("ac97: found PCI ");
-    console::put_hex(dev->vendor_id);
-    console::puts(":");
-    console::put_hex(dev->device_id);
-    console::puts(" at ");
-    console::put_hex(dev->addr.bus);
-    console::puts(":");
-    console::put_hex(dev->addr.device);
-    console::puts(".");
-    console::put_hex(dev->addr.function);
-    console::puts("\n");
+    log::info("ac97: found PCI %#x:%#x at %#x:%#x.%#x",
+              dev->vendor_id, dev->device_id,
+              dev->addr.bus, dev->addr.device, dev->addr.function);
 
     /* Extract I/O BAR addresses (bit 0 set = I/O space) */
     s_nam_base  = static_cast<u16>(dev->bar[0] & 0xFFFC);
     s_nabm_base = static_cast<u16>(dev->bar[1] & 0xFFFC);
 
     if (s_nam_base == 0 || s_nabm_base == 0) {
-        console::puts("ac97: invalid BAR addresses (NAM=");
-        console::put_hex(s_nam_base);
-        console::puts(" NABM=");
-        console::put_hex(s_nabm_base);
-        console::puts(")\n");
+        log::error("ac97: invalid BAR addresses (NAM=%#x NABM=%#x)", s_nam_base, s_nabm_base);
         return false;
     }
 
-    console::puts("ac97: NAM I/O base = 0x");
-    console::put_hex(s_nam_base);
-    console::puts(", NABM I/O base = 0x");
-    console::put_hex(s_nabm_base);
-    console::puts("\n");
+    log::debug("ac97: NAM I/O base = %#x, NABM I/O base = %#x", s_nam_base, s_nabm_base);
 
     /* Enable I/O space access + bus mastering */
     pci::enable_bus_master(s_pci_addr);
@@ -214,7 +198,7 @@ static bool ac97_init() {
         u16 ext_ctrl = nam_read16(NAM_EXT_AUDIO_CTRL);
         ext_ctrl |= 0x0001;  /* VRA bit */
         nam_write16(NAM_EXT_AUDIO_CTRL, ext_ctrl);
-        console::puts("ac97: variable-rate audio enabled\n");
+        log::info("ac97: variable-rate audio enabled");
     }
 
     /* Set default sample rate */
@@ -224,7 +208,7 @@ static bool ac97_init() {
     /* BDL: 32 entries × 8 bytes = 256 bytes, needs to be below 4 GB for 32-bit addresses */
     auto bdl_phys = g_phys_alloc.allocate_pages(1, PAGE_SIZE_4K, 0);
     if (bdl_phys == 0) {
-        console::puts("ac97: failed to allocate BDL page\n");
+        log::error("ac97: failed to allocate BDL page");
         return false;
     }
     s_bdl_phys = static_cast<u32>(bdl_phys);
@@ -235,24 +219,20 @@ static bool ac97_init() {
     auto dma_phys = g_phys_alloc.allocate_pages(
         DMA_BUFFER_SIZE / PAGE_SIZE_4K, PAGE_SIZE_4K, 0);
     if (dma_phys == 0) {
-        console::puts("ac97: failed to allocate DMA buffer\n");
+        log::error("ac97: failed to allocate DMA buffer");
         return false;
     }
     s_dma_phys = static_cast<u32>(dma_phys);
     s_dma_buf  = reinterpret_cast<u8*>(dma_phys);
     memory::memory_set(s_dma_buf, 0, DMA_BUFFER_SIZE);
 
-    console::puts("ac97: DMA buffer at 0x");
-    console::put_hex(s_dma_phys);
-    console::puts(", BDL at 0x");
-    console::put_hex(s_bdl_phys);
-    console::puts("\n");
+    log::debug("ac97: DMA buffer at %#x, BDL at %#x", s_dma_phys, s_bdl_phys);
 
     /* Point the hardware at our BDL */
     nabm_write32(PO_BDBAR, s_bdl_phys);
 
     s_playing = false;
-    console::puts("ac97: initialised\n");
+    log::info("ac97: initialised");
     return true;
 }
 
@@ -262,7 +242,7 @@ static void ac97_shutdown() {
     /* Clear status */
     nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
     s_playing = false;
-    console::puts("ac97: shutdown\n");
+    log::info("ac97: shutdown");
 }
 
 static bool ac97_set_sample_rate(u32 rate_hz) {
@@ -274,9 +254,7 @@ static bool ac97_set_sample_rate(u32 rate_hz) {
     if (actual != static_cast<u16>(rate_hz)) {
         /* Some codecs only support 48000; accept whatever it gives us */
         s_sample_rate = actual;
-        console::puts("ac97: rate adjusted to ");
-        console::put_dec(actual);
-        console::puts(" Hz\n");
+        log::info("ac97: rate adjusted to %u Hz", actual);
     }
     return true;
 }

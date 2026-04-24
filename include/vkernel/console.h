@@ -8,6 +8,7 @@
 #ifndef VKERNEL_CONSOLE_H
 #define VKERNEL_CONSOLE_H
 
+#include "config.h"
 #include "types.h"
 #include "uefi.h"
 
@@ -100,11 +101,33 @@ void put_dec(u64 value);
 
 namespace log {
 
-void error(const char* message);
-void warn(const char* message);
-void info(const char* message);
-void debug(const char* message);
-void verbose(const char* message);
+[[nodiscard]] constexpr auto error_enabled() -> bool {
+    return config::debug_level >= 1;
+}
+
+[[nodiscard]] constexpr auto warn_enabled() -> bool {
+    return config::debug_level >= 2;
+}
+
+[[nodiscard]] constexpr auto info_enabled() -> bool {
+    return config::debug_level >= 3;
+}
+
+[[nodiscard]] constexpr auto debug_enabled() -> bool {
+    return config::debug_level >= 4;
+}
+
+[[nodiscard]] constexpr auto verbose_enabled() -> bool {
+    return config::debug_level >= 5;
+}
+
+void printk(const char* format, ...);
+void crash(const char* format, ...);
+void error(const char* format, ...);
+void warn(const char* format, ...);
+void info(const char* format, ...);
+void debug(const char* format, ...);
+void verbose(const char* format, ...);
 
 /* Scoped logger with RAII */
 class scoped_logger {

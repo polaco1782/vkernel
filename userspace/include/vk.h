@@ -19,6 +19,10 @@
 extern "C" {
 #endif
 
+// I'm too lazy to write a proper header for the userspace side, so this header is shared by both kernel and userspace.
+// To avoid including kernel-only definitions in userspace, the API stubs and internal types are defined in kernel_api.cpp instead of here.
+#define VK_CALL(fn, ...) (vk_get_api()->vk_##fn(__VA_ARGS__))
+
 /* ============================================================
  * vkernel-specific APIs (not provided by any C standard library)
  * ============================================================ */

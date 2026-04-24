@@ -186,15 +186,10 @@ auto load(const u8* file_data, usize file_size) -> load_result {
         }
     }
 
-#if VK_DEBUG_LEVEL >= 3
-    console::puts("[pe] loaded: base=0x");
-    console::put_hex(reinterpret_cast<u64>(image));
-    console::puts(" size=");
-    console::put_dec(size_of_image);
-    console::puts(" entry=0x");
-    console::put_hex(reinterpret_cast<u64>(image) + entry_rva);
-    console::puts("\n");
-#endif
+    log::debug("pe: loaded base=%p size=%u entry=%#llx",
+               image,
+               size_of_image,
+               static_cast<unsigned long long>(reinterpret_cast<u64>(image) + entry_rva));
 
     result.entry      = reinterpret_cast<u64>(image) + entry_rva;
     result.image_base = image;

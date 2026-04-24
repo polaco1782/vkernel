@@ -59,15 +59,7 @@ auto ramfs::add_file(const char* name, const u8* data, usize size) -> status_cod
     f.valid = true;
     ++g_file_count;
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] ramfs: added '");
-    console::puts(name);
-    console::puts("' at heap=0x");
-    console::put_hex(reinterpret_cast<u64>(buf));
-    console::puts(" (");
-    console::put_dec(size);
-    console::puts(" bytes)\n");
-#endif
+    log::debug("ramfs: added '%s' at heap=%p (%zu bytes)", name, buf, size);
 
     return status_code::success;
 }
@@ -83,15 +75,7 @@ auto ramfs::add_file_nocopy(const char* name, u8* data, usize size) -> status_co
     f.valid = true;
     ++g_file_count;
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] ramfs: registered (nocopy) '");
-    console::puts(name);
-    console::puts("' at 0x");
-    console::put_hex(reinterpret_cast<u64>(data));
-    console::puts(" (");
-    console::put_dec(size);
-    console::puts(" bytes)\n");
-#endif
+    log::debug("ramfs: registered (nocopy) '%s' at %p (%zu bytes)", name, data, size);
 
     return status_code::success;
 }
@@ -116,15 +100,11 @@ auto ramfs::get_file(usize index) -> const file_entry* {
 }
 
 void ramfs::dump() {
-    console::puts("Ramfs contents (");
-    console::put_dec(g_file_count);
-    console::puts(" files):\n");
+    log::info("RAMFS: %zu file(s)", g_file_count);
     for (usize i = 0; i < g_file_count; ++i) {
-        console::puts("  ");
-        console::puts(g_files[i].name);
-        console::puts("  ");
-        console::put_dec(g_files[i].size);
-        console::puts(" bytes\n");
+        if (g_files[i].valid) {
+            log::info("  [%zu] '%s' (%zu bytes)", i, g_files[i].name, g_files[i].size);
+        }
     }
 }
 
@@ -230,7 +210,7 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     void* sfs_iface = null;
     auto st = bs->locate_protocol(&SFS_GUID, null, &sfs_iface);
     if (st != uefi::status::success || sfs_iface == null) {
-        console::puts("    SFS protocol not found\n");
+        log::warn("SFS protocol not found");
         return { null, 0 };
     }
     auto* sfs = static_cast<efi_sfs_protocol*>(sfs_iface);
@@ -240,7 +220,7 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     efi_file_protocol* root = null;
     st = sfs->open_volume(sfs, &root);
     if (st != uefi::status::success || root == null) {
-        console::puts("    Failed to open volume\n");
+        log::warn("Failed to open ESP volume");
         return { null, 0 };
     }
 
@@ -248,9 +228,7 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     efi_file_protocol* file = null;
     st = root->open(root, &file, to_ucs2(path), EFI_FILE_MODE_READ, 0);
     if (st != uefi::status::success || file == null) {
-        console::puts("    File not found: ");
-        console::puts(path);
-        console::puts("\n");
+        log::warn("ESP file not found: %s", path);
         root->close(root);
         return { null, 0 };
     }
@@ -260,7 +238,7 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     usize info_size = sizeof(info_buf);
     st = file->get_info(file, &FILE_INFO_GUID, &info_size, info_buf);
     if (st != uefi::status::success) {
-        console::puts("    GetInfo failed\n");
+        log::warn("GetInfo failed for %s", path);
         file->close(file);
         root->close(root);
         return { null, 0 };
@@ -268,13 +246,7 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     auto* fi = reinterpret_cast<efi_file_info*>(info_buf);
     usize file_size = static_cast<usize>(fi->file_size);
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] '" );
-    console::puts(path);
-    console::puts("': ");
-    console::put_dec(file_size);
-    console::puts(" bytes\n");
-#endif
+    log::debug("ESP file '%s': %zu bytes", path, file_size);
 
     if (file_size == 0) {
         file->close(file);
@@ -286,7 +258,7 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     void* buf = null;
     st = bs->allocate_pool(2 /* EfiLoaderData */, file_size, &buf);
     if (st != uefi::status::success || buf == null) {
-        console::puts("    AllocatePool failed\n");
+        log::warn("AllocatePool failed for %s", path);
         file->close(file);
         root->close(root);
         return { null, 0 };
@@ -299,23 +271,19 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     root->close(root);
 
     if (st != uefi::status::success || read_size != file_size) {
-        console::puts("    Read failed\n");
+        log::warn("Read failed for %s", path);
         bs->free_pool(buf);
         return { null, 0 };
     }
 
-#if VK_DEBUG_LEVEL >= 4
-    console::puts("[DEBUG] read OK, buf=0x");
-    console::put_hex(reinterpret_cast<u64>(buf));
-    console::puts("\n");
-#endif
+    log::debug("ESP read OK: %s -> %p", path, buf);
 
     return { static_cast<u8*>(buf), file_size };
 }
 
 /* Load well-known files from the ESP into the ramfs */
 auto loader::load_initrd() -> status_code {
-    console::puts("Loading files from ESP...\n");
+    log::info("Loading files from ESP...");
 
     ramfs::init();
 
@@ -350,19 +318,13 @@ auto loader::load_initrd() -> status_code {
                 ++p;
             }
             if (ramfs::add_file_nocopy(name, result.data, result.size) == status_code::success) {
-                console::puts("  Loaded: ");
-                console::puts(name);
-                console::puts(" (");
-                console::put_dec(result.size);
-                console::puts(" bytes)\n");
+                log::info("Loaded: %s (%zu bytes)", name, result.size);
                 ++loaded;
             }
         }
     }
 
-    console::puts("  ");
-    console::put_dec(loaded);
-    console::puts(" file(s) loaded from ESP\n");
+    log::info("%zu file(s) loaded from ESP", loaded);
 
     return status_code::success;
 }
