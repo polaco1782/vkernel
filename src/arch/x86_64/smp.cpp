@@ -263,25 +263,19 @@ extern "C" void ap_init_secondary() {
     lapic_init_local();
 
     /*
-     * Step 3: enable interrupts (the IDT is now live).
-     */
-    arch::enable_interrupts();
-
-    /*
-     * Step 4: signal the BSP that this AP is ready.
+     * Step 3: signal the BSP that this AP is ready to schedule.
      */
     arch::memory_barrier();
     *phys_ptr<volatile u32>(TRAM_READY) = 1;
 
-    log::info("AP APIC %u: online", current_cpu_apic_id());
+    log::info("AP APIC %u: online, entering scheduler", current_cpu_apic_id());
 
     /*
-     * Step 5: idle loop.
-     * Future work: integrate with scheduler (per-AP task queue).
+     * Step 4: enter the scheduler.  start_ap() arms the LAPIC timer,
+     * sets this CPU's initial task slot, enables interrupts, and idles.
+     * The LAPIC timer preemption will distribute runnable tasks to this AP.
      */
-    while (true) {
-        arch::cpu_halt();
-    }
+    sched::start_ap();
 }
 
 /* ============================================================

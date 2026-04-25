@@ -32,6 +32,11 @@ enum class task_state : u8 {
 inline constexpr usize TASK_STACK_SIZE = 262144;  /* 256 KB per task (enough for Doom) */
 inline constexpr usize MAX_TASKS = 64;
 
+/* Sentinel: CPU is idle and not currently executing any task.
+ * Used as the initial g_per_cpu_task value for APs so that their first
+ * LAPIC-timer preemption does not corrupt an existing task's saved state. */
+inline constexpr usize SCHED_NO_TASK = MAX_TASKS;
+
 using task_entry_fn = void(*)(void*);
 
 struct task {
@@ -54,6 +59,27 @@ struct task {
 };
 
 /* ============================================================
+ * Simple ticket-less test-and-set spinlock
+ * Suitable for short critical sections (task pick / state update).
+ * ============================================================ */
+
+struct spinlock {
+    volatile u64 locked = 0;
+
+    void acquire() {
+        while (!arch::atomic_cmpxchg(&locked, 0, 1)) {
+            arch::cpu_pause();
+        }
+        arch::memory_barrier();
+    }
+
+    void release() {
+        arch::memory_barrier();
+        locked = 0;
+    }
+};
+
+/* ============================================================
  * Scheduler API
  * ============================================================ */
 
@@ -70,8 +96,16 @@ namespace sched {
  */
 [[nodiscard]] auto create_task(const char* name, task_entry_fn entry, void* user_data = null) -> i64;
 
-/* Start the scheduler — does not return */
+/* Start the scheduler on the BSP — does not return */
 [[noreturn]] void start();
+
+/*
+ * Start the scheduler on an Application Processor.
+ * Called from ap_init_secondary() after arch::ap_activate().
+ * Enables LAPIC timer, then enters the idle/dispatch loop.
+ * Does not return.
+ */
+[[noreturn]] void start_ap();
 
 /* Yield CPU to next runnable task */
 void yield();
@@ -95,9 +129,9 @@ void wait_for_task(u64 task_id);
 void dump_tasks();
 
 /*
- * Preemption handler — called from timer ISR.
- * Saves current context, picks next task, returns new context pointer.
- * The assembly ISR stub uses the returned value to restore registers.
+ * Preemption handler — called from timer ISR (both PIT on BSP and
+ * LAPIC timer on APs).  Saves current context, picks next runnable
+ * task for this CPU, returns new context pointer.
  */
 [[nodiscard]] auto preempt(arch::register_state* regs) -> arch::register_state*;
 

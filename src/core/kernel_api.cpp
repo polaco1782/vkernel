@@ -195,14 +195,8 @@ static void route_puts(const char* str) {
 }
 
 static void route_put_hex(vk_u64 value) {
-    static constexpr char hex_chars[] = "0123456789ABCDEF";
     char buf[19];
-    buf[0] = '0';
-    buf[1] = 'x';
-    for (i32 i = 15; i >= 0; --i) {
-        buf[2 + (15 - i)] = hex_chars[(value >> (i * 4)) & 0xF];
-    }
-    buf[18] = '\0';
+    log::hex(buf, sizeof(buf), value);
     route_puts(buf);
 }
 

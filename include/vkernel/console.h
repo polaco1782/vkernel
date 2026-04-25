@@ -138,6 +138,10 @@ void info(const char* format, ...);
 void debug(const char* format, ...);
 void verbose(const char* format, ...);
 
+/* Hex formatting helpers used by diagnostics and kernel stubs. */
+auto hex(char* out, usize out_size, u64 value) -> usize;
+auto hex_bytes(char* out, usize out_size, const u8* data, usize length) -> usize;
+
 /* Scoped logger with RAII */
 class scoped_logger {
 public:

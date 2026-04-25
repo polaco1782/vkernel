@@ -16,6 +16,7 @@
 #include "scheduler.h"
 #include "panic.h"
 #include "arch/x86_64/arch.h"
+#include "smp.h"
 
 namespace vk {
 
@@ -23,11 +24,27 @@ namespace vk {
  * Internal state
  * ============================================================ */
 
-static task  g_tasks[MAX_TASKS];
-static usize g_task_count    = 0;
-static usize g_current_task  = 0;
-static bool  g_scheduler_active = false;
-static u64   g_tick_count = 0;
+static task   g_tasks[MAX_TASKS];
+static usize  g_task_count       = 0;
+static bool   g_scheduler_active = false;
+static u64    g_tick_count       = 0;
+
+/*
+ * Per-CPU current-task index.
+ * Indexed by APIC ID (0-based, matches smp::MAX_CPUS).
+ * The BSP is always APIC ID 0 on a standard PC; on unusual hardware
+ * the BSP's APIC ID might differ — we map via smp::current_cpu_apic_id().
+ */
+static constexpr u32 MAX_APIC_IDS = 256;
+static usize g_per_cpu_task[MAX_APIC_IDS];   /* current task index per CPU */
+
+/* Global scheduler spinlock — held only during the brief task-pick window */
+static spinlock g_sched_lock;
+
+/* APIC ID of the Bootstrap Processor — only the BSP drives g_tick_count
+ * via the PIT (IRQ0).  APs use their LAPIC timer for preemption only;
+ * they must not increment the global tick or sleep timers will run N× fast. */
+static u8 g_bsp_apic_id = 0;
 
 /* ============================================================
  * PIT (Programmable Interval Timer) helpers — 8254 chip
@@ -107,8 +124,20 @@ static void str_copy(char* dst, const char* src, usize max) {
 /* ============================================================
  * Scheduler internals
  * ============================================================ */
+
+/* Current-task index for this CPU */
+static inline usize cpu_current_task() {
+    u8 apic_id = smp::current_cpu_apic_id();
+    return g_per_cpu_task[apic_id];
+}
+
+static inline void cpu_set_current_task(usize idx) {
+    u8 apic_id = smp::current_cpu_apic_id();
+    g_per_cpu_task[apic_id] = idx;
+}
+
 [[maybe_unused]] static void task_trampoline(void* user_data) {
-    auto& t = g_tasks[g_current_task];
+    auto& t = g_tasks[cpu_current_task()];
     if (t.entry) t.entry(t.user_data);
     sched::exit_task();
 }
@@ -143,14 +172,9 @@ static void wake_sleeping_tasks() {
 [[maybe_unused]] static void dump_entry_bytes(u64 entry_va, usize count = 32) {
     const u8* bytes = reinterpret_cast<const u8*>(entry_va);
 
-    log::debug("Dumping %zu bytes at entry point %#llx:", count, static_cast<unsigned long long>(entry_va));
-
-    for (usize i = 0; i < count; ++i) {
-        log::debug("  [%02zu] %#02x", i, bytes[i]);
-
-        if ((i + 1) % 16 == 0 && i + 1 < count)
-            log::debug("");
-    }
+    char bytes_buf[count * 3 + 1];
+    log::hex_bytes(bytes_buf, sizeof(bytes_buf), bytes, count);
+    log::debug("Dumping %zu bytes at entry point %#llx: %s", count, static_cast<unsigned long long>(entry_va), bytes_buf);
 }
 
 /* ============================================================
@@ -159,10 +183,17 @@ static void wake_sleeping_tasks() {
 
 auto sched::init() -> status_code {
     memory::memory_set(g_tasks, 0, sizeof(g_tasks));
-    g_task_count   = 0;
-    g_current_task = 0;
+    /* Initialise every CPU's "current task" slot to SCHED_NO_TASK.
+     * Zero-filling would leave them pointing at task 0, which is wrong:
+     * an AP that fires its LAPIC timer before calling start_ap() would
+     * corrupt g_tasks[0].rsp if the slot were 0. */
+    for (usize i = 0; i < MAX_APIC_IDS; ++i)
+        g_per_cpu_task[i] = SCHED_NO_TASK;
+    g_task_count       = 0;
     g_scheduler_active = false;
-    g_tick_count = 0;
+    g_tick_count       = 0;
+    g_sched_lock.locked = 0;
+    g_bsp_apic_id      = smp::current_cpu_apic_id();
 
     /* Remap PIC so IRQ0 -> vector 32 */
     pic_remap();
@@ -265,26 +296,62 @@ void sched::yield() {
 }
 
 auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
-    /* Only count real PIT hardware ticks, not software yields */
+    /* Only count real PIT hardware ticks, not software yields.
+     * Note: on APs the LAPIC timer fires on vector 32 as well;  the
+     * PIT only fires on the BSP (IRQ0 is wired to the BSP by the PIC). */
     if (g_yield_in_progress) {
         g_yield_in_progress = false;
-    } else {
+    } else if (smp::current_cpu_apic_id() == g_bsp_apic_id) {
+        /* Only the BSP's PIT (IRQ0) advances the global clock.
+         * APs fire vector 32 from their LAPIC timers for scheduling only;
+         * if they also incremented g_tick_count, ticks would run N× fast. */
         ++g_tick_count;
     }
+
+    /* Send EOI.
+     * - The BSP receives IRQ0 via the 8259 PIC (pic_eoi() writes port 0x20).
+     * - APs receive vector 32 from their local LAPIC timer.
+     *   The LAPIC requires a write to its EOI register (offset 0xB0) to
+     *   acknowledge the interrupt; the 8259 EOI is a no-op for LAPIC sources.
+     * Writing both is safe: the PIC ignores spurious EOIs and the LAPIC
+     * ignores the PIC port write.
+     */
+    pic_eoi();
+    {
+        constexpr u32 MSR_IA32_APIC_BASE  = 0x1B;
+        constexpr u64 APIC_BASE_PHYS_MASK = 0x0000'0000'FFFF'F000ULL;
+        constexpr u32 LAPIC_EOI = 0x0B0;
+        const u64 lapic_phys = arch::rdmsr(MSR_IA32_APIC_BASE) & APIC_BASE_PHYS_MASK;
+        auto* lapic = reinterpret_cast<volatile u32*>(static_cast<usize>(lapic_phys));
+        lapic[LAPIC_EOI / 4] = 0;
+    }
+
     wake_sleeping_tasks();
 
     if (!g_scheduler_active || g_task_count < 2) {
-        pic_eoi();
         return regs;
     }
 
-    /* Save current RSP (points to the register_state on the stack) */
-    g_tasks[g_current_task].rsp = reinterpret_cast<u64>(regs);
-    if (g_tasks[g_current_task].state == task_state::running)
-        g_tasks[g_current_task].state = task_state::ready;
+    g_sched_lock.acquire();
 
-    /* Round-robin: find next runnable task */
-    usize next = g_current_task;
+    usize cur = cpu_current_task();
+
+    /* Save current task only if this CPU is actually running one.
+     * cur == SCHED_NO_TASK on an AP that has never been assigned a task yet
+     * (set in start_ap() before the first LAPIC-timer preemption).  Saving
+     * into g_tasks[SCHED_NO_TASK] would be an out-of-bounds write and would
+     * also corrupt another task's saved RSP if two CPUs happen to both have
+     * SCHED_NO_TASK simultaneously. */
+    if (cur < g_task_count) {
+        g_tasks[cur].rsp = reinterpret_cast<u64>(regs);
+        if (g_tasks[cur].state == task_state::running)
+            g_tasks[cur].state = task_state::ready;
+    }
+
+    /* Round-robin: find next runnable task.
+     * When cur is SCHED_NO_TASK, start scanning from the last slot so that
+     * the very first increment wraps to slot 0, giving a fair start point. */
+    usize next = (cur < g_task_count) ? cur : (g_task_count - 1);
     bool found = false;
     for (usize i = 0; i < g_task_count; ++i) {
         next = (next + 1) % g_task_count;
@@ -295,18 +362,16 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     }
 
     if (!found) {
-        pic_eoi();
+        g_sched_lock.release();
         return regs;
     }
 
-    g_current_task = next;
-    g_tasks[g_current_task].state = task_state::running;
+    cpu_set_current_task(next);
+    g_tasks[next].state = task_state::running;
 
-    pic_eoi();
+    g_sched_lock.release();
 
-    /* Return the new task's saved context — the ISR assembly will
-     * set RSP to this value before popping registers + iretq. */
-    return reinterpret_cast<arch::register_state*>(g_tasks[g_current_task].rsp);
+    return reinterpret_cast<arch::register_state*>(g_tasks[next].rsp);
 }
 
 /*
@@ -324,56 +389,105 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     }
 
     g_scheduler_active = true;
-    g_current_task = 0;
+    cpu_set_current_task(0);
     g_tasks[0].state = task_state::running;
 
-    /* Unmask IRQ0 and enable interrupts */
+    /* Unmask IRQ0 and enable interrupts (BSP only) */
     pic_unmask_irq0();
 
     log::info("Scheduler starting...");
 
-    if constexpr (log::debug_enabled()) {
-        auto* s = reinterpret_cast<u64*>(g_tasks[0].rsp);
-        log::debug("=== FIRST TASK INITIAL FRAME ===");
-        log::debug("Task: %s", g_tasks[0].name);
-        log::debug("Frame base (RSP on iretq): %#llx", static_cast<unsigned long long>(g_tasks[0].rsp));
-        log::debug("RIP=%#llx CS=%#llx RFLAGS=%#llx RSP=%#llx SS=%#llx RCX=%#llx RDX=%#llx R8=%#llx R9=%#llx",
-                   static_cast<unsigned long long>(s[19]),
-                   static_cast<unsigned long long>(s[20]),
-                   static_cast<unsigned long long>(s[21]),
-                   static_cast<unsigned long long>(s[22]),
-                   static_cast<unsigned long long>(s[23]),
-                   static_cast<unsigned long long>(s[16]),
-                   static_cast<unsigned long long>(s[15]),
-                   static_cast<unsigned long long>(s[12]),
-                   static_cast<unsigned long long>(s[11]));
-
-        u64 entry = s[19];
-        if (!validate_entry_point(entry)) {
-            log::error("Entry point contains fill pattern - aborting");
-            dump_entry_bytes(entry, 64);
-            __builtin_trap();
-        }
-
-        log::debug("Entry point first 32 bytes:");
-        dump_entry_bytes(entry, 32);
-        log::debug("=====================================");
-    }
-
     /* Jump into the first task — naked asm, no compiler interference */
-    sched_switch_to(g_tasks[0].rsp);
+    sched_switch_to(g_tasks[cpu_current_task()].rsp);
+}
+
+/* ============================================================
+ * AP entry point — called from ap_init_secondary() after
+ * arch::ap_activate() and smp::lapic_init_local().
+ *
+ * Each AP:
+ *   1. Programs its local LAPIC timer to fire at SCHED_HZ.
+ *   2. Sets its per-CPU current task to the idle task (index 0).
+ *   3. Enables interrupts and idles — the LAPIC timer will start
+ *      preempting and dispatching tasks immediately.
+ * ============================================================ */
+[[noreturn]] void sched::start_ap() {
+    /*
+     * Programme the local APIC timer on this AP.
+     * We use a one-shot → periodic sequence:
+     *   - Divide-by-16 (DCR register = 0x3)
+     *   - LVT Timer register: vector 32 (same as PIT), periodic mode
+     *   - Initial count = calibrated from BSP's PIT frequency.
+     *
+     * Simple calibration: the BSP ticks at SCHED_HZ on the PIT;
+     * the LAPIC timer bus frequency is typically in the hundreds of MHz
+     * range.  We use a fixed count that is a reasonable default for
+     * QEMU (bus ~100 MHz → 100 MHz / 16 / 100 Hz = 62500).
+     * Real hardware should calibrate via TSC or PIT, but this is
+     * sufficient for correctness at this stage.
+     */
+    static constexpr u32 LAPIC_TIMER_DCR     = 0x3E0; /* Divide Config  */
+    static constexpr u32 LAPIC_TIMER_INITIAL = 0x380; /* Initial Count  */
+    static constexpr u32 LAPIC_TIMER_LVT     = 0x320; /* LVT Timer      */
+    static constexpr u32 LAPIC_TIMER_CURRENT = 0x390; /* Current Count  */
+    static constexpr u32 LAPIC_DCR_DIV16     = 0x3;   /* divide by 16   */
+    static constexpr u32 LAPIC_LVT_PERIODIC  = (1u << 17); /* periodic mode */
+    static constexpr u32 LAPIC_TIMER_VECTOR  = 32;    /* same vector as PIT */
+    static constexpr u32 LAPIC_TIMER_COUNT   = 62500; /* ~100 Hz at 100 MHz / 16 */
+
+    /* LAPIC base address — read from MSR (same as BSP) */
+    constexpr u32 MSR_IA32_APIC_BASE  = 0x1B;
+    constexpr u64 APIC_BASE_PHYS_MASK = 0x0000'0000'FFFF'F000ULL;
+    const u64 lapic_phys = arch::rdmsr(MSR_IA32_APIC_BASE) & APIC_BASE_PHYS_MASK;
+    auto* lapic = reinterpret_cast<volatile u32*>(static_cast<usize>(lapic_phys));
+
+    /* Divide by 16 */
+    lapic[LAPIC_TIMER_DCR / 4] = LAPIC_DCR_DIV16;
+
+    /* LVT: vector 32, periodic, not masked */
+    lapic[LAPIC_TIMER_LVT / 4] = LAPIC_LVT_PERIODIC | LAPIC_TIMER_VECTOR;
+
+    /* Arm the timer */
+    lapic[LAPIC_TIMER_INITIAL / 4] = LAPIC_TIMER_COUNT;
+    (void)lapic[LAPIC_TIMER_CURRENT / 4]; /* serialise */
+
+    log::debug("AP APIC %u: LAPIC timer armed, entering scheduler",
+               smp::current_cpu_apic_id());
+
+    /* Signal that this AP has no current task yet.
+     * Using SCHED_NO_TASK prevents the first LAPIC-timer preemption from
+     * overwriting g_tasks[0].rsp (task 0 may still be running on the BSP
+     * or may not yet have been started).  preempt() will pick up the first
+     * ready task on its own without touching any existing task's saved state. */
+    g_sched_lock.acquire();
+    cpu_set_current_task(SCHED_NO_TASK);
+    g_sched_lock.release();
+
+    /* Enable interrupts — LAPIC timer will fire immediately */
+    arch::enable_interrupts();
+
+    /* Idle spin — preemption will switch us to a real task */
+    while (true) {
+        arch::cpu_halt();
+    }
 }
 
 auto sched::current_task_id() -> u64 {
-    return g_tasks[g_current_task].id;
+    usize t = cpu_current_task();
+    if (t >= g_task_count) return 0;
+    return g_tasks[t].id;
 }
 
 auto sched::current_task_name() -> const char* {
-    return g_tasks[g_current_task].name;
+    usize t = cpu_current_task();
+    if (t >= g_task_count) return "<idle>";
+    return g_tasks[t].name;
 }
 
 auto sched::current_task_user_data() -> void* {
-    return g_tasks[g_current_task].user_data;
+    usize t = cpu_current_task();
+    if (t >= g_task_count) return null;
+    return g_tasks[t].user_data;
 }
 
 auto sched::tick_count() -> u64 {
@@ -386,7 +500,7 @@ void sched::sleep(u64 ticks) {
         return;
     }
 
-    auto& t = g_tasks[g_current_task];
+    auto& t = g_tasks[cpu_current_task()];
     t.wake_tick = g_tick_count + ticks;
     t.state = task_state::blocked;
 
@@ -416,8 +530,9 @@ void sched::wait_for_task(u64 task_id) {
 
 [[noreturn]] void sched::exit_task() {
     arch::disable_interrupts();
-    g_tasks[g_current_task].state = task_state::terminated;
-    log::debug("Task terminated: %s", g_tasks[g_current_task].name);
+    usize cur = cpu_current_task();
+    g_tasks[cur].state = task_state::terminated;
+    log::debug("Task terminated: %s", g_tasks[cur].name);
     arch::enable_interrupts();
     /* Yield to let scheduler pick another task */
     while (true) { sched::yield(); arch::cpu_halt(); }

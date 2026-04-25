@@ -424,13 +424,8 @@ void console::putw(const char16_t* str) {
 
 /* Print a 64-bit value as "0x" + 16 hex digits */
 void console::put_hex(u64 value) {
-    static constexpr char hex_chars[] = "0123456789ABCDEF";
     char buf[19];
-    buf[0] = '0'; buf[1] = 'x';
-    for (i32 i = 15; i >= 0; --i) {
-        buf[2 + (15 - i)] = hex_chars[(value >> (i * 4)) & 0xF];
-    }
-    buf[18] = '\0';
+    log::hex(buf, sizeof(buf), value);
     puts(buf);
 }
 
@@ -565,6 +560,89 @@ static void format_puts(format_state& state, const char* str) {
     while (*str != '\0') {
         format_putc(state, *str++);
     }
+}
+
+static constexpr char hex_digits[] = "0123456789ABCDEF";
+
+static auto copy_to_buffer(char* out, usize out_size, const char* str) -> usize {
+    if (out == null || out_size == 0) {
+        return 0;
+    }
+
+    if (str == null) {
+        str = "(null)";
+    }
+
+    usize pos = 0;
+    while (*str != '\0' && pos + 1 < out_size) {
+        out[pos++] = *str++;
+    }
+    out[pos] = '\0';
+    return pos;
+}
+
+static auto format_hex_value_to_buffer(char* out, usize out_size, u64 value) -> usize {
+    if (out == null || out_size == 0) {
+        return 0;
+    }
+
+    char buffer[16];
+    constexpr usize buffer_capacity = sizeof(buffer) / sizeof(buffer[0]);
+    usize count = 0;
+
+    do {
+        buffer[count++] = hex_digits[value & 0xF];
+        value >>= 4;
+    } while (value != 0 && count < buffer_capacity);
+
+    while (count < buffer_capacity) {
+        buffer[count++] = '0';
+    }
+
+    usize pos = 0;
+    if (out_size <= 1) {
+        out[0] = '\0';
+        return 0;
+    }
+
+    out[pos++] = '0';
+    if (pos + 1 >= out_size) {
+        out[0] = '\0';
+        return 0;
+    }
+    out[pos++] = 'x';
+
+    while (count > 0 && pos + 1 < out_size) {
+        out[pos++] = buffer[--count];
+    }
+
+    out[pos] = '\0';
+    return pos;
+}
+
+static auto format_hex_bytes_to_buffer(char* out, usize out_size, const u8* data, usize length) -> usize {
+    if (out == null || out_size == 0) {
+        return 0;
+    }
+
+    if (data == null) {
+        return copy_to_buffer(out, out_size, "(null)");
+    }
+
+    usize pos = 0;
+    for (usize i = 0; i < length; ++i) {
+        if (pos + 3 >= out_size) {
+            break;
+        }
+
+        u8 byte = data[i];
+        out[pos++] = hex_digits[byte >> 4];
+        out[pos++] = hex_digits[byte & 0xF];
+        out[pos++] = ' ';
+    }
+
+    out[pos] = '\0';
+    return pos;
 }
 
 static void format_unsigned(format_state& state, u64 value, u32 base,
@@ -792,6 +870,14 @@ static void vlog(log_level level, bool append_newline, const char* format, vk_va
 }
 
 } // namespace
+
+auto hex(char* out, usize out_size, u64 value) -> usize {
+    return format_hex_value_to_buffer(out, out_size, value);
+}
+
+auto hex_bytes(char* out, usize out_size, const u8* data, usize length) -> usize {
+    return format_hex_bytes_to_buffer(out, out_size, data, length);
+}
 
 void printk(const char* format, ...) {
     vk_va_list args;

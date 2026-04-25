@@ -383,6 +383,7 @@ auto loader::load_initrd() -> status_code {
         "\\EFI\\vkernel\\rotozoom.vbin",
         "\\EFI\\vkernel\\makemove.mod",
         "\\EFI\\vkernel\\head.bmp",
+        "\\EFI\\vkernel\\vgui.vbin",
     };
     constexpr usize file_count = sizeof(files) / sizeof(files[0]);
 

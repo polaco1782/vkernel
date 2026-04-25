@@ -219,17 +219,9 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
 
         /* Print instruction bytes at RIP for diagnosis */
         {
-            const u8* ip = reinterpret_cast<const u8*>(regs->frame.rip);
-            static constexpr char hex[] = "0123456789ABCDEF";
             char bytes_buf[16 * 3 + 1];
-            usize pos = 0;
-            for (int b = 0; b < 16; ++b) {
-                u8 byte = ip[b];
-                bytes_buf[pos++] = hex[byte >> 4];
-                bytes_buf[pos++] = hex[byte & 0xF];
-                bytes_buf[pos++] = ' ';
-            }
-            bytes_buf[pos] = '\0';
+            log::hex_bytes(bytes_buf, sizeof(bytes_buf),
+                           reinterpret_cast<const u8*>(regs->frame.rip), 16);
             log::crash("  Bytes @ RIP:  %s", bytes_buf);
         }
 

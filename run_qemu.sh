@@ -109,8 +109,8 @@ echo ""
 
 exec ${QEMU} \
     -machine q35 \
-    -smp 8 \
     -cpu Haswell \
+    -smp 4 \
     -drive if=pflash,format=${PFLASH_FMT},readonly=on,file="${OVMF_CODE}" \
     -drive if=pflash,format=${PFLASH_FMT},file="${NVRAM_FILE}" \
     -drive if=ide,index=0,media=disk,format=raw,file="fat:rw:${ESP_ROOT}" \
