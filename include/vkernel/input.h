@@ -52,6 +52,19 @@ auto try_getc_serial() -> char;
  */
 auto poll_key(vk_key_event_t& ev) -> bool;
 
+/*
+ * Initialise the PS/2 auxiliary (mouse) port.
+ * Safe to call multiple times; initialises only once.
+ */
+auto mouse_init() -> status_code;
+
+/*
+ * Non-blocking PS/2 mouse event poll.
+ * Returns true and fills ev if a complete 3-byte PS/2 packet is ready.
+ * dy is normalised so that positive = down (screen coordinates).
+ */
+auto poll_mouse(vk_mouse_event_t& ev) -> bool;
+
 } // namespace input
 } // namespace vk
 

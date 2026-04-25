@@ -45,9 +45,16 @@ void ImGui_ImplVK_NewFrame();
 void ImGui_ImplVK_ProcessKey(const vk_key_event_t* evt);
 
 /*
- * Rasterise ImGui's draw lists into the framebuffer.
+ * Feed a mouse movement / button event into ImGui.
+ * Call for every event returned by vk_poll_mouse().
+ */
+void ImGui_ImplVK_ProcessMouse(const vk_mouse_event_t* evt);
+
+/*
+ * Rasterise ImGui's draw lists into an offscreen buffer then blit the
+ * completed frame to the UEFI framebuffer in one shot (double-buffering
+ * eliminates the partial-draw flicker visible with direct rendering).
  * Call after ImGui::Render(), passing ImGui::GetDrawData().
- * Clears the framebuffer to a dark background before drawing.
  */
 void ImGui_ImplVK_RenderDrawData(ImDrawData* draw_data,
                                   const vk_framebuffer_info_t* fb);

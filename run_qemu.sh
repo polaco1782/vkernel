@@ -106,6 +106,8 @@ echo "Press Ctrl+Alt+2 to switch to QEMU monitor"
 echo "Press Ctrl+Alt+1 to switch back to VM"
 echo "Type 'quit' in QEMU monitor to exit"
 echo ""
+echo "Mouse: press Ctrl+Alt+G to grab/release the mouse inside the VM."
+echo ""
 
 exec ${QEMU} \
     -machine q35 \

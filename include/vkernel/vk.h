@@ -25,6 +25,7 @@ extern "C" {
 typedef unsigned long long vk_u64;
 typedef long long          vk_i64;
 typedef unsigned int       vk_u32;
+typedef int                vk_i32;
 #if defined(_MSC_VER)
 typedef unsigned long long vk_usize;
 #else
@@ -54,6 +55,12 @@ typedef struct vk_key_event {
     char   _pad[3];
     vk_u32 modifiers;  /* bit 0=shift, bit 1=ctrl, bit 2=alt         */
 } vk_key_event_t;
+
+typedef struct vk_mouse_event {
+    vk_i32 dx;         /* relative X movement (pixels)                */
+    vk_i32 dy;         /* relative Y movement, positive = down        */
+    vk_u32 buttons;    /* bit 0=left, bit 1=right, bit 2=middle       */
+} vk_mouse_event_t;
 
 typedef vk_u64 vk_file_handle_t;
 
@@ -139,10 +146,13 @@ typedef struct vk_api {
     int  (*vk_drv_load)(const char* name);
     int  (*vk_drv_unload)(const char* name);
 
+    /* ---- mouse input ---- */
+    int  (*vk_poll_mouse)(vk_mouse_event_t* out);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 11ULL
+#define VK_API_VERSION 12ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

@@ -96,48 +96,62 @@ static bool s_shift = false;
 static bool s_caps  = false;
 static bool s_ext   = false;   /* consumed 0xE0 prefix */
 
+/* Forward declaration: defined in the PS/2 mouse section below. */
+static void ps2_pump_mouse_byte(u8 byte);
+
 /*
  * Try to read one character from the PS/2 port.
  * Returns '\0' if nothing is available or the scancode is a modifier.
+ *
+ * Aux (mouse) bytes are consumed immediately and fed into ps2_pump_mouse_byte()
+ * so the controller output buffer is never blocked by unread mouse data.
  */
 static auto ps2_try_read() -> char {
-    /* Bit 0 of status: output buffer full */
-    if (!(arch::inb(PS2_STATUS) & 0x01)) return '\0';
+    while (true) {
+        /* Bit 0 of status: output buffer full */
+        u8 status = arch::inb(PS2_STATUS);
+        if (!(status & 0x01)) return '\0';
 
-    u8 sc = arch::inb(PS2_DATA);
+        u8 sc = arch::inb(PS2_DATA);
 
-    if (sc == 0xE0) { s_ext = true; return '\0'; }   /* extended prefix */
+        /* Aux (mouse) byte: consume it, pump it, keep looking for keyboard. */
+        if (status & 0x20) { ps2_pump_mouse_byte(sc); continue; }
 
-    bool ext = s_ext;
-    s_ext = false;
+        if (sc == 0xE0) { s_ext = true; continue; }   /* extended prefix */
 
-    if (ext) return '\0';   /* ignore extended make/break codes for now */
+        bool ext = s_ext;
+        s_ext = false;
 
-    /* Break code (key release) — update shift state, no character */
-    if (sc & 0x80) {
-        u8 make = sc & 0x7F;
-        if (make == 0x2A || make == 0x36) s_shift = false;
-        return '\0';
+        if (ext) continue;   /* ignore extended make/break codes for now */
+
+        /* Break code (key release) — update shift state, no character */
+        if (sc & 0x80) {
+            u8 make = sc & 0x7F;
+            if (make == 0x2A || make == 0x36) s_shift = false;
+            continue;
+        }
+
+        /* Make codes — modifiers */
+        if (sc == 0x2A || sc == 0x36) { s_shift = true;  continue; }
+        if (sc == 0x3A)               { s_caps = !s_caps; continue; }
+        if (sc == 0x1D || sc == 0x38) continue;   /* ctrl / alt */
+
+        if (sc >= 128) continue;
+
+        char base_n = s_sc_normal[sc];
+        char base_s = s_sc_shifted[sc];
+
+        /* Letters: caps lock and shift XOR to determine case */
+        bool letter = (base_n >= 'a' && base_n <= 'z');
+        if (letter) {
+            bool upper = s_caps ^ s_shift;
+            return upper ? base_s : base_n;
+        }
+
+        char c = s_shift ? base_s : base_n;
+        if (c != '\0') return c;
+        /* Non-printable make code — keep draining */
     }
-
-    /* Make codes — modifiers */
-    if (sc == 0x2A || sc == 0x36) { s_shift = true;  return '\0'; }
-    if (sc == 0x3A)               { s_caps = !s_caps; return '\0'; }
-    if (sc == 0x1D || sc == 0x38) return '\0';   /* ctrl / alt */
-
-    if (sc >= 128) return '\0';
-
-    char base_n = s_sc_normal[sc];
-    char base_s = s_sc_shifted[sc];
-
-    /* Letters: caps lock and shift XOR to determine case */
-    bool letter = (base_n >= 'a' && base_n <= 'z');
-    if (letter) {
-        bool upper = s_caps ^ s_shift;
-        return upper ? base_s : base_n;
-    }
-
-    return s_shift ? base_s : base_n;
 }
 
 /* ============================================================
@@ -149,11 +163,16 @@ static bool s_ctrl = false;
 static bool s_alt  = false;
 
 static auto ps2_try_read_raw(vk_key_event_t& ev) -> bool {
-    if (!(arch::inb(PS2_STATUS) & 0x01)) return false;
+    while (true) {
+    u8 status = arch::inb(PS2_STATUS);
+    if (!(status & 0x01)) return false;
 
     u8 sc = arch::inb(PS2_DATA);
 
-    if (sc == 0xE0) { s_ext = true; return false; }
+    /* Aux (mouse) byte: consume it, pump it, keep looking for keyboard. */
+    if (status & 0x20) { ps2_pump_mouse_byte(sc); continue; }
+
+    if (sc == 0xE0) { s_ext = true; continue; }
 
     bool ext = s_ext;
     s_ext = false;
@@ -190,6 +209,7 @@ static auto ps2_try_read_raw(vk_key_event_t& ev) -> bool {
     ev._pad[0] = ev._pad[1] = ev._pad[2] = 0;
 
     return true;
+    } /* while */
 }
 
 /* ============================================================
@@ -206,6 +226,172 @@ static auto serial_try_read() -> char {
 }
 
 /* ============================================================
+ * PS/2 Mouse — i8042 auxiliary port
+ *
+ * Protocol: 3-byte packets
+ *   Byte 0: [YO|XO|YS|XS|1|MB|RB|LB]  (bit 3 always 1)
+ *   Byte 1: X movement (two's complement, sign in byte 0 bit 4)
+ *   Byte 2: Y movement (two's complement, sign in byte 0 bit 5, +Y = up)
+ * ============================================================ */
+
+static constexpr u8  PS2_CMD_ENABLE_AUX    = 0xA8;
+static constexpr u8  PS2_CMD_GET_CONFIG    = 0x20;
+static constexpr u8  PS2_CMD_SET_CONFIG    = 0x60;
+static constexpr u8  PS2_CMD_WRITE_AUX     = 0xD4;  /* next byte → aux */
+static constexpr u8  PS2_MOUSE_ENABLE_RPT  = 0xF4;  /* Enable Data Reporting */
+static constexpr u8  PS2_MOUSE_ACK         = 0xFA;
+
+static bool s_mouse_ready = false;
+static u8   s_mouse_buf[3];
+static int  s_mouse_phase = 0;   /* which byte within a 3-byte packet */
+
+/*
+ * Ring buffer of fully-decoded mouse packets.
+ * ps2_pump_mouse_byte() assembles bytes into packets and enqueues them.
+ * Both the keyboard readers and poll_mouse() call pump, so the PS/2
+ * output buffer is always drained immediately — keyboard bytes are never
+ * blocked by pending mouse data.
+ */
+static constexpr int    MOUSE_QUEUE_SIZE = 8;
+static vk_mouse_event_t s_mouse_queue[MOUSE_QUEUE_SIZE];
+static int              s_mouse_q_head = 0;   /* next write slot */
+static int              s_mouse_q_tail = 0;   /* next read slot  */
+
+static bool mouse_q_full()  { return ((s_mouse_q_head + 1) % MOUSE_QUEUE_SIZE) == s_mouse_q_tail; }
+static bool mouse_q_empty() { return s_mouse_q_head == s_mouse_q_tail; }
+
+static void mouse_q_push(const vk_mouse_event_t& ev)
+{
+    if (mouse_q_full())
+        s_mouse_q_tail = (s_mouse_q_tail + 1) % MOUSE_QUEUE_SIZE; /* drop oldest */
+    s_mouse_queue[s_mouse_q_head] = ev;
+    s_mouse_q_head = (s_mouse_q_head + 1) % MOUSE_QUEUE_SIZE;
+}
+
+static bool mouse_q_pop(vk_mouse_event_t& ev)
+{
+    if (mouse_q_empty()) return false;
+    ev = s_mouse_queue[s_mouse_q_tail];
+    s_mouse_q_tail = (s_mouse_q_tail + 1) % MOUSE_QUEUE_SIZE;
+    return true;
+}
+
+/*
+ * Feed one raw byte from the aux device into the 3-byte packet state machine.
+ * Enqueues a decoded vk_mouse_event_t when a complete packet is ready.
+ */
+static void ps2_pump_mouse_byte(u8 byte)
+{
+    /* Re-sync: first byte of a packet always has bit 3 set. */
+    if (s_mouse_phase == 0 && !(byte & 0x08u))
+        return;   /* out-of-sync, discard */
+
+    s_mouse_buf[s_mouse_phase++] = byte;
+    if (s_mouse_phase < 3) return;   /* packet incomplete */
+
+    s_mouse_phase = 0;
+
+    u8 flags = s_mouse_buf[0];
+    u8 raw_x = s_mouse_buf[1];
+    u8 raw_y = s_mouse_buf[2];
+
+    if (flags & 0xC0u) return;   /* overflow bits set — discard */
+
+    i32 dx =  (i32)raw_x - (i32)((flags & 0x10u) ? 256 : 0);
+    i32 dy = -(i32)raw_y + (i32)((flags & 0x20u) ? 256 : 0);  /* invert Y */
+
+    vk_mouse_event_t ev;
+    ev.dx      = dx;
+    ev.dy      = dy;
+    ev.buttons = flags & 0x07u;
+    mouse_q_push(ev);
+}
+
+/* Wait until the controller input buffer is empty (ready for write). */
+static void ps2_ctrl_wait_write() {
+    for (int i = 0; i < 100000; ++i)
+        if (!(arch::inb(PS2_STATUS) & 0x02)) return;
+}
+
+/* Wait until the controller output buffer has a byte ready. */
+static void ps2_ctrl_wait_read() {
+    for (int i = 0; i < 100000; ++i)
+        if (arch::inb(PS2_STATUS) & 0x01) return;
+}
+
+/* Send a command byte to the i8042 controller command port. */
+static void ps2_send_ctrl_cmd(u8 cmd) {
+    ps2_ctrl_wait_write();
+    arch::outb(PS2_STATUS, cmd);   /* 0x64 write = command */
+}
+
+/* Send a data byte to the i8042 data port (port 1 / keyboard). */
+static void ps2_send_data(u8 data) {
+    ps2_ctrl_wait_write();
+    arch::outb(PS2_DATA, data);
+}
+
+/* Read one byte from the data port (with wait). */
+static u8 ps2_read_data() {
+    ps2_ctrl_wait_read();
+    return arch::inb(PS2_DATA);
+}
+
+/* Route a byte to the aux (mouse) device: 0xD4 to cmd, then byte to data. */
+static void ps2_send_mouse(u8 data) {
+    ps2_send_ctrl_cmd(PS2_CMD_WRITE_AUX);
+    ps2_send_data(data);
+}
+
+auto mouse_init() -> status_code {
+    /* 1. Enable the aux device (PS/2 mouse port). */
+    ps2_send_ctrl_cmd(PS2_CMD_ENABLE_AUX);
+
+    /* 2. Read current controller configuration byte. */
+    ps2_send_ctrl_cmd(PS2_CMD_GET_CONFIG);
+    u8 cfg = ps2_read_data();
+
+    /* 3. Enable aux interrupt (bit 1) and aux clock (bit 5 must be 0). */
+    cfg |=  0x02u;   /* enable aux IRQ */
+    cfg &= ~0x20u;   /* enable aux clock (0 = enabled) */
+    ps2_send_ctrl_cmd(PS2_CMD_SET_CONFIG);
+    ps2_send_data(cfg);
+
+    /* 4. Enable mouse data reporting (mouse must ACK with 0xFA). */
+    ps2_send_mouse(PS2_MOUSE_ENABLE_RPT);
+    u8 ack = ps2_read_data();
+
+    if (ack != PS2_MOUSE_ACK) {
+        log::warn("input: PS/2 mouse init: unexpected ACK 0x%02x (expected 0xFA)",
+                  static_cast<unsigned>(ack));
+        /* Not a fatal error — mouse packets may still arrive. */
+    }
+
+    s_mouse_phase = 0;
+    s_mouse_ready = true;
+    log::debug("Input: PS/2 mouse ready");
+    return status_code::success;
+}
+
+/*
+ * poll_mouse: drain any remaining aux bytes from port 0x60 (in case
+ * poll_key hasn't been called recently), then pop one packet from the
+ * internal queue assembled by ps2_pump_mouse_byte().
+ */
+auto poll_mouse(vk_mouse_event_t& ev) -> bool {
+    if (!s_mouse_ready) return false;
+
+    /* Drain aux bytes that poll_key may not have consumed yet. */
+    while (true) {
+        u8 status = arch::inb(PS2_STATUS);
+        if ((status & 0x21u) != 0x21u) break;   /* no aux byte available */
+        ps2_pump_mouse_byte(arch::inb(PS2_DATA));
+    }
+
+    return mouse_q_pop(ev);
+}
+
+/* ============================================================
  * Public API
  * ============================================================ */
 
@@ -219,7 +405,10 @@ auto init() -> status_code {
     s_caps  = false;
     s_ext   = false;
 
-    log::debug("Input subsystem ready (PS/2 + COM1)");
+    /* Initialise the PS/2 mouse port */
+    mouse_init();
+
+    log::debug("Input subsystem ready (PS/2 keyboard + mouse + COM1)");
     return status_code::success;
 }
 

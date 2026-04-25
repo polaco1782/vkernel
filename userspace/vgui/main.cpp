@@ -408,9 +408,9 @@ int main(int /*argc*/, char** /*argv*/)
     log_addf("Framebuffer: %ux%u @ %s",
         fb.width, fb.height,
         fb.format == VK_PIXEL_FORMAT_BGRX_8BPP ? "BGRX" : "RGBX");
-    log_add("Press Alt to open the menu bar.");
-    log_add("Tab / Arrows to navigate.  Enter / Space to activate.");
-    log_add("Ctrl+Q to quit.");
+    log_add("Move the mouse to control the cursor.");
+    log_add("Alt to open the menu bar.  Tab/Arrows to navigate.");
+    log_add("Enter/Space to activate.  Ctrl+Q to quit.");
 
     /* ================================================================
      * Main loop
@@ -430,6 +430,14 @@ int main(int /*argc*/, char** /*argv*/)
                 {
                     g_running = false;
                 }
+            }
+        }
+
+        /* --- 1b. Drain mouse events --- */
+        {
+            vk_mouse_event_t mev;
+            while (vk_get_api()->vk_poll_mouse(&mev)) {
+                ImGui_ImplVK_ProcessMouse(&mev);
             }
         }
 

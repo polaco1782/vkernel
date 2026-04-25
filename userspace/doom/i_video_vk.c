@@ -153,9 +153,10 @@ void I_StartFrame(void)
          */
         int dk = 0;
         switch (kev.scancode) {
-        /* Letters */
-        case 0x1E: dk = 'a'; break; case 0x30: dk = 'b'; break;
-        case 0x2E: dk = 'c'; break; case 0x20: dk = 'd'; break;
+        /* Letters — WASD mapped to movement; others kept as ASCII */
+        case 0x1E: dk = KEY_RALT|KEY_LEFTARROW;  break; /* A -> turn left  */
+        case 0x30: dk = 'b'; break;
+        case 0x2E: dk = 'c'; break; case 0x20: dk = KEY_RALT|KEY_RIGHTARROW; break; /* D -> turn right */
         case 0x12: dk = 'e'; break; case 0x21: dk = 'f'; break;
         case 0x22: dk = 'g'; break; case 0x23: dk = 'h'; break;
         case 0x17: dk = 'i'; break; case 0x24: dk = 'j'; break;
@@ -163,9 +164,11 @@ void I_StartFrame(void)
         case 0x32: dk = 'm'; break; case 0x31: dk = 'n'; break;
         case 0x18: dk = 'o'; break; case 0x19: dk = 'p'; break;
         case 0x10: dk = 'q'; break; case 0x13: dk = 'r'; break;
-        case 0x1F: dk = 's'; break; case 0x14: dk = 't'; break;
+        case 0x1F: dk = KEY_DOWNARROW;  break; /* S -> move back  */
+        case 0x14: dk = 't'; break;
         case 0x16: dk = 'u'; break; case 0x2F: dk = 'v'; break;
-        case 0x11: dk = 'w'; break; case 0x2D: dk = 'x'; break;
+        case 0x11: dk = KEY_UPARROW;    break; /* W -> move fwd   */
+        case 0x2D: dk = 'x'; break;
         case 0x15: dk = 'y'; break; case 0x2C: dk = 'z'; break;
         /* Digits */
         case 0x02: dk = '1'; break; case 0x03: dk = '2'; break;
@@ -236,6 +239,27 @@ void I_StartFrame(void)
         ev.data2 = (kev.ascii >= 0x20 && kev.ascii < 0x7F) ? kev.ascii : 0;
         ev.data3 = 0;
         D_PostEvent(&ev);
+    }
+
+    /* --- Mouse events --- */
+    if (usemouse) {
+        vk_mouse_event_t mev;
+        int total_dx = 0;
+        int total_dy = 0;
+        int buttons  = 0;
+        while (VK_CALL(poll_mouse, &mev)) {
+            total_dx += mev.dx;
+            total_dy += mev.dy;
+            buttons   = (int)mev.buttons;   /* last button state wins */
+        }
+        if (total_dx != 0 || total_dy != 0 || buttons != 0) {
+            event_t mev_ev;
+            mev_ev.type  = ev_mouse;
+            mev_ev.data1 = buttons & 0x07;   /* LB=fire, RB=strafe */
+            mev_ev.data2 = total_dx * 4;      /* scale for Doom sensitivity */
+            mev_ev.data3 = 0;                 /* no mouselook in classic Doom */
+            D_PostEvent(&mev_ev);
+        }
     }
 }
 

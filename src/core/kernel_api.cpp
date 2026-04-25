@@ -158,6 +158,20 @@ static int stub_drv_unload(const char* name) {
     return driver::unload(name);
 }
 
+/* ---- mouse ---- */
+
+static auto should_use_framebuffer() -> bool;  /* defined below */
+
+static int stub_poll_mouse(vk_mouse_event_t* out) {
+    if (out == null || !should_use_framebuffer()) return 0;
+    vk_mouse_event_t ev{};
+    if (input::poll_mouse(ev)) {
+        *out = ev;
+        return 1;
+    }
+    return 0;
+}
+
 static vk_u32 stub_ticks_per_sec() {
     return 100;  /* SCHED_HZ = 100 */
 }
@@ -569,6 +583,8 @@ void init() {
     /* driver management */
     s_api.vk_drv_load = stub_drv_load;
     s_api.vk_drv_unload = stub_drv_unload;
+    /* mouse */
+    s_api.vk_poll_mouse = stub_poll_mouse;
 
     s_api_ready = true;
 }
