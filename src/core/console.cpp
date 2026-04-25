@@ -275,6 +275,26 @@ void console::switch_to_serial() {
     g_use_serial = true;
 }
 
+void console::putc_serial(char c) {
+    if (c == '\n') {
+        serial_putc_raw('\r');
+    }
+    serial_putc_raw(c);
+}
+
+void console::puts_serial(const char* str) {
+    if (str == null) {
+        return;
+    }
+    while (*str != '\0') {
+        putc_serial(*str++);
+    }
+}
+
+void console::clear_serial() {
+    puts_serial("\x1b[2J\x1b[H");
+}
+
 void console::init_framebuffer(const uefi::framebuffer_info& fb) {
     if (!fb.valid || fb.base == 0) return;
     g_fb.base   = reinterpret_cast<u32*>(fb.base);
@@ -311,6 +331,36 @@ auto console::framebuffer() -> uefi::framebuffer_info {
     fb.format = g_fb.fmt;
     fb.valid  = g_fb.base != null && g_fb.width != 0 && g_fb.height != 0;
     return fb;
+}
+
+void console::putc_framebuffer(char c) {
+    if (!g_use_fb || g_fb.base == null) {
+        return;
+    }
+    fb_putc(c);
+}
+
+void console::puts_framebuffer(const char* str) {
+    if (str == null || !g_use_fb || g_fb.base == null) {
+        return;
+    }
+    while (*str != '\0') {
+        putc_framebuffer(*str++);
+    }
+}
+
+void console::clear_framebuffer() {
+    if (!g_use_fb || g_fb.base == null) {
+        return;
+    }
+    for (u32 y = 0; y < g_fb.height; ++y) {
+        u32* line = g_fb.base + y * g_fb.stride;
+        for (u32 x = 0; x < g_fb.width; ++x) {
+            line[x] = g_fb.bg;
+        }
+    }
+    g_fb.col = 0;
+    g_fb.row = 0;
 }
 
 /* Initialize the UEFI ConOut subsystem (pre-EBS phase) */
@@ -433,10 +483,16 @@ void console::set_color(console_color foreground, console_color background) {
         g_fb.bg = rgb_to_pixel(br, bg, bb);
         return;
     }
-    if (g_use_serial) return;
-    if (uefi::g_system_table == null) return;
+
+    // serial does not supports framebuffer-like color attributes, so we skip it
+    if (g_use_serial)
+        return;
+    if (uefi::g_system_table == null)
+        return;
     auto con_out = uefi::g_system_table->con_out;
-    if (con_out == null) return;
+    if (con_out == null)
+        return;
+
     usize attribute = static_cast<usize>(background) << 4 | static_cast<usize>(foreground);
     con_out->set_attribute(con_out, attribute);
 }
@@ -697,8 +753,8 @@ static auto level_color(log_level level) -> console_color {
         case log_level::crash:   return console_color::white;
         case log_level::error:   return console_color::light_red;
         case log_level::warn:    return console_color::yellow;
-        case log_level::info:    return console_color::white;
-        case log_level::debug:   return console_color::light_cyan;
+        case log_level::info:    return console_color::light_green;
+        case log_level::debug:   return console_color::blue;
         case log_level::verbose: return console_color::gray;
         case log_level::printk:
         default:
@@ -713,11 +769,15 @@ static void vlog(log_level level, bool append_newline, const char* format, vk_va
 
     format_state state{};
 
+    const char* prefix = level_prefix(level);
     if (level == log_level::crash) {
+        /* Keep existing behaviour: entire crash message highlighted */
         console::set_color(console_color::white, console_color::red);
-    } else if (level != log_level::printk) {
+    } else if (prefix != null) {
+        /* Print only the coloured prefix, then reset to white for the message */
         console::set_color(level_color(level), console_color::black);
-        format_puts(state, level_prefix(level));
+        format_puts(state, prefix);
+        console::set_color(console_color::white, console_color::black);
     }
 
     vformat_to_console(state, format, args);

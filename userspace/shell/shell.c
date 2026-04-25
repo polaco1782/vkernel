@@ -11,51 +11,97 @@
 #include "../include/vk.h"
 
 #if defined(_MSC_VER)
-// Disable "unreachable code" warnings since the shell runs an infinite loop.
-#pragma warning(disable: 4702)
+#pragma warning(disable: 4702) /* unreachable code (infinite shell loop) */
 #endif
 
-static inline vk_usize console_getline(char* buf, vk_usize max) {
+/* Freestanding: define what we need ourselves. */
+#define VK_NULL ((void*)0)
+
+/* -------------------------------------------------------------------------
+ * Freestanding string helpers
+ * ---------------------------------------------------------------------- */
+
+static vk_usize vk_strlen(const char* s)
+{
+    vk_usize n = 0;
+    while (s[n]) ++n;
+    return n;
+}
+
+static int vk_strcmp(const char* a, const char* b)
+{
+    while (*a && *a == *b) { ++a; ++b; }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+/* Returns 1 if `s` starts with `prefix`, 0 otherwise. */
+static int vk_has_prefix(const char* s, const char* prefix)
+{
+    while (*prefix) {
+        if (*s++ != *prefix++)
+            return 0;
+    }
+    return 1;
+}
+
+/* Skip leading whitespace. */
+static const char* vk_skip_spaces(const char* s)
+{
+    while (*s == ' ' || *s == '\t') ++s;
+    return s;
+}
+
+static int shell_has_framebuffer(void)
+{
+    vk_framebuffer_info_t fb;
+    VK_CALL(framebuffer_info, &fb);
+    return fb.valid != 0;
+}
+
+/* -------------------------------------------------------------------------
+ * Console I/O
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Read a line from the console into `buf` (max `max` bytes including NUL).
+ * Handles backspace/DEL and filters non-printable characters.
+ * Returns the number of characters stored (not counting NUL).
+ */
+static vk_usize console_getline(char* buf, vk_usize max)
+{
     vk_usize pos = 0;
+
     while (pos < max - 1) {
         char c = VK_CALL(getc);
+
         if (c == '\r' || c == '\n') {
             VK_CALL(putc, '\n');
             break;
         }
+
         if ((c == 0x7F || c == '\b') && pos > 0) {
             --pos;
             VK_CALL(puts, "\b \b");
             continue;
         }
+
         if (c >= ' ' && c < 0x7F) {
             buf[pos++] = c;
             VK_CALL(putc, c);
         }
     }
+
     buf[pos] = '\0';
     return pos;
 }
 
-static const char* skip_spaces(const char* text) {
-    while (*text == ' ' || *text == '\t') {
-        ++text;
-    }
-    return text;
-}
+/* -------------------------------------------------------------------------
+ * Command implementations
+ * ---------------------------------------------------------------------- */
 
-static int has_prefix(const char* text, const char* prefix) {
-    while (*prefix != '\0') {
-        if (*text != *prefix) {
-            return 0;
-        }
-        ++text;
-        ++prefix;
-    }
-    return 1;
-}
-
-static void print_help(void) {
+static void cmd_help(const char* arg)
+{
+    (void)arg;
     VK_CALL(puts, "Available commands:\n");
     VK_CALL(puts, "  help         - Show this message\n");
     VK_CALL(puts, "  version      - Show API version\n");
@@ -75,50 +121,40 @@ static void print_help(void) {
     VK_CALL(puts, "  exit         - Exit the shell\n");
 }
 
-static void print_version(const vk_api_t* api) {
+static void cmd_version(const char* arg)
+{
+    (void)arg;
     VK_CALL(puts, "vkernel userspace shell\n");
-    VK_CALL(puts, "  Kernel API version : ");
-    VK_CALL(put_dec, (vk_u64)api->api_version);
-    VK_CALL(puts, "\n");
-    VK_CALL(puts, "  Loader             : vkernel userspace\n");
+    VK_CALL(puts, "  Loader : vkernel userspace\n");
 }
 
-static void print_known_files(void) {
-    static const char* k_files[] = {
-        "shell.vbin",
-        "hello.vbin",
-        "doom.vbin",
-        "framebuffer.vbin",
-        "framebuffer_text.vbin",
-        "raytracer.vbin",
-        "ramfs_reader.vbin",
-        "motd.txt",
-        "hello.txt",
-        "shell.txt",
-    };
-
-    VK_CALL(puts, "Staged files:\n");
-    for (unsigned int i = 0; i < sizeof(k_files) / sizeof(k_files[0]); ++i) {
-        const char* name = k_files[i];
-        if (VK_CALL(file_exists, name)) {
-            VK_CALL(puts, "  ");
-            VK_CALL(puts, name);
-            VK_CALL(puts, " (");
-            VK_CALL(put_dec, (vk_u64)VK_CALL(file_size, name));
-            VK_CALL(puts, " bytes)\n");
-        }
-    }
+static void cmd_mem(const char* arg)
+{
+    (void)arg;
+    VK_CALL(dump_memory);
 }
 
-static void cat_file(const char* arg) {
-    const char* path = skip_spaces(arg);
+static void cmd_tasks(const char* arg)
+{
+    (void)arg;
+    VK_CALL(dump_tasks);
+}
+
+static void cmd_ls(const char* arg)
+{
+    (void)arg;
+    VK_CALL(puts, "TODO - Implement file listing\n");
+}
+
+static void cmd_cat(const char* arg)
+{
+    const char* path = vk_skip_spaces(arg);
     if (*path == '\0') {
         VK_CALL(puts, "Usage: cat <filename>\n");
         return;
     }
 
     vk_file_handle_t fh = VK_CALL(file_open, path, "r");
-    
     if (fh == (vk_file_handle_t)0) {
         VK_CALL(puts, "cat: file not found: ");
         VK_CALL(puts, path);
@@ -126,19 +162,66 @@ static void cat_file(const char* arg) {
         return;
     }
 
-    unsigned char buffer[128];
-    vk_usize read_count;
-    while ((read_count = VK_CALL(file_read_handle, fh, buffer, sizeof(buffer))) > 0) {
-        for (vk_usize i = 0; i < read_count; ++i) {
-            VK_CALL(putc, (char)buffer[i]);
-        }
+    unsigned char buf[128];
+    vk_usize n;
+    while ((n = VK_CALL(file_read_handle, fh, buf, sizeof(buf))) > 0) {
+        for (vk_usize i = 0; i < n; ++i)
+            VK_CALL(putc, (char)buf[i]);
     }
+
     VK_CALL(file_close, fh);
     VK_CALL(puts, "\n");
 }
 
-static void run_program(const char* arg) {
-    const char* path = skip_spaces(arg);
+static void cmd_clear(const char* arg)
+{
+    (void)arg;
+    VK_CALL(clear);
+}
+
+static void cmd_uptime(const char* arg)
+{
+    (void)arg;
+    vk_u64 ticks = VK_CALL(tick_count);
+    VK_CALL(puts, "Uptime: ~");
+    VK_CALL(put_dec, ticks / 100ULL);
+    VK_CALL(puts, " seconds (");
+    VK_CALL(put_dec, ticks);
+    VK_CALL(puts, " ticks)\n");
+}
+
+static void cmd_reboot(const char* arg)
+{
+    (void)arg;
+    VK_CALL(puts, "Rebooting...\n");
+    VK_CALL(reboot);
+}
+
+static void cmd_idt(const char* arg)
+{
+    (void)arg;
+    VK_CALL(dump_idt);
+}
+
+static void cmd_alloc(const char* arg)
+{
+    (void)arg;
+    VK_CALL(puts, "Allocating 4096 bytes... ");
+    void* ptr = VK_CALL(malloc, 4096);
+    if (!ptr) {
+        VK_CALL(puts, "FAILED\n");
+        return;
+    }
+    VK_CALL(puts, "OK at ");
+    VK_CALL(put_hex, (vk_u64)(unsigned long)ptr);
+    VK_CALL(puts, "\n");
+    VK_CALL(free, ptr);
+    VK_CALL(puts, "Freed.\n");
+}
+
+static void cmd_run(const char* arg)
+{
+    const char* path = vk_skip_spaces(arg);
     if (*path == '\0') {
         VK_CALL(puts, "Usage: run <filename>\n");
         return;
@@ -157,186 +240,215 @@ static void run_program(const char* arg) {
     }
 }
 
-static void print_memory_info(void) {
-    VK_CALL(dump_memory);
-}
-
-static void do_drvload(const char* arg) {
-    const char* name = skip_spaces(arg);
+static void cmd_drvload(const char* arg)
+{
+    const char* name = vk_skip_spaces(arg);
     if (*name == '\0') {
         VK_CALL(puts, "Usage: drvload <driver_name>\n");
         VK_CALL(puts, "Example: drvload sb16.vko\n");
         return;
     }
-    int result = VK_CALL(drv_load, name);
-    if (result == 0) {
+    if (VK_CALL(drv_load, name) == 0)
         VK_CALL(puts, "Driver loaded successfully.\n");
-    } else {
+    else {
         VK_CALL(puts, "Failed to load driver: ");
         VK_CALL(puts, name);
         VK_CALL(puts, "\n");
     }
 }
 
-static void do_drvunload(const char* arg) {
-    const char* name = skip_spaces(arg);
+static void cmd_drvunload(const char* arg)
+{
+    const char* name = vk_skip_spaces(arg);
     if (*name == '\0') {
         VK_CALL(puts, "Usage: drvunload <driver_name>\n");
         return;
     }
-    int result = VK_CALL(drv_unload, name);
-    if (result == 0) {
+    if (VK_CALL(drv_unload, name) == 0)
         VK_CALL(puts, "Driver unloaded.\n");
-    } else {
+    else {
         VK_CALL(puts, "Failed to unload driver: ");
         VK_CALL(puts, name);
         VK_CALL(puts, "\n");
     }
 }
 
-static void print_tasks(void) {
-    VK_CALL(dump_tasks);
-}
-
-static void print_uptime(void) {
-    vk_u64 ticks = VK_CALL(tick_count);
-    VK_CALL(puts, "Uptime: ~");
-    VK_CALL(put_dec, (vk_u64)(ticks / 100ULL));
-    VK_CALL(puts, " seconds (");
-    VK_CALL(put_dec, (vk_u64)ticks);
-    VK_CALL(puts, " ticks)\n");
-}
-
-static void do_reboot(void) {
-    VK_CALL(puts, "Rebooting...\n");
-    VK_CALL(reboot);
-}
-
-static void do_idt_dump(void) {
-    VK_CALL(dump_idt);
-}
-
-static void do_alloc_test(void) {
-    VK_CALL(puts, "Allocating 4096 bytes... ");
-    void* ptr = VK_CALL(malloc, 4096);
-    if (ptr == 0) {
-        VK_CALL(puts, "FAILED\n");
-        return;
-    }
-    VK_CALL(puts, "OK at ");
-    VK_CALL(put_hex, (vk_u64)(unsigned long)ptr);
-    VK_CALL(puts, "\n");
-    VK_CALL(free, ptr);
-    VK_CALL(puts, "Freed.\n");
-}
-
-static void do_panic_test(void) {
+static void cmd_panic(const char* arg)
+{
+    (void)arg;
     VK_CALL(puts, "Triggering userspace fault...\n");
     ((void(*)())0)();
 }
 
-// ugly but it works ¯\_(ツ)_/¯
-#define CMP(x) VK_CALL(memcmp, cmdline, x, sizeof(x) - 1) == 0
-int parse_cmdline(const char *cmdline) {
-    if (CMP("help") || CMP("?")) {
-        print_help();
-    } else if (CMP("mem")) {
-        print_memory_info();
-    } else if (CMP("tasks")) {
-        print_tasks();
-    } else if (CMP("ls")) {
-        print_known_files();
-    } else if (has_prefix(cmdline, "cat ")) {
-        cat_file(cmdline + 4);
-    } else if (CMP("clear")) {
-        VK_CALL(clear);
-    } else if (CMP("uptime")) {
-        print_uptime();
-    } else if (CMP("reboot")) {
-        do_reboot();
-    } else if (CMP("idt")) {
-        do_idt_dump();
-    } else if (CMP("alloc")) {
-        do_alloc_test();
-    } else if (has_prefix(cmdline, "run ")) {
-        run_program(cmdline + 4);
-    } else if (has_prefix(cmdline, "drvload ")) {
-        do_drvload(cmdline + 8);
-    } else if (has_prefix(cmdline, "drvunload ")) {
-        do_drvunload(cmdline + 10);
-    } else if (CMP("panic")) {
-        do_panic_test();
-    } else if (CMP("exit")) {
-        VK_CALL(exit, 0);
-    } else {
-        VK_CALL(puts, "Unknown command: ");
-        VK_CALL(puts, cmdline);
-        VK_CALL(puts, "\n");
-        VK_CALL(puts, "Type 'help' for available commands.\n");
-    }
+static void cmd_exit(const char* arg)
+{
+    (void)arg;
+    VK_CALL(exit, 0);
 }
 
-static void read_startup_script(void) {
+/* -------------------------------------------------------------------------
+ * Command dispatch
+ *
+ * Two separate, homogeneous tables — one for exact matches, one for prefix
+ * commands. Keeping the tables homogeneous (every field always valid)
+ * avoids any compiler trouble with partial zero-initialization of mixed
+ * pointer/non-pointer struct fields in freestanding mode.
+ * ---------------------------------------------------------------------- */
+
+typedef void (*cmd_fn)(const char*);
+
+typedef struct {
+    const char* keyword;
+    cmd_fn      fn;
+} exact_cmd_t;
+
+typedef struct {
+    const char* prefix; /* includes trailing space, e.g. "cat " */
+    vk_usize    skip;   /* bytes past the prefix to pass as arg  */
+    cmd_fn      fn;
+} prefix_cmd_t;
+
+static const exact_cmd_t EXACT_CMDS[] = {
+    { "help",    cmd_help     },
+    { "?",       cmd_help     },
+    { "version", cmd_version  },
+    { "mem",     cmd_mem      },
+    { "tasks",   cmd_tasks    },
+    { "ls",      cmd_ls       },
+    { "clear",   cmd_clear    },
+    { "uptime",  cmd_uptime   },
+    { "reboot",  cmd_reboot   },
+    { "idt",     cmd_idt      },
+    { "alloc",   cmd_alloc    },
+    { "panic",   cmd_panic    },
+    { "exit",    cmd_exit     },
+};
+
+static const prefix_cmd_t PREFIX_CMDS[] = {
+    { "cat ",       4,  cmd_cat       },
+    { "run ",       4,  cmd_run       },
+    { "drvload ",   8,  cmd_drvload   },
+    { "drvunload ", 10, cmd_drvunload },
+};
+
+#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
+static int parse_cmdline(const char* cmdline)
+{
+    vk_usize i;
+
+    for (i = 0; i < ARRAY_LEN(PREFIX_CMDS); ++i) {
+        if (vk_has_prefix(cmdline, PREFIX_CMDS[i].prefix)) {
+            PREFIX_CMDS[i].fn(cmdline + PREFIX_CMDS[i].skip);
+            return 0;
+        }
+    }
+
+    for (i = 0; i < ARRAY_LEN(EXACT_CMDS); ++i) {
+        if (vk_strcmp(cmdline, EXACT_CMDS[i].keyword) == 0) {
+            EXACT_CMDS[i].fn("");
+            return 0;
+        }
+    }
+
+    VK_CALL(puts, "Unknown command: ");
+    VK_CALL(puts, cmdline);
+    VK_CALL(puts, "\n");
+    VK_CALL(puts, "Type 'help' for available commands.\n");
+    return -1;
+}
+
+/* -------------------------------------------------------------------------
+ * Startup script
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Read and execute "shell.txt" line by line using a byte accumulator.
+ * Handles files that don't end with a trailing newline.
+ */
+static void read_startup_script(void)
+{
     vk_file_handle_t fh = VK_CALL(file_open, "shell.txt", "r");
     if (fh == (vk_file_handle_t)0) {
         VK_CALL(puts, "No startup script found (shell.txt), skipping...\n");
         return;
     }
 
-    char line[128];
-    char buffer[256];
-    vk_usize read_count;
-    while ((read_count = VK_CALL(file_read_handle, fh, buffer, sizeof(buffer))) > 0) {
-        for (vk_usize i = 0; i < read_count; ++i) {
-            if (buffer[i] == '\n') {
-                buffer[i] = '\0';
-                const char* command = skip_spaces(buffer);
-                if (*command != '\0') {
-                    VK_CALL(puts, "vk> ");
-                    VK_CALL(puts, command);
-                    VK_CALL(puts, "\n");
-                    parse_cmdline(command);
-                }
-                // Move remaining data to the start of the buffer
-                vk_usize remaining = read_count - i - 1;
-                if (remaining > 0) {
-                    VK_CALL(memmove, buffer, buffer + i + 1, remaining);
-                }
-                read_count = remaining;
-                i = -1; // Reset to start of buffer for next iteration
+    char     chunk[256];
+    char     line[256];
+    vk_usize line_pos = 0;
+    vk_usize n;
+    vk_usize i;
+
+    while ((n = VK_CALL(file_read_handle, fh, chunk, sizeof(chunk))) > 0) {
+        for (i = 0; i < n; ++i) {
+            char c = chunk[i];
+
+            if (c == '\n') {
+                line[line_pos] = '\0';
+                line_pos = 0;
+
+                const char* cmd = vk_skip_spaces(line);
+                if (*cmd == '#' || *cmd == '\0')
+                    continue;
+
+                VK_CALL(puts, "vk> ");
+                VK_CALL(puts, cmd);
+                VK_CALL(puts, "\n");
+                parse_cmdline(cmd);
+                continue;
             }
+
+            /* Silently truncate lines that exceed the buffer. */
+            if (line_pos < sizeof(line) - 1)
+                line[line_pos++] = c;
+        }
+    }
+
+    /* Handle a final line with no trailing newline. */
+    if (line_pos > 0) {
+        line[line_pos] = '\0';
+        const char* cmd = vk_skip_spaces(line);
+        if (*cmd != '#' && *cmd != '\0') {
+            VK_CALL(puts, "vk> ");
+            VK_CALL(puts, cmd);
+            VK_CALL(puts, "\n");
+            parse_cmdline(cmd);
         }
     }
 
     VK_CALL(file_close, fh);
 }
 
-int _start(const vk_api_t* api) {
+/* -------------------------------------------------------------------------
+ * Entry point
+ * ---------------------------------------------------------------------- */
+
+int _start(const vk_api_t* api)
+{
     vk_init(api);
 
     VK_CALL(puts, "\n\n");
     VK_CALL(puts, "+----------------------------------+\n");
-    VK_CALL(puts, "|   vkernel userspace shell        |\n");
+    VK_CALL(puts, "|     vkernel userspace shell      |\n");
     VK_CALL(puts, "+----------------------------------+\n");
     VK_CALL(puts, "Type 'help' for available commands.\n\n");
 
+    if (shell_has_framebuffer())
+        read_startup_script();
+
     char line[256];
-
-    read_startup_script();
-
     for (;;) {
         VK_CALL(puts, "vk> ");
         vk_usize len = console_getline(line, sizeof(line));
-        if (len == 0) {
+        if (len == 0)
             continue;
-        }
 
-        const char* command = skip_spaces(line);
-        if (*command == '\0') {
+        const char* cmd = vk_skip_spaces(line);
+        if (*cmd == '\0')
             continue;
-        }
 
-        int ret = parse_cmdline(command);
+        parse_cmdline(cmd);
     }
 
     return 0;

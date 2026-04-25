@@ -1,4 +1,4 @@
 drvload ac97
-run ramfs_reader.vbin
-run rotozoom.vbin
-run modplay.vbin
+#run ramfs_reader.vbin
+#run rotozoom.vbin
+#run modplay.vbin

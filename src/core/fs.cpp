@@ -108,28 +108,7 @@ void ramfs::dump() {
     }
 }
 
-/* ============================================================
- * UEFI ESP Loader — Simple File System Protocol
- *
- * The UEFI Simple File System Protocol (GUID 0964e5b22...)
- * provides OpenVolume() which returns an EFI_FILE_PROTOCOL.
- * We use Open/Read/Close to load files from the ESP into memory
- * allocated via UEFI AllocatePool (still available before EBS).
- * ============================================================ */
-
 namespace {
-
-/* EFI_SIMPLE_FILE_SYSTEM_PROTOCOL GUID */
-constexpr uefi::guid SFS_GUID = {
-    0x0964e5b22, 0x6459, 0x11d2,
-    { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b }
-};
-
-/* EFI_FILE_INFO GUID */
-constexpr uefi::guid FILE_INFO_GUID = {
-    0x09576e92, 0x6d3f, 0x11d2,
-    { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b }
-};
 
 /* EFI_FILE_PROTOCOL — subset of function pointers we need */
 struct efi_file_protocol;
@@ -175,14 +154,43 @@ struct efi_sfs_protocol {
 };
 
 /* File info structure (variable-length, but we only need size) */
+struct efi_time {
+    u16 Year;
+    u8  Month;
+    u8  Day;
+    u8  Hour;
+    u8  Minute;
+    u8  Second;
+    u8  Pad1;
+    u32 Nanosecond;
+    i16 TimeZone;
+    u8  Daylight;
+    u8  Reserved;
+};
+
 struct efi_file_info {
     u64 size;         /* Size of this structure + filename */
     u64 file_size;
     u64 physical_size;
-    /* ... timestamps, attributes, filename follow */
+    efi_time create_time;
+    efi_time last_access_time;
+    efi_time modification_time;
+    u64    attribute;
+    char16_t FileName[1]; /* variable-length UCS-2 filename */
 };
 
+// Open modes
 constexpr u64 EFI_FILE_MODE_READ = 0x0000000000000001ULL;
+constexpr u64 EFI_FILE_MODE_WRITE = 0x0000000000000002ULL;
+constexpr u64 EFI_FILE_MODE_CREATE = 0x8000000000000000ULL;
+
+// File attributes
+constexpr u64 EFI_FILE_READ_ONLY = 0x1;
+constexpr u64 EFI_FILE_HIDDEN = 0x2;
+constexpr u64 EFI_FILE_SYSTEM = 0x4;
+constexpr u64 EFI_FILE_RESERVED = 0x8;
+constexpr u64 EFI_FILE_DIRECTORY = 0x10;
+constexpr u64 EFI_FILE_ARCHIVE = 0x20;
 
 /* Convert ASCII path to UCS-2 in a static buffer */
 static char16_t s_ucs2_buf[256];
@@ -208,7 +216,7 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
 
     /* Locate the Simple File System Protocol */
     void* sfs_iface = null;
-    auto st = bs->locate_protocol(&SFS_GUID, null, &sfs_iface);
+    auto st = bs->locate_protocol(&uefi::SFS_GUID, null, &sfs_iface);
     if (st != uefi::status::success || sfs_iface == null) {
         log::warn("SFS protocol not found");
         return { null, 0 };
@@ -236,7 +244,7 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     /* Query file size via GetInfo */
     u8 info_buf[256];
     usize info_size = sizeof(info_buf);
-    st = file->get_info(file, &FILE_INFO_GUID, &info_size, info_buf);
+    st = file->get_info(file, &uefi::FILE_INFO_GUID, &info_size, info_buf);
     if (st != uefi::status::success) {
         log::warn("GetInfo failed for %s", path);
         file->close(file);
@@ -279,6 +287,78 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     log::debug("ESP read OK: %s -> %p", path, buf);
 
     return { static_cast<u8*>(buf), file_size };
+}
+
+auto loader::scan_filesystem() -> status_code {
+    if (uefi::g_system_table == null || uefi::g_system_table->boot_services == null)
+        return status_code::not_ready;
+
+    auto* bs = uefi::g_system_table->boot_services;
+
+    /* Locate the Simple File System Protocol */
+    void* sfs_iface = null;
+    auto st = bs->locate_protocol(&uefi::SFS_GUID, null, &sfs_iface);
+    if (st != uefi::status::success || sfs_iface == null) {
+        log::error("SFS protocol not found!");
+        return status_code::error;
+    }
+
+    auto* sfs = static_cast<efi_sfs_protocol*>(sfs_iface);
+    log::debug("SFS protocol located");
+
+    /* Open the root volume */
+    efi_file_protocol* root = null;
+    st = sfs->open_volume(sfs, &root);
+    if (st != uefi::status::success || root == null) {
+        log::error("Failed to open ESP volume!");
+        return status_code::error;
+    }
+
+    log::debug("ESP volume opened");
+    /* Helper: convert UCS-2 filename to ASCII (best-effort) */
+    auto ucs2_to_ascii = [](const char16_t* src, char* dst, usize max) {
+        usize i = 0;
+        while (i + 1 < max && src[i]) {
+            char16_t c = src[i];
+            if (c >= 32 && c < 127)
+                dst[i] = static_cast<char>(c);
+            else
+                dst[i] = '?';
+            ++i;
+        }
+        dst[i] = '\0';
+    };
+
+    log::info("ESP files:");
+
+    /* Read directory entries one by one using Read() */
+    u8 info_buf[1024];
+    while (true) {
+        usize info_size = sizeof(info_buf);
+        st = root->read(root, &info_size, info_buf);
+        if (st != uefi::status::success) {
+            log::error("Failed reading ESP directory (status=%llu)", static_cast<unsigned long long>(st));
+            root->close(root);
+            return status_code::error;
+        }
+
+        /* A zero-size read indicates end-of-directory */
+        if (info_size == 0) break;
+
+        auto* fi = reinterpret_cast<efi_file_info*>(info_buf);
+        const char16_t* name16 = fi->FileName;
+        char name[256];
+        ucs2_to_ascii(name16, name, sizeof(name));
+
+        /* Skip current/parent entries if present */
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+
+        log::info("  %s", name);
+    }
+
+    root->close(root);
+
+    return status_code::success;
 }
 
 /* Load well-known files from the ESP into the ramfs */
@@ -325,6 +405,8 @@ auto loader::load_initrd() -> status_code {
     }
 
     log::info("%zu file(s) loaded from ESP", loaded);
+
+    loader::scan_filesystem();
 
     return status_code::success;
 }

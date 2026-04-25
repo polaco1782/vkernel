@@ -58,6 +58,11 @@ namespace console {
 
 auto init() -> status_code;
 
+/* Backend-specific helpers used by per-process console routing. */
+void putc_serial(char c);
+void puts_serial(const char* str);
+void clear_serial();
+
 /*
  * After ExitBootServices the UEFI ConOut protocol is gone.
  * Call switch_to_serial() to redirect all console output to the
@@ -73,6 +78,10 @@ void switch_to_serial();
 void init_framebuffer(const uefi::framebuffer_info& fb);
 void switch_to_framebuffer();
 auto framebuffer() -> uefi::framebuffer_info;
+
+void putc_framebuffer(char c);
+void puts_framebuffer(const char* str);
+void clear_framebuffer();
 
 void putc(char c);
 void puts(const char* str);

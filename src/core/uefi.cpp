@@ -9,7 +9,6 @@
 #include "types.h"
 #include "uefi.h"
 #include "console.h"
-#include "arch/x86_64/arch.h"
 
 namespace vk {
 namespace uefi {
@@ -204,77 +203,11 @@ auto do_exit_boot_services(handle image_handle, usize map_key) -> status {
  *      already have GOP installed.
  *   2. If that fails, try ConnectController(NULL, ..., recursive=true)
  *      to make OVMF bind its GOP driver, then retry.
- *   3. As a last resort try LocateProtocol (simpler but less reliable). */
-/* Probe BochsVBE display directly via PCI + VBE I/O ports.
- * This bypass is needed when OVMF doesn't include a GOP driver
- * for the QEMU standard VGA (PCI 1234:1111). */
-static inline void outl_pci(u16 port, u32 val) {
-    arch::outl(port, val);
-}
-static inline auto inl_pci(u16 port) -> u32 {
-    return arch::inl(port);
-}
-static inline void outw_vbe(u16 port, u16 val) {
-    arch::outw(port, val);
-}
-static inline auto inw_vbe(u16 port) -> u16 {
-    return arch::inw(port);
-}
+ *   3. As a last resort try LocateProtocol (simpler but less reliable).
+ *   4. If no GOP is available, probe BochsVBE directly (see bochs_vbe.cpp). */
 
-static constexpr u16 VBE_DISPI_IOPORT_INDEX = 0x01CE;
-static constexpr u16 VBE_DISPI_IOPORT_DATA  = 0x01CF;
-static constexpr u16 VBE_DISPI_INDEX_XRES   = 0x01;
-static constexpr u16 VBE_DISPI_INDEX_YRES   = 0x02;
-static constexpr u16 VBE_DISPI_INDEX_BPP    = 0x03;
-static constexpr u16 VBE_DISPI_INDEX_ENABLE  = 0x04;
-static constexpr u16 VBE_DISPI_INDEX_VIRT_WIDTH = 0x06;
-static constexpr u16 VBE_DISPI_ENABLED       = 0x01;
-static constexpr u16 VBE_DISPI_LFB_ENABLED   = 0x40;
-
-static void vbe_write(u16 index, u16 value) {
-    outw_vbe(VBE_DISPI_IOPORT_INDEX, index);
-    outw_vbe(VBE_DISPI_IOPORT_DATA, value);
-}
-[[maybe_unused]] static auto vbe_read(u16 index) -> u16 {
-    outw_vbe(VBE_DISPI_IOPORT_INDEX, index);
-    return inw_vbe(VBE_DISPI_IOPORT_DATA);
-}
-
-static auto probe_bochs_vbe() -> framebuffer_info {
-    /* Scan PCI bus 0 for device 1234:1111 (QEMU BochsVBE) */
-    for (u8 dev = 0; dev < 32; ++dev) {
-        u32 addr = 0x80000000u | (static_cast<u32>(dev) << 11);
-        outl_pci(0xCF8, addr);
-        u32 id = inl_pci(0xCFC);
-        if ((id & 0xFFFF) != 0x1234 || ((id >> 16) & 0xFFFF) != 0x1111) continue;
-
-        /* Read BAR0 — framebuffer physical address */
-        outl_pci(0xCF8, addr | 0x10);
-        u32 bar0 = inl_pci(0xCFC);
-        phys_addr fb_base = bar0 & ~0xFu; /* mask lower 4 bits */
-
-        /* Set video mode: 1024x768 x 32bpp via BochsVBE I/O ports */
-        constexpr u16 WIDTH  = 1024;
-        constexpr u16 HEIGHT = 768;
-        vbe_write(VBE_DISPI_INDEX_ENABLE, 0);  /* disable first */
-        vbe_write(VBE_DISPI_INDEX_XRES, WIDTH);
-        vbe_write(VBE_DISPI_INDEX_YRES, HEIGHT);
-        vbe_write(VBE_DISPI_INDEX_BPP, 32);
-        vbe_write(VBE_DISPI_INDEX_VIRT_WIDTH, WIDTH);
-        vbe_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
-
-        return {
-            .base   = fb_base,
-            .width  = WIDTH,
-            .height = HEIGHT,
-            .stride = WIDTH, /* BochsVBE: virtual width = stride */
-            .format = pixel_format::bgrx_8bpp, /* QEMU VGA is always BGRX */
-            .valid  = true,
-        };
-    }
-    return { .base = 0, .width = 0, .height = 0, .stride = 0,
-             .format = pixel_format::bgrx_8bpp, .valid = false };
-}
+/* Fallback: probe BochsVBE display directly (defined in bochs_vbe.cpp) */
+auto probe_bochs_vbe() -> framebuffer_info;
 
 auto query_gop() -> framebuffer_info {
     if (g_system_table == null || g_system_table->boot_services == null) {
@@ -318,6 +251,10 @@ auto query_gop() -> framebuffer_info {
         auto* mode = gop->mode;
         auto* info = mode->info;
         if (info) {
+            log::debug("GOP found: %ux%u, format %u, stride %u, fb_base %p",
+                       info->horizontal_resolution, info->vertical_resolution,
+                       info->fmt, info->pixels_per_scan_line,
+                       (void*)(phys_addr)(u64)mode->frame_buffer_base);
             return {
                 .base   = mode->frame_buffer_base,
                 .width  = info->horizontal_resolution,

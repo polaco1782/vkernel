@@ -40,6 +40,12 @@ auto getc() -> char;
  */
 auto try_getc() -> char;
 
+/* Backend-specific helpers used by per-process console routing. */
+auto getc_ps2() -> char;
+auto try_getc_ps2() -> char;
+auto getc_serial() -> char;
+auto try_getc_serial() -> char;
+
 /*
  * Non-blocking raw key event poll.
  * Returns true and fills ev if a PS/2 scancode is available.

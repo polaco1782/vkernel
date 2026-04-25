@@ -117,16 +117,6 @@ static void stub_reboot() {
     arch::reboot();
 }
 
-static int stub_poll_key(vk_key_event_t* out) {
-    if (out == null) return 0;
-    vk_key_event_t ev{};
-    if (input::poll_key(ev)) {
-        *out = ev;
-        return 1;
-    }
-    return 0;
-}
-
 static void stub_wait_task(vk_i64 task_id) {
     if (task_id < 0) return;
     sched::wait_for_task(static_cast<u64>(task_id));
@@ -172,9 +162,105 @@ static vk_u32 stub_ticks_per_sec() {
     return 100;  /* SCHED_HZ = 100 */
 }
 
-static void stub_framebuffer_info(vk_framebuffer_info_t* out) {
-    if (out == null) return;
+static auto current_console_interface() -> process::console_interface {
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx != null) {
+        return ctx->interface;
+    }
+    return process::console_interface::graphical;
+}
 
+static auto should_use_framebuffer() -> bool {
+    if (current_console_interface() != process::console_interface::graphical) {
+        return false;
+    }
+    return console::framebuffer().valid;
+}
+
+static void route_putc(char c) {
+    if (should_use_framebuffer()) {
+        console::putc_framebuffer(c);
+    } else {
+        console::putc_serial(c);
+    }
+}
+
+static void route_puts(const char* str) {
+    if (str == null) {
+        return;
+    }
+    while (*str != '\0') {
+        route_putc(*str++);
+    }
+}
+
+static void route_put_hex(vk_u64 value) {
+    static constexpr char hex_chars[] = "0123456789ABCDEF";
+    char buf[19];
+    buf[0] = '0';
+    buf[1] = 'x';
+    for (i32 i = 15; i >= 0; --i) {
+        buf[2 + (15 - i)] = hex_chars[(value >> (i * 4)) & 0xF];
+    }
+    buf[18] = '\0';
+    route_puts(buf);
+}
+
+static void route_put_dec(vk_u64 value) {
+    if (value == 0) {
+        route_putc('0');
+        return;
+    }
+
+    char buf[21];
+    i32 i = 0;
+    while (value > 0 && i < 20) {
+        buf[i++] = static_cast<char>('0' + (value % 10));
+        value /= 10;
+    }
+    while (i > 0) {
+        route_putc(buf[--i]);
+    }
+}
+
+static void route_clear() {
+    if (should_use_framebuffer()) {
+        console::clear_framebuffer();
+    } else {
+        console::clear_serial();
+    }
+}
+
+static char route_getc() {
+    if (should_use_framebuffer()) {
+        return input::getc_ps2();
+    }
+    return input::getc_serial();
+}
+
+static char route_try_getc() {
+    if (should_use_framebuffer()) {
+        return input::try_getc_ps2();
+    }
+    return input::try_getc_serial();
+}
+
+static int route_poll_key(vk_key_event_t* out) {
+    if (out == null || !should_use_framebuffer()) return 0;
+    vk_key_event_t ev{};
+    if (input::poll_key(ev)) {
+        *out = ev;
+        return 1;
+    }
+    return 0;
+}
+
+static void route_framebuffer_info(vk_framebuffer_info_t* out) {
+    if (out == null) return;
+    if (!should_use_framebuffer()) {
+        *out = {};
+        return;
+    }
     auto fb = console::framebuffer();
     out->base   = static_cast<vk_u64>(fb.base);
     out->width  = static_cast<vk_u32>(fb.width);
@@ -430,14 +516,14 @@ void init() {
     s_api = {};
     s_api.api_version = VK_API_VERSION;
     /* console output */
-    s_api.vk_puts = console::puts;
-    s_api.vk_putc = console::putc;
-    s_api.vk_put_hex = console::put_hex;
-    s_api.vk_put_dec = console::put_dec;
-    s_api.vk_clear = console::clear;
+    s_api.vk_puts = route_puts;
+    s_api.vk_putc = route_putc;
+    s_api.vk_put_hex = route_put_hex;
+    s_api.vk_put_dec = route_put_dec;
+    s_api.vk_clear = route_clear;
     /* console input */
-    s_api.vk_getc = input::getc;
-    s_api.vk_try_getc = input::try_getc;
+    s_api.vk_getc = route_getc;
+    s_api.vk_try_getc = route_try_getc;
     /* memory */
     s_api.vk_malloc = stub_malloc;
     s_api.vk_free = stub_free;
@@ -462,7 +548,7 @@ void init() {
     s_api.vk_dump_idt = stub_dump_idt;
     s_api.vk_reboot = stub_reboot;
     /* framebuffer */
-    s_api.vk_framebuffer_info = stub_framebuffer_info;
+    s_api.vk_framebuffer_info = route_framebuffer_info;
     /* file streams */
     s_api.vk_file_open = stub_file_open;
     s_api.vk_file_close = stub_file_close;
@@ -476,7 +562,7 @@ void init() {
     s_api.vk_file_remove = stub_file_remove;
     s_api.vk_file_rename = stub_file_rename;
     /* raw keyboard */
-    s_api.vk_poll_key = stub_poll_key;
+    s_api.vk_poll_key = route_poll_key;
     s_api.vk_ticks_per_sec = stub_ticks_per_sec;
     /* task sync */
     s_api.vk_wait_task = stub_wait_task;

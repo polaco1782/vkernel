@@ -146,6 +146,18 @@ asm_get_end:
     lea  _end(%rip), %rax
     ret
 
+/* u64 asm_get_got_start() — runtime address of _got_start */
+.global asm_get_got_start
+asm_get_got_start:
+    lea  _got_start(%rip), %rax
+    ret
+
+/* u64 asm_get_got_end() — runtime address of _got_end */
+.global asm_get_got_end
+asm_get_got_end:
+    lea  _got_end(%rip), %rax
+    ret
+
 /* ============================================================
  * Port I/O
  * First argument (port, u16) arrives in %rdi/%di (SysV AMD64).

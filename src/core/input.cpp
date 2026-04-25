@@ -241,5 +241,29 @@ auto poll_key(vk_key_event_t& ev) -> bool {
     return ps2_try_read_raw(ev);
 }
 
+auto try_getc_ps2() -> char {
+    return ps2_try_read();
+}
+
+auto getc_ps2() -> char {
+    while (true) {
+        char c = try_getc_ps2();
+        if (c != '\0') return c;
+        sched::yield();
+    }
+}
+
+auto try_getc_serial() -> char {
+    return serial_try_read();
+}
+
+auto getc_serial() -> char {
+    while (true) {
+        char c = try_getc_serial();
+        if (c != '\0') return c;
+        sched::yield();
+    }
+}
+
 } // namespace input
 } // namespace vk

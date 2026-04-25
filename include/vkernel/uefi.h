@@ -5,6 +5,8 @@
  * uefi.h - UEFI interface with C++26 features
  */
 
+ // https://uefi.org/sites/default/files/resources/UEFI%20Spec%202.8B%20May%202020.pdf
+
 #ifndef VKERNEL_UEFI_H
 #define VKERNEL_UEFI_H
 
@@ -179,13 +181,27 @@ struct boot_services_table {
 };
 
 /* ============================================================
- * Graphics Output Protocol (GOP)
+ * Higher-level C++26-friendly wrappers around UEFI
  * ============================================================ */
 
-/* {9042A9DE-23DC-4A38-96FB-7ADED080516A} */
-inline constexpr guid GOP_GUID = {
+// info obtained from https://krinkinmu.github.io/2020/10/31/efi-file-access.html
+
+ /* Graphics Output Protocol (GOP) GUID */
+constexpr uefi::guid GOP_GUID = {
     0x9042A9DE, 0x23DC, 0x4A38,
     { 0x96, 0xFB, 0x7A, 0xDE, 0xD0, 0x80, 0x51, 0x6A }
+};
+
+/* EFI_SIMPLE_FILE_SYSTEM_PROTOCOL GUID */
+constexpr uefi::guid SFS_GUID = {
+    0x0964e5b22, 0x6459, 0x11d2,
+    { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b }
+};
+
+/* EFI_FILE_INFO GUID */
+constexpr uefi::guid FILE_INFO_GUID = {
+    0x09576e92, 0x6d3f, 0x11d2,
+    { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b }
 };
 
 enum class pixel_format : u32 {

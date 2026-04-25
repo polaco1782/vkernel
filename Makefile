@@ -47,7 +47,7 @@ CXXFLAGS += -Wno-unused-variable
 
 # Debug flags
 ifdef DEBUG
-	CXXFLAGS += -g3 -Og -fno-omit-frame-pointer -DDEBUG -DKERNEL_DEBUG=1
+	CXXFLAGS += -g -O0 -fno-omit-frame-pointer -DDEBUG -DKERNEL_DEBUG=1
 else
 	CXXFLAGS += -O2 -DNDEBUG
 endif

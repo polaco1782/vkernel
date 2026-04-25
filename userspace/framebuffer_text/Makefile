@@ -25,7 +25,6 @@ CFLAGS  += -Wall -Wextra
 CFLAGS  += -I$(USER_INCLUDE)
 
 LDFLAGS := -nostdlib
-LDFLAGS += -static
 LDFLAGS += -pie
 LDFLAGS += -e _start
 LDFLAGS += -Wl,--build-id=none

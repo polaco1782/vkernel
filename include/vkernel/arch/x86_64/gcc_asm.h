@@ -82,6 +82,8 @@ unsigned long long asm_get_isr_stub_base();
 unsigned long long asm_get_image_base();
 unsigned long long asm_get_data_start();
 unsigned long long asm_get_data_end();
+unsigned long long asm_get_got_start();
+unsigned long long asm_get_got_end();
 unsigned long long asm_get_end();
 
 /* ---- FPU / SSE / AVX ---- */

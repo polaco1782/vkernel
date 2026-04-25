@@ -8,7 +8,7 @@
 #ifndef VKERNEL_PROCESS_INTERNAL_H
 #define VKERNEL_PROCESS_INTERNAL_H
 
-#include "types.h"
+#include "process.h"
 
 namespace vk {
 namespace process {
@@ -18,6 +18,7 @@ struct process_task_context {
     u8*   image_base;
     usize image_size;
     bool  image_from_phys; /* true = free via g_phys_alloc, false = g_kernel_heap */
+    console_interface interface;
 };
 
 void cleanup_process_context(process_task_context* ctx, int exit_code);

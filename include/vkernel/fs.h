@@ -74,6 +74,8 @@ auto load_file_from_esp(const char* path) -> loaded_file;
 /* Load a list of well-known files into the ramfs */
 auto load_initrd() -> status_code;
 
+auto scan_filesystem() -> status_code;
+
 } // namespace loader
 
 } // namespace vk

@@ -11,6 +11,7 @@ ESP_BOOT="${ESP_ROOT}/EFI/BOOT"
 ESP_VKERNEL="${ESP_ROOT}/EFI/vkernel"
 NVRAM_FILE="${BUILD_DIR}/ovmf_vars.fd"
 DEBUG_QEMU=0
+VERBOSE=0
 
 set -x
 set -e
@@ -23,7 +24,7 @@ for arg in "$@"; do
     esac
 done
 
-if [ ${VERBOSE} -eq 1 ]; then
+if [ "${DEBUG_QEMU}" -eq 1 ] || [ "${VERBOSE}" -eq 1 ]; then
     make clean
     make DEBUG=1
     make userspace DEBUG=1
@@ -79,7 +80,7 @@ cp -va "userspace/shell/shell_exec.txt" "${ESP_VKERNEL}/shell.txt"
 cp -va "userspace/MODPlay/makemove.mod" "${ESP_VKERNEL}/makemove.mod"
 cp -va "userspace/rotozoom/head.bmp" "${ESP_VKERNEL}/head.bmp"
 
-cp -va framebuffer.vbin "${ESP_VKERNEL}/framebuffer.vbin"
+touch ${ESP_VKERNEL}/../../ANAL.txt
 
 # Writable OVMF_VARS
 cp "${OVMF_VARS}" "${NVRAM_FILE}"
@@ -88,7 +89,15 @@ cp "${OVMF_VARS}" "${NVRAM_FILE}"
 DEBUG_ARGS=""
 if [ "${DEBUG_QEMU}" = "1" ]; then
     DEBUG_ARGS="-s -S"
-    echo "GDB: gdb ${BUILD_DIR}/vkernel.efi -ex 'target remote localhost:1234'"
+    echo "GDB debug workflow:"
+    echo "  1. gdb ${BUILD_DIR}/vkernel.efi \\"
+    echo "       -ex 'set confirm off' \\"
+    echo "       -ex 'set breakpoint pending on' \\"
+    echo "       -ex 'source .vscode/find_kernel.py' \\"
+    echo "       -ex 'target remote localhost:1234'"
+    echo "  2. (continue) -> let UEFI load the kernel"
+    echo "  3. (pause) -> then run: find-kernel"
+    echo "  4. Set breakpoints by name (e.g. break vk::efi_main)"
 fi
 
 echo ""

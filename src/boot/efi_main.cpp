@@ -98,12 +98,18 @@ auto efi_main(
     if (auto status = console::init(); status != status_code::success) {
         return uefi::status::device_error;
     }
-    
+  
     /* Print welcome message */
     log::printk("vkernel %s - UEFI Microkernel\n", config::version_string);
     log::printk("Booting on %s using %s\n\n",
                 config::arch_name, config::compiler_name);
-    
+
+    log::debug("UEFI entry point reached: image_handle=%p, system_table=%p",
+               image_handle, system_table);
+    log::debug(".text start=%p", 0x1000+asm_get_image_base());
+    log::debug(".data start=%p, end=%p", asm_get_data_start(), asm_get_data_end());
+    log::debug("_end=%p", asm_get_end());
+
     /* Prepare architecture tables (GDT/IDT in memory, not yet loaded) */
     arch::init();
     log::debug("arch tables prepared (GDT/IDT built, not yet loaded)");
@@ -181,9 +187,9 @@ auto efi_main(
      * would invalidate the map key and cause EBS to fail. */
     arch::disable_interrupts();
 
+    // Critical section: GetMemoryMap → ExitBootServices.
+    // Absolutely no other UEFI calls between these two.
     {
-        /* Critical section: GetMemoryMap → ExitBootServices.
-         * Absolutely no other UEFI calls between these two. */
         auto fresh = uefi::query_memory_map();
         auto ebs_status = uefi::do_exit_boot_services(image_handle, fresh.map_key);
 
@@ -205,6 +211,7 @@ auto efi_main(
     /* Boot services are now terminated. Switch to serial console — ConOut
      * is a boot service and must NOT be called after ExitBootServices. */
     console::switch_to_serial();
+
     if (fb_info.valid) {
         console::switch_to_framebuffer();
 		//console::clear();
@@ -253,9 +260,18 @@ auto efi_main(
     });
 
     /* Launch the userspace shell binary. */
-    log::info("Launching userspace shell...");
-    if (process::run("shell.vbin") < 0) {
-        vk_panic(__FILE__, __LINE__, "Failed to launch userspace shell!");
+    if (fb_info.valid) {
+        log::info("Launching graphical shell...");
+        if (process::run("shell.vbin", process::console_interface::graphical) < 0) {
+            vk_panic(__FILE__, __LINE__, "Failed to launch graphical shell!");
+        }
+    } else {
+        log::warn("Framebuffer unavailable; graphical shell not launched");
+    }
+
+    log::info("Launching serial shell...");
+    if (process::run("shell.vbin", process::console_interface::serial) < 0) {
+        vk_panic(__FILE__, __LINE__, "Failed to launch serial shell!");
     }
 
     /* Start the scheduler — does not return */

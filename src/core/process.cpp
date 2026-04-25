@@ -26,6 +26,14 @@
 namespace vk {
 namespace process {
 
+static auto current_console_interface() -> console_interface {
+    auto* ctx = static_cast<process_task_context*>(sched::current_task_user_data());
+    if (ctx != null) {
+        return ctx->interface;
+    }
+    return console_interface::graphical;
+}
+
 void cleanup_process_context(process_task_context* ctx, int exit_code) {
     log::printk("Process exited with code %d\n", exit_code);
     log::debug("Cleaning up process context: entry=%#llx, image_base=%p, image_size=%#llx",
@@ -59,6 +67,10 @@ static void process_task_main(void* user_data) {
  * ============================================================ */
 
 auto run(const char* filename) -> i64 {
+    return run(filename, current_console_interface());
+}
+
+auto run(const char* filename, console_interface interface) -> i64 {
     /* Look up the file in ramfs */
     const file_entry* f = ramfs::find(filename);
     if (f == null) {
@@ -132,6 +144,7 @@ auto run(const char* filename) -> i64 {
     ctx->image_base      = image_base;
     ctx->image_size      = image_size;
     ctx->image_from_phys = image_from_phys;
+    ctx->interface       = interface;
 
 	// create a new task and pass the context as user data
     i64 task_id = sched::create_task(filename, process_task_main, ctx);
