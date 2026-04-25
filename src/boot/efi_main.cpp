@@ -18,6 +18,8 @@
 #include "arch/x86_64/arch.h"
 #include "driver.h"
 #include "pci.h"
+#include "acpi.h"
+#include "smp.h"
 
 namespace vk {
 
@@ -176,6 +178,12 @@ auto efi_main(
     /* Load files from ESP into ramfs (must happen before ExitBootServices) */
     loader::load_initrd();
 
+    /* Locate ACPI tables via UEFI configuration table while boot services
+     * are still active.  The RSDP and all referenced SDTs reside in
+     * ACPI-reclaimable memory and remain valid after ExitBootServices.  */
+    log::info("Initializing ACPI...");
+    acpi::init(uefi::g_system_table);
+
     /* ============================================================
      * Phase 2 — Exit Boot Services
      * ============================================================ */
@@ -248,6 +256,11 @@ auto efi_main(
     sb16_driver::register_builtin();
     ac97_driver::register_builtin();
     log::info("Driver framework initialised (2 built-in drivers registered)");
+
+    /* Bring up Application Processors */
+    log::info("Initializing SMP...");
+    smp::init();
+    smp::dump_cpus();
 
     /* Initialize the scheduler (sets up PIC + PIT) */
     if (auto status = sched::init(); status != status_code::success) {

@@ -109,6 +109,7 @@ echo ""
 
 exec ${QEMU} \
     -machine q35 \
+    -smp 8 \
     -cpu Haswell \
     -drive if=pflash,format=${PFLASH_FMT},readonly=on,file="${OVMF_CODE}" \
     -drive if=pflash,format=${PFLASH_FMT},file="${NVRAM_FILE}" \

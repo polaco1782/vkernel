@@ -204,6 +204,21 @@ constexpr uefi::guid FILE_INFO_GUID = {
     { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b }
 };
 
+/*
+* UEFI Configuration Table GUIDs for ACPI:
+*   ACPI 2.0 : {8868e871-e4f1-11d3-bc22-0080c73c8881}
+*   ACPI 1.0 : {eb9d2d30-2d88-11d3-9a16-0090273fc14d}
+*/
+constexpr uefi::guid ACPI_20_GUID = {
+    0x8868e871u, 0xe4f1u, 0x11d3u,
+    { 0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81 }
+};
+
+constexpr uefi::guid ACPI_10_GUID = {
+    0xeb9d2d30u, 0x2d88u, 0x11d3u,
+    { 0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d }
+};
+
 enum class pixel_format : u32 {
     rgbx_8bpp  = 0,   /* R[7:0] G[15:8] B[23:16] X[31:24] */
     bgrx_8bpp  = 1,   /* B[7:0] G[15:8] R[23:16] X[31:24] */
@@ -263,6 +278,17 @@ struct memory_map_result {
     usize                    required_size = 0;    /* firmware-reported byte size for the map */
 };
 
+/* ============================================================
+ * EFI_CONFIGURATION_TABLE entry
+ * Each entry is a (GUID, pointer) pair in the system table's
+ * configuration table array.
+ * ============================================================ */
+
+struct configuration_table_entry {
+    guid  vendor_guid;
+    void* vendor_table;
+};
+
 /* UEFI System Table */
 inline constexpr u64 SYSTEM_TABLE_SIGNATURE = 0x5453595320494249ULL;
 
@@ -279,7 +305,7 @@ struct system_table {
     void* runtime_services;
     boot_services_table* boot_services;
     usize number_of_table_entries;
-    void* configuration_table;
+    configuration_table_entry* configuration_table;
 };
 
 /* Global system table pointer */
@@ -300,6 +326,9 @@ i32 strcmp(const char16_t* s1, const char16_t* s2);
 /* Memory map */
 auto query_memory_map() -> memory_map_result;
 auto do_exit_boot_services(handle image_handle, usize map_key) -> status;
+
+/* Configuration table search */
+void* find_configuration_table(const guid& target_guid);
 
 /* Graphics */
 auto query_gop() -> framebuffer_info;

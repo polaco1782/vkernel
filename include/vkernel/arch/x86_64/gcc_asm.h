@@ -61,6 +61,7 @@ unsigned long long asm_read_rflags();
 
 /* ---- Misc CPU instructions ---- */
 void asm_cpu_nop();
+void asm_pause();   /* PAUSE hint for spin-wait / HLT loops */
 
 /* ---- Memory barriers ---- */
 void asm_memory_barrier();

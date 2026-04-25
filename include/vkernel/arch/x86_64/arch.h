@@ -244,6 +244,16 @@ auto disable_interrupts() -> void;
 auto halt() -> void;
 auto reboot() -> void;
 
+/*
+ * Reload the BSP's GDT and IDT on an AP that started from the trampoline.
+ * Must be called early in ap_init_secondary() before any C++ code that
+ * assumes kernel selectors.
+ */
+void ap_activate();
+
+/* PAUSE hint — thin inline wrapper around asm_pause() */
+inline auto cpu_pause() -> void { asm_pause(); }
+
 } // namespace arch
 } // namespace vk
 

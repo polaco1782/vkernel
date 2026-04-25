@@ -47,6 +47,20 @@ auto get_console() -> text_output_protocol* {
     return g_system_table->con_out;
 }
 
+/* Search the UEFI configuration table for a vendor table with the given GUID */
+void* find_configuration_table(const guid& target_guid) {
+    if (!g_system_table || !g_system_table->configuration_table) {
+        return null;
+    }
+    const auto* table = g_system_table->configuration_table;
+    for (usize i = 0; i < g_system_table->number_of_table_entries; ++i) {
+        if (table[i].vendor_guid == target_guid) {
+            return table[i].vendor_table;
+        }
+    }
+    return null;
+}
+
 /* Calculate UCS-2 string length */
 usize strlen(const char16_t* str) {
     usize len = 0;

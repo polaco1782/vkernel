@@ -458,3 +458,52 @@ asm_cpuid:
     pop   %r12
     pop   %rbx
     ret
+
+/* void asm_pause() — PAUSE hint for spin-wait loops (reduces CPU power,
+ *                    improves hyper-threading performance) */
+.global asm_pause
+asm_pause:
+    pause
+    ret
+
+/* ============================================================
+ * AP 64-bit entry point
+ *
+ * Called via far jump from the 32-bit AP trampoline (ap_trampoline.S)
+ * after the AP has entered 64-bit long mode.
+ *
+ * On entry:
+ *   CS = 0x18  (64-bit code, temporary trampoline GDT)
+ *   SS = 0x10  (32-bit data, temporary trampoline GDT — valid in 64-bit)
+ *   RSP = indeterminate (no stack yet)
+ *   Page tables = BSP's CR3 (identity-mapped)
+ *
+ * We must load RSP from TRAM_STACK (physical 0x8140) before any
+ * push/call instruction.
+ * ============================================================ */
+.global ap_entry_64
+ap_entry_64:
+    /* Load 64-bit data selectors from the temporary GDT */
+    movw    $0x20, %ax      /* SEL_DATA64 from temporary trampoline GDT */
+    movw    %ax, %ss
+    movw    %ax, %ds
+    movw    %ax, %es
+    xorw    %ax, %ax
+    movw    %ax, %fs
+    movw    %ax, %gs
+
+    /* Load the AP stack pointer stored by the BSP at physical 0x8140 */
+    movabsq $0x8140, %rax
+    movq    (%rax), %rsp
+
+    /* Zero the frame pointer for clean stack traces */
+    xorq    %rbp, %rbp
+
+    /* Call the C++ AP initialization function */
+    callq   ap_init_secondary
+
+    /* ap_init_secondary should not return, but halt if it does */
+.ap_entry_halt:
+    cli
+    hlt
+    jmp .ap_entry_halt

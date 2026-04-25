@@ -550,5 +550,23 @@ void activate() {
     log::info("x86_64 architecture fully active");
 }
 
+/*
+ * Reload the BSP's GDT/IDT/segments on an Application Processor.
+ *
+ * Called from ap_init_secondary() (smp.cpp) immediately after the AP
+ * enters 64-bit mode via the trampoline.  At that point the AP is
+ * running with the temporary trampoline GDT, so we need to switch to
+ * the kernel GDT before executing any selector-sensitive code.
+ *
+ * The AP does NOT load the TSS (which has a BSP-owned RSP0).
+ * Per-AP TSS support can be added later.
+ */
+void ap_activate() {
+    load_gdt();
+    reload_kernel_segments();
+    activate_idt();
+    activate_fpu_state();
+}
+
 } // namespace arch
 } // namespace vk
