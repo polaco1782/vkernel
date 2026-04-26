@@ -10,6 +10,7 @@
 
 #include "config.h"
 #include "types.h"
+#include "spinlock.h"
 #include "arch/x86_64/arch.h"
 
 namespace vk {
@@ -48,34 +49,18 @@ struct task {
     void*       user_data;
     #if defined(_MSC_VER)
         __declspec(align(16)) u8 stack[TASK_STACK_SIZE];
+        /* FXSAVE area: 512 bytes, must be 16-byte aligned. Saves
+         * x87 + MMX + SSE state (XMM0..XMM15 + MXCSR + FPU regs). */
+        __declspec(align(16)) u8 fxsave_area[512];
     #else
         u8 stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
+        u8 fxsave_area[512] __attribute__((aligned(16)));
     #endif
     task_entry_fn entry;
+    bool          fxsave_valid;             /* true after first FXSAVE for this task */
 
     [[nodiscard]] constexpr auto is_runnable() const -> bool {
         return state == task_state::ready || state == task_state::running;
-    }
-};
-
-/* ============================================================
- * Simple ticket-less test-and-set spinlock
- * Suitable for short critical sections (task pick / state update).
- * ============================================================ */
-
-struct spinlock {
-    volatile u64 locked = 0;
-
-    void acquire() {
-        while (!arch::atomic_cmpxchg(&locked, 0, 1)) {
-            arch::cpu_pause();
-        }
-        arch::memory_barrier();
-    }
-
-    void release() {
-        arch::memory_barrier();
-        locked = 0;
     }
 };
 
@@ -118,6 +103,19 @@ void wait_for_task(u64 task_id);
 
 /* Terminate current task — does not return to caller */
 [[noreturn]] void exit_task();
+
+/*
+ * Detach the current task from any process context: atomically
+ * read its user_data, null it out in the task slot, and mark the
+ * task terminated.  Returns the previous user_data pointer (or
+ * null if there was no current task or it was already detached).
+ *
+ * Used by exception handlers BEFORE freeing the process resources,
+ * so that any nested fault that re-enters the dispatcher will not
+ * see a dangling user_data pointer and try to clean up the same
+ * process twice.
+ */
+auto detach_current_task() -> void*;
 
 /* Query current task info */
 [[nodiscard]] auto current_task_id() -> u64;

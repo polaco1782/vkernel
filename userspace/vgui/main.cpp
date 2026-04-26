@@ -29,6 +29,7 @@ static bool g_show_info     = true;
 static bool g_show_console  = true;
 static bool g_show_settings = false;
 static bool g_show_demo     = false;
+static bool g_show_shell    = true;
 static bool g_open_about    = false;   /* one-shot: triggers OpenPopup */
 
 /* --- Counter widget --- */
@@ -37,8 +38,9 @@ static bool g_counter_wrap   = false;
 static int  g_counter_max    = 100;
 
 /* --- Settings --- */
-static int  g_style_idx      = 0;      /* 0=Dark  1=Light  2=Classic */
-static float g_font_scale    = 1.0f;
+static int   g_style_idx          = 0;      /* 0=Dark  1=Light  2=Classic */
+static float g_font_scale         = 1.0f;
+static bool  g_transparency       = false;  /* slow path; off by default */
 
 /* ================================================================
  * Simple circular console log  (no heap, fixed size)
@@ -85,6 +87,14 @@ static void apply_style(int idx)
     case 1:  ImGui::StyleColorsLight();   break;
     case 2:  ImGui::StyleColorsClassic(); break;
     default: ImGui::StyleColorsDark();    break;
+    }
+
+    /* When transparency is disabled, force every theme color fully
+     * opaque so the renderer's fast path is taken on every fill. */
+    if (!g_transparency) {
+        ImGuiStyle& s = ImGui::GetStyle();
+        for (int i = 0; i < ImGuiCol_COUNT; ++i)
+            s.Colors[i].w = 1.0f;
     }
 }
 
@@ -136,6 +146,7 @@ static void draw_menu_bar()
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Info Panel",   nullptr, &g_show_info);
         ImGui::MenuItem("Console",      nullptr, &g_show_console);
+        ImGui::MenuItem("Shell",        nullptr, &g_show_shell);
         ImGui::Separator();
         ImGui::MenuItem("ImGui Demo",   nullptr, &g_show_demo);
         ImGui::EndMenu();
@@ -285,6 +296,323 @@ static void draw_console_window()
 }
 
 /* ================================================================
+ * Built-in shell terminal
+ *
+ * A scrollable text buffer with an input line.  Commands are parsed
+ * and executed in-process using the kernel API — the output is
+ * captured into the text buffer rather than going to the kernel
+ * console.  This mirrors the standalone shell applet but renders
+ * entirely inside the GUI.
+ * ================================================================ */
+
+/* --- Terminal text buffer (ring of lines) --- */
+static const int  TERM_ROWS  = 512;
+static const int  TERM_COLS  = 256;
+static char       g_term_buf[512][256];
+static int        g_term_head  = 0;
+static int        g_term_count = 0;
+
+/* Append one line to the terminal buffer. */
+static void term_add(const char* line)
+{
+    strncpy(g_term_buf[g_term_head], line, TERM_COLS - 1);
+    g_term_buf[g_term_head][TERM_COLS - 1] = '\0';
+    g_term_head = (g_term_head + 1) % TERM_ROWS;
+    if (g_term_count < TERM_ROWS) ++g_term_count;
+}
+
+/* Printf into the terminal buffer. */
+static void term_addf(const char* fmt, ...)
+{
+    char tmp[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(tmp, sizeof(tmp), fmt, ap);
+    va_end(ap);
+    term_add(tmp);
+}
+
+static void term_clear()
+{
+    g_term_count = 0;
+    g_term_head  = 0;
+}
+
+/* --- Shell command implementations (output to term buffer) --- */
+
+static void sh_help(const char*)
+{
+    term_add("Available commands:");
+    term_add("  help         - Show this message");
+    term_add("  version      - Show API version");
+    term_add("  mem          - Show memory info");
+    term_add("  tasks        - Show scheduler tasks");
+    term_add("  cat <f>      - Print a ramfs file");
+    term_add("  clear        - Clear the terminal");
+    term_add("  uptime       - Show tick count");
+    term_add("  reboot       - Reboot the machine");
+    term_add("  run <f>      - Launch a userspace program");
+    term_add("  drvload <d>  - Load a driver");
+    term_add("  drvunload <d>- Unload a driver");
+    term_add("  exit         - Close vGUI");
+}
+
+static void sh_version(const char*)
+{
+    term_add("vkernel userspace shell (vGUI embedded)");
+    term_addf("  API version: %llu", (unsigned long long)vk_get_api()->api_version);
+}
+
+static void sh_mem(const char*)
+{
+    term_add("[memory dump sent to kernel console]");
+    VK_CALL(dump_memory);
+}
+
+static void sh_tasks(const char*)
+{
+    term_add("[task dump sent to kernel console]");
+    VK_CALL(dump_tasks);
+}
+
+static void sh_cat(const char* arg)
+{
+    while (*arg == ' ' || *arg == '\t') ++arg;
+    if (*arg == '\0') {
+        term_add("Usage: cat <filename>");
+        return;
+    }
+
+    vk_file_handle_t fh = VK_CALL(file_open, arg, "r");
+    if (fh == (vk_file_handle_t)0) {
+        term_addf("cat: file not found: %s", arg);
+        return;
+    }
+
+    /* Read file and split into lines for the terminal buffer. */
+    char chunk[256];
+    char line[256];
+    int  lpos = 0;
+    vk_usize n;
+
+    while ((n = VK_CALL(file_read_handle, fh, chunk, sizeof(chunk))) > 0) {
+        for (vk_usize i = 0; i < n; ++i) {
+            if (chunk[i] == '\n' || lpos >= (int)sizeof(line) - 1) {
+                line[lpos] = '\0';
+                term_add(line);
+                lpos = 0;
+            } else {
+                line[lpos++] = chunk[i];
+            }
+        }
+    }
+    if (lpos > 0) {
+        line[lpos] = '\0';
+        term_add(line);
+    }
+
+    VK_CALL(file_close, fh);
+}
+
+static void sh_clear(const char*) { term_clear(); }
+
+static void sh_uptime(const char*)
+{
+    vk_u64 ticks = VK_CALL(tick_count);
+    vk_u32 tps   = vk_get_api()->vk_ticks_per_sec();
+    if (tps == 0) tps = 1000;
+    vk_u64 sec   = ticks / tps;
+    term_addf("Uptime: %llus (%llu ticks, %u tps)",
+              (unsigned long long)sec,
+              (unsigned long long)ticks,
+              (unsigned)tps);
+}
+
+static void sh_reboot(const char*)
+{
+    term_add("Rebooting...");
+    VK_CALL(reboot);
+}
+
+static void sh_run(const char* arg)
+{
+    while (*arg == ' ' || *arg == '\t') ++arg;
+    if (*arg == '\0') {
+        term_add("Usage: run <filename>");
+        return;
+    }
+
+    vk_i64 task_id = VK_CALL(run, arg);
+    if (task_id < 0) {
+        term_addf("run: failed to launch %s", arg);
+    } else {
+        term_addf("run: spawned task %lld (output on kernel console)",
+                   (long long)task_id);
+        /* Note: we do NOT call wait_task here because that would
+         * block the entire GUI event loop.  The task runs in the
+         * background. */
+    }
+}
+
+static void sh_drvload(const char* arg)
+{
+    while (*arg == ' ' || *arg == '\t') ++arg;
+    if (*arg == '\0') {
+        term_add("Usage: drvload <driver_name>");
+        return;
+    }
+    if (VK_CALL(drv_load, arg) == 0)
+        term_add("Driver loaded successfully.");
+    else
+        term_addf("Failed to load driver: %s", arg);
+}
+
+static void sh_drvunload(const char* arg)
+{
+    while (*arg == ' ' || *arg == '\t') ++arg;
+    if (*arg == '\0') {
+        term_add("Usage: drvunload <driver_name>");
+        return;
+    }
+    if (VK_CALL(drv_unload, arg) == 0)
+        term_add("Driver unloaded.");
+    else
+        term_addf("Failed to unload driver: %s", arg);
+}
+
+static void sh_exit(const char*)
+{
+    term_add("Goodbye.");
+    g_running = false;
+}
+
+/* --- Command dispatch --- */
+
+static bool sh_starts_with(const char* s, const char* prefix)
+{
+    while (*prefix)
+        if (*s++ != *prefix++) return false;
+    return true;
+}
+
+static void sh_execute(const char* cmdline)
+{
+    /* Skip leading whitespace. */
+    while (*cmdline == ' ' || *cmdline == '\t') ++cmdline;
+    if (*cmdline == '\0') return;
+
+    /* Echo the command. */
+    term_addf("vk> %s", cmdline);
+
+    /* Prefix commands (have arguments). */
+    struct { const char* pfx; int skip; void (*fn)(const char*); } pfx_cmds[] = {
+        { "cat ",       4,  sh_cat       },
+        { "run ",       4,  sh_run       },
+        { "drvload ",   8,  sh_drvload   },
+        { "drvunload ", 10, sh_drvunload },
+    };
+    for (int i = 0; i < (int)(sizeof(pfx_cmds)/sizeof(pfx_cmds[0])); ++i) {
+        if (sh_starts_with(cmdline, pfx_cmds[i].pfx)) {
+            pfx_cmds[i].fn(cmdline + pfx_cmds[i].skip);
+            return;
+        }
+    }
+
+    /* Exact-match commands. */
+    struct { const char* kw; void (*fn)(const char*); } ex_cmds[] = {
+        { "help",    sh_help    },
+        { "?",       sh_help    },
+        { "version", sh_version },
+        { "mem",     sh_mem     },
+        { "tasks",   sh_tasks   },
+        { "clear",   sh_clear   },
+        { "uptime",  sh_uptime  },
+        { "reboot",  sh_reboot  },
+        { "exit",    sh_exit    },
+    };
+    for (int i = 0; i < (int)(sizeof(ex_cmds)/sizeof(ex_cmds[0])); ++i) {
+        if (strcmp(cmdline, ex_cmds[i].kw) == 0) {
+            ex_cmds[i].fn("");
+            return;
+        }
+    }
+
+    term_addf("Unknown command: %s", cmdline);
+    term_add("Type 'help' for available commands.");
+}
+
+/* --- Input line state --- */
+static char g_shell_input[256] = {};
+static bool g_shell_scroll_bottom = true;
+
+/* --- ImGui callback for Enter key in InputText --- */
+static int shell_input_callback(ImGuiInputTextCallbackData* data)
+{
+    (void)data;
+    return 0;
+}
+
+static void draw_shell_window()
+{
+    if (!g_show_shell) return;
+
+    ImGui::SetNextWindowPos (ImVec2(350.0f, 30.0f),  ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500.0f, 400.0f), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Shell", &g_show_shell)) {
+        ImGui::End();
+        return;
+    }
+
+    /* --- Scrollable output region --- */
+    float footer_h = ImGui::GetStyle().ItemSpacing.y
+                   + ImGui::GetFrameHeightWithSpacing();
+    ImGui::BeginChild("##term_scroll", ImVec2(0.0f, -footer_h),
+                       false, ImGuiWindowFlags_HorizontalScrollbar);
+
+    int start = (g_term_count >= TERM_ROWS) ? g_term_head : 0;
+    for (int i = 0; i < g_term_count; ++i) {
+        int idx = (start + i) % TERM_ROWS;
+        ImGui::TextUnformatted(g_term_buf[idx]);
+    }
+
+    /* Auto-scroll to bottom when new output appears. */
+    if (g_shell_scroll_bottom ||
+        ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+    {
+        ImGui::SetScrollHereY(1.0f);
+        g_shell_scroll_bottom = false;
+    }
+
+    ImGui::EndChild();
+
+    /* --- Input line --- */
+    ImGui::Separator();
+
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue
+                              | ImGuiInputTextFlags_CallbackAlways;
+
+    bool entered = ImGui::InputText("##shell_input", g_shell_input,
+                                     sizeof(g_shell_input), flags,
+                                     shell_input_callback);
+    if (entered && g_shell_input[0] != '\0') {
+        sh_execute(g_shell_input);
+        g_shell_input[0] = '\0';
+        g_shell_scroll_bottom = true;
+
+        /* Refocus the input widget so the user can keep typing. */
+        ImGui::SetKeyboardFocusHere(-1);
+    }
+
+    /* Auto-focus the input field the first time the window appears. */
+    if (ImGui::IsWindowAppearing())
+        ImGui::SetKeyboardFocusHere(-1);
+
+    ImGui::End();
+}
+
+/* ================================================================
  * draw_settings_window
  * ================================================================ */
 
@@ -310,6 +638,15 @@ static void draw_settings_window()
 
     if (ImGui::SliderFloat("Font scale", &g_font_scale, 0.5f, 2.0f, "%.1f")) {
         ImGui::GetIO().FontGlobalScale = g_font_scale;
+    }
+
+    ImGui::SeparatorText("Renderer");
+
+    if (ImGui::Checkbox("Transparency (slow)", &g_transparency)) {
+        ImGui_ImplVK_SetTransparencyEnabled(g_transparency);
+        /* Re-apply style so theme alphas reflect the new mode. */
+        apply_style(g_style_idx);
+        log_addf("Transparency %s.", g_transparency ? "ON" : "OFF");
     }
 
     ImGui::Spacing();
@@ -389,18 +726,33 @@ int main(int /*argc*/, char** /*argv*/)
         return 1;
     }
 
-    /* ---- Style ---- */
-    ImGui::StyleColorsDark();
+    /* ---- Style ----
+     * Performance critical for the software rasterizer:
+     *   - Rounded corners generate a fan of ~12 small non-AA-aligned
+     *     triangles per corner that fall through to the slow general
+     *     triangle path.  Set to 0 so rects stay as 2 axis-aligned
+     *     triangles that hit the try_render_quad fast path.
+     *   - AntiAliasedLines / AntiAliasedFill add a 1-pixel feathered
+     *     edge with per-vertex alpha to every shape, generating many
+     *     additional thin triangles with attribute interpolation.
+     *     Disabling them keeps every filled shape as one solid quad.
+     */
+    ImGui_ImplVK_SetTransparencyEnabled(g_transparency);
+    apply_style(g_style_idx);
     {
-        ImGuiStyle& s     = ImGui::GetStyle();
-        s.WindowRounding  = 5.0f;
-        s.ChildRounding   = 3.0f;
-        s.FrameRounding   = 3.0f;
-        s.PopupRounding   = 4.0f;
-        s.ScrollbarRounding = 3.0f;
-        s.GrabRounding    = 3.0f;
-        s.WindowBorderSize = 1.0f;
-        s.FrameBorderSize  = 0.0f;
+        ImGuiStyle& s            = ImGui::GetStyle();
+        s.WindowRounding         = 0.0f;
+        s.ChildRounding          = 0.0f;
+        s.FrameRounding          = 0.0f;
+        s.PopupRounding          = 0.0f;
+        s.ScrollbarRounding      = 0.0f;
+        s.GrabRounding           = 0.0f;
+        s.TabRounding            = 0.0f;
+        s.WindowBorderSize       = 1.0f;
+        s.FrameBorderSize        = 0.0f;
+        s.AntiAliasedLines       = false;
+        s.AntiAliasedLinesUseTex = false;
+        s.AntiAliasedFill        = false;
     }
 
     /* ---- Startup log ---- */
@@ -411,6 +763,13 @@ int main(int /*argc*/, char** /*argv*/)
     log_add("Move the mouse to control the cursor.");
     log_add("Alt to open the menu bar.  Tab/Arrows to navigate.");
     log_add("Enter/Space to activate.  Ctrl+Q to quit.");
+
+    /* ---- Shell banner ---- */
+    term_add("+----------------------------------+");
+    term_add("|     vkernel userspace shell      |");
+    term_add("+----------------------------------+");
+    term_add("Type 'help' for available commands.");
+    term_add("");
 
     /* ================================================================
      * Main loop
@@ -461,6 +820,7 @@ int main(int /*argc*/, char** /*argv*/)
         draw_menu_bar();
         draw_info_window(&fb);
         draw_console_window();
+        draw_shell_window();
         draw_settings_window();
         draw_about_modal();
 

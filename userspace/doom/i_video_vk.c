@@ -154,9 +154,9 @@ void I_StartFrame(void)
         int dk = 0;
         switch (kev.scancode) {
         /* Letters — WASD mapped to movement; others kept as ASCII */
-        case 0x1E: dk = KEY_RALT|KEY_LEFTARROW;  break; /* A -> turn left  */
+        case 0x1E: dk = KEY_LEFTARROW;  break; /* A -> turn left  */
         case 0x30: dk = 'b'; break;
-        case 0x2E: dk = 'c'; break; case 0x20: dk = KEY_RALT|KEY_RIGHTARROW; break; /* D -> turn right */
+        case 0x2E: dk = 'c'; break; case 0x20: dk = KEY_RIGHTARROW; break; /* D -> turn right */
         case 0x12: dk = 'e'; break; case 0x21: dk = 'f'; break;
         case 0x22: dk = 'g'; break; case 0x23: dk = 'h'; break;
         case 0x17: dk = 'i'; break; case 0x24: dk = 'j'; break;

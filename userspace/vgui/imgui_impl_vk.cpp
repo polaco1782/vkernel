@@ -57,6 +57,18 @@ static void* vk_imgui_alloc(size_t sz, void*) { return malloc(sz); }
 static void  vk_imgui_free (void*  p,  void*) { free(p); }
 
 /* ================================================================
+ * Runtime renderer options
+ * ================================================================ */
+
+/* When true, the rasterizer performs per-pixel source-over alpha
+ * blending against the back-buffer (translucent windows / fades).
+ * When false, all pixels are written opaque (fastest path). */
+static bool g_blend_enabled = false;
+
+void ImGui_ImplVK_SetTransparencyEnabled(bool enabled) { g_blend_enabled = enabled; }
+bool ImGui_ImplVK_GetTransparencyEnabled()             { return g_blend_enabled; }
+
+/* ================================================================
  * Lifecycle
  * ================================================================ */
 
@@ -409,28 +421,34 @@ static bool try_render_quad(
     if (v[0]->col == v[1]->col && v[1]->col == v[2]->col && v[2]->col == v[3]->col) {
         ImU32 col = v[0]->col;
 
-        /* Sample texture at all 4 corners. */
-        auto tx_clamp = [&](float u, float vv) -> unsigned char {
-            int tx = (int)(u * (float)ftw); if (tx < 0) tx = 0; else if (tx >= ftw) tx = ftw - 1;
-            int ty = (int)(vv* (float)fth); if (ty < 0) ty = 0; else if (ty >= fth) ty = fth - 1;
-            return ftex[ty * ftw + tx];
-        };
-        unsigned char ta[4];
-        for (int i = 0; i < 4; ++i)
-            ta[i] = tx_clamp(v[i]->uv.x, v[i]->uv.y);
+        /* True solid fill iff all 4 vertices share the same UV
+         * (single texel sample for the whole quad).  We must NOT
+         * key off the *sampled* alpha values because text glyph
+         * quads frequently have all 4 corners at zero-alpha border
+         * texels in the font atlas — that would falsely classify
+         * a glyph as a transparent solid fill and skip it. */
+        bool same_uv =
+            v[0]->uv.x == v[1]->uv.x && v[1]->uv.x == v[2]->uv.x && v[2]->uv.x == v[3]->uv.x &&
+            v[0]->uv.y == v[1]->uv.y && v[1]->uv.y == v[2]->uv.y && v[2]->uv.y == v[3]->uv.y;
 
-        if (ta[0] == ta[1] && ta[1] == ta[2] && ta[2] == ta[3]) {
-            /* Uniform texture alpha — true solid fill. */
-            float alpha = (float)((col >> 24) & 0xFFu) * (float)ta[0]
+        if (same_uv) {
+            /* Sample the (single) texel and compute combined alpha. */
+            int tx = (int)(v[0]->uv.x * (float)ftw); if (tx < 0) tx = 0; else if (tx >= ftw) tx = ftw - 1;
+            int ty = (int)(v[0]->uv.y * (float)fth); if (ty < 0) ty = 0; else if (ty >= fth) ty = fth - 1;
+            unsigned char ts = ftex[ty * ftw + tx];
+
+            float alpha = (float)((col >> 24) & 0xFFu) * (float)ts
                           * (1.0f / (255.0f * 255.0f));
 
             if (alpha <= 0.002f) return true; /* invisible */
 
-            if (alpha >= 0.999f) {
+            unsigned int cr = (col      ) & 0xFFu;
+            unsigned int cg = (col >>  8) & 0xFFu;
+            unsigned int cb = (col >> 16) & 0xFFu;
+
+            if (!g_blend_enabled || alpha >= 0.999f) {
                 /* Opaque rect: tight store loop, no read-modify-write. */
-                unsigned int packed = pack_px(col & 0xFFu,
-                                              (col >> 8) & 0xFFu,
-                                              (col >> 16) & 0xFFu, fmt);
+                unsigned int packed = pack_px(cr, cg, cb, fmt);
                 for (int py = y0; py < y1; ++py) {
                     unsigned int* row = fb + py * fb_stride;
                     for (int px = x0; px < x1; ++px)
@@ -439,11 +457,11 @@ static bool try_render_quad(
                 return true;
             }
 
-            /* Semi-transparent solid rect. */
+            /* Semi-transparent solid rect (blend mode). */
             float inv_a = 1.0f - alpha;
-            float sr = (float)(col        & 0xFFu) * alpha;
-            float sg = (float)((col >>  8) & 0xFFu) * alpha;
-            float sb = (float)((col >> 16) & 0xFFu) * alpha;
+            float sr = (float)cr * alpha;
+            float sg = (float)cg * alpha;
+            float sb = (float)cb * alpha;
             for (int py = y0; py < y1; ++py) {
                 unsigned int* row = fb + py * fb_stride;
                 for (int px = x0; px < x1; ++px) {
@@ -489,17 +507,22 @@ static bool try_render_quad(
                 if (ty < 0) ty = 0; else if (ty >= fth) ty = fth - 1;
                 unsigned char ta_s = ftex[ty * ftw + tx];
                 if (ta_s > 0) {
-                    float alpha = (float)ta_s * fva;
-                    if (alpha >= 0.999f) {
-                        row[px] = pack_px(cr, cg, cb, fmt);
+                    if (g_blend_enabled) {
+                        float alpha = (float)ta_s * fva;
+                        if (alpha >= 0.999f) {
+                            row[px] = pack_px(cr, cg, cb, fmt);
+                        } else {
+                            float inv_a = 1.0f - alpha;
+                            unsigned int dr, dg, db;
+                            unpack_px(row[px], fmt, &dr, &dg, &db);
+                            unsigned int or_ = (unsigned int)(fcr * alpha + (float)dr * inv_a + 0.5f); if (or_ > 255u) or_ = 255u;
+                            unsigned int og  = (unsigned int)(fcg * alpha + (float)dg * inv_a + 0.5f); if (og  > 255u) og  = 255u;
+                            unsigned int ob  = (unsigned int)(fcb * alpha + (float)db * inv_a + 0.5f); if (ob  > 255u) ob  = 255u;
+                            row[px] = pack_px(or_, og, ob, fmt);
+                        }
                     } else {
-                        float inv_a = 1.0f - alpha;
-                        unsigned int dr, dg, db;
-                        unpack_px(row[px], fmt, &dr, &dg, &db);
-                        unsigned int or_ = (unsigned int)(fcr * alpha + (float)dr * inv_a + 0.5f); if (or_ > 255u) or_ = 255u;
-                        unsigned int og  = (unsigned int)(fcg * alpha + (float)dg * inv_a + 0.5f); if (og  > 255u) og  = 255u;
-                        unsigned int ob  = (unsigned int)(fcb * alpha + (float)db * inv_a + 0.5f); if (ob  > 255u) ob  = 255u;
-                        row[px] = pack_px(or_, og, ob, fmt);
+                        /* Opaque write — no alpha blending. */
+                        row[px] = pack_px(cr, cg, cb, fmt);
                     }
                 }
                 su += du_dx;
@@ -633,28 +656,32 @@ static void rasterize_triangle(
         if (ta0 == ta1 && ta1 == ta2) {
             unsigned int va  = (v0.col >> 24) & 0xFFu;
             float alpha = (float)va * (float)ta0 * (1.0f / (255.0f * 255.0f));
-            if (alpha >= 0.999f) {
-                /* Fully opaque: just coverage-test + store */
-                unsigned int packed = pack_px((v0.col      ) & 0xFFu,
-                                              (v0.col >>  8) & 0xFFu,
-                                              (v0.col >> 16) & 0xFFu, fmt);
-                for (int py = y0; py < y1; ++py) {
-                    float w0 = w0_row, w1 = w1_row;
-                    unsigned int* row = fb + py * fb_stride;
-                    for (int px = x0; px < x1; ++px) {
-                        if (w0 >= -0.001f && w1 >= -0.001f && (1.0f - w0 - w1) >= -0.001f)
-                            row[px] = packed;
-                        w0 += dw0_dx; w1 += dw1_dx;
+            if (alpha >= 0.002f) {
+                unsigned int cr = (v0.col      ) & 0xFFu;
+                unsigned int cg = (v0.col >>  8) & 0xFFu;
+                unsigned int cb = (v0.col >> 16) & 0xFFu;
+
+                if (!g_blend_enabled || alpha >= 0.999f) {
+                    /* Opaque: just coverage-test + store */
+                    unsigned int packed = pack_px(cr, cg, cb, fmt);
+                    for (int py = y0; py < y1; ++py) {
+                        float w0 = w0_row, w1 = w1_row;
+                        unsigned int* row = fb + py * fb_stride;
+                        for (int px = x0; px < x1; ++px) {
+                            if (w0 >= -0.001f && w1 >= -0.001f && (1.0f - w0 - w1) >= -0.001f)
+                                row[px] = packed;
+                            w0 += dw0_dx; w1 += dw1_dx;
+                        }
+                        w0_row += dw0_dy; w1_row += dw1_dy;
                     }
-                    w0_row += dw0_dy; w1_row += dw1_dy;
+                    return;
                 }
-                return;
-            } else if (alpha >= 0.002f) {
+
                 /* Constant semi-transparent: blend with precomputed src terms */
                 float inv_a = 1.0f - alpha;
-                float sr = (float)((v0.col      ) & 0xFFu) * alpha;
-                float sg = (float)((v0.col >>  8) & 0xFFu) * alpha;
-                float sb = (float)((v0.col >> 16) & 0xFFu) * alpha;
+                float sr = (float)cr * alpha;
+                float sg = (float)cg * alpha;
+                float sb = (float)cb * alpha;
                 for (int py = y0; py < y1; ++py) {
                     float w0 = w0_row, w1 = w1_row;
                     unsigned int* row = fb + py * fb_stride;
@@ -735,8 +762,8 @@ static void rasterize_triangle(
                 float alpha = sa * (float)ta * (1.0f / (255.0f * 255.0f));
 
                 if (alpha >= 0.002f) {
-                    if (alpha >= 0.999f) {
-                        /* ---- Opaque fast path: skip read-modify-write ---- */
+                    if (!g_blend_enabled || alpha >= 0.999f) {
+                        /* ---- Opaque write: skip read-modify-write ---- */
                         unsigned int fr  = (unsigned int)(sr + 0.5f); if (fr  > 255u) fr  = 255u;
                         unsigned int fg  = (unsigned int)(sg + 0.5f); if (fg  > 255u) fg  = 255u;
                         unsigned int fbl = (unsigned int)(sb + 0.5f); if (fbl > 255u) fbl = 255u;

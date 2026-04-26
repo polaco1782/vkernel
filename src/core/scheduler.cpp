@@ -41,6 +41,10 @@ static usize g_per_cpu_task[MAX_APIC_IDS];   /* current task index per CPU */
 /* Global scheduler spinlock — held only during the brief task-pick window */
 static spinlock g_sched_lock;
 
+/* Per-CPU yield-in-progress flag.  Must not be a single global because
+ * one CPU's yield flag would be consumed by another CPU's timer ISR. */
+static volatile bool g_yield_in_progress[MAX_APIC_IDS];
+
 /* APIC ID of the Bootstrap Processor — only the BSP drives g_tick_count
  * via the PIT (IRQ0).  APs use their LAPIC timer for preemption only;
  * they must not increment the global tick or sleep timers will run N× fast. */
@@ -189,6 +193,8 @@ auto sched::init() -> status_code {
      * corrupt g_tasks[0].rsp if the slot were 0. */
     for (usize i = 0; i < MAX_APIC_IDS; ++i)
         g_per_cpu_task[i] = SCHED_NO_TASK;
+    for (usize i = 0; i < MAX_APIC_IDS; ++i)
+        g_yield_in_progress[i] = false;
     g_task_count       = 0;
     g_scheduler_active = false;
     g_tick_count       = 0;
@@ -206,7 +212,11 @@ auto sched::init() -> status_code {
 }
 
 auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) -> i64 {
-    if (g_task_count >= MAX_TASKS) return -1;
+    g_sched_lock.acquire();
+    if (g_task_count >= MAX_TASKS) {
+        g_sched_lock.release();
+        return -1;
+    }
 
     auto& t = g_tasks[g_task_count];
     t.id    = g_task_count;
@@ -214,6 +224,7 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
     t.wake_tick = 0;
     t.entry = entry;
     t.user_data = user_data;
+    t.fxsave_valid = false;
     str_copy(t.name, name, sizeof(t.name));
 
     /*
@@ -280,6 +291,7 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
 
     i64 id = static_cast<i64>(g_task_count);
     ++g_task_count;
+    g_sched_lock.release();
 
     log::info("Task created: %s (id=%llu)",
               name, static_cast<unsigned long long>(id));
@@ -287,11 +299,9 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
     return id;
 }
 
-static volatile bool g_yield_in_progress = false;
-
 void sched::yield() {
     if (!g_scheduler_active || g_task_count < 2) return;
-    g_yield_in_progress = true;
+    g_yield_in_progress[smp::current_cpu_apic_id()] = true;
     asm_int_timer();
 }
 
@@ -299,9 +309,10 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     /* Only count real PIT hardware ticks, not software yields.
      * Note: on APs the LAPIC timer fires on vector 32 as well;  the
      * PIT only fires on the BSP (IRQ0 is wired to the BSP by the PIC). */
-    if (g_yield_in_progress) {
-        g_yield_in_progress = false;
-    } else if (smp::current_cpu_apic_id() == g_bsp_apic_id) {
+    u8 this_apic = smp::current_cpu_apic_id();
+    if (g_yield_in_progress[this_apic]) {
+        g_yield_in_progress[this_apic] = false;
+    } else if (this_apic == g_bsp_apic_id) {
         /* Only the BSP's PIT (IRQ0) advances the global clock.
          * APs fire vector 32 from their LAPIC timers for scheduling only;
          * if they also incremented g_tick_count, ticks would run N× fast. */
@@ -326,13 +337,13 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         lapic[LAPIC_EOI / 4] = 0;
     }
 
-    wake_sleeping_tasks();
-
     if (!g_scheduler_active || g_task_count < 2) {
         return regs;
     }
 
     g_sched_lock.acquire();
+
+    wake_sleeping_tasks();
 
     usize cur = cpu_current_task();
 
@@ -344,6 +355,11 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
      * SCHED_NO_TASK simultaneously. */
     if (cur < g_task_count) {
         g_tasks[cur].rsp = reinterpret_cast<u64>(regs);
+        /* Save x87/SSE state.  Without this, XMM register contents
+         * leak across context switches and corrupt user processes
+         * that use SSE (e.g. doom, anything compiled with -msse2). */
+        arch::fxsave(g_tasks[cur].fxsave_area);
+        g_tasks[cur].fxsave_valid = true;
         if (g_tasks[cur].state == task_state::running)
             g_tasks[cur].state = task_state::ready;
     }
@@ -369,6 +385,14 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     cpu_set_current_task(next);
     g_tasks[next].state = task_state::running;
 
+    /* Restore the next task's x87/SSE state.  On the very first
+     * dispatch the task has never run yet, so fxsave_valid is false
+     * and we leave the FPU in its boot-time state (which the task
+     * trampoline / entry point will initialise as needed). */
+    if (g_tasks[next].fxsave_valid) {
+        arch::fxrstor(g_tasks[next].fxsave_area);
+    }
+
     g_sched_lock.release();
 
     return reinterpret_cast<arch::register_state*>(g_tasks[next].rsp);
@@ -388,9 +412,16 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         vk_panic(__FILE__, __LINE__, "No tasks to schedule");
     }
 
-    g_scheduler_active = true;
+    /* Mark task 0 as running and enable the scheduler atomically
+     * under the spinlock.  Without this, an AP's LAPIC timer could
+     * fire between g_scheduler_active=true and g_tasks[0]=running,
+     * causing two CPUs to execute the same task on the same stack
+     * and producing catastrophic memory corruption. */
+    g_sched_lock.acquire();
     cpu_set_current_task(0);
     g_tasks[0].state = task_state::running;
+    g_scheduler_active = true;
+    g_sched_lock.release();
 
     /* Unmask IRQ0 and enable interrupts (BSP only) */
     pic_unmask_irq0();
@@ -398,7 +429,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     log::info("Scheduler starting...");
 
     /* Jump into the first task — naked asm, no compiler interference */
-    sched_switch_to(g_tasks[cpu_current_task()].rsp);
+    sched_switch_to(g_tasks[0].rsp);
 }
 
 /* ============================================================
@@ -500,15 +531,20 @@ void sched::sleep(u64 ticks) {
         return;
     }
 
-    auto& t = g_tasks[cpu_current_task()];
-    t.wake_tick = g_tick_count + ticks;
-    t.state = task_state::blocked;
+    /* Set wake_tick and state under the spinlock so that another CPU's
+     * preempt() → wake_sleeping_tasks() cannot observe state==blocked
+     * with a stale wake_tick (which would wake us immediately). */
+    g_sched_lock.acquire();
+    usize cur = cpu_current_task();
+    g_tasks[cur].wake_tick = g_tick_count + ticks;
+    g_tasks[cur].state = task_state::blocked;
+    g_sched_lock.release();
 
-    while (t.state == task_state::blocked) {
+    /* Yield repeatedly until woken.  In practice the first yield()
+     * will not return until wake_sleeping_tasks() marks us ready
+     * and preempt() dispatches us back. */
+    while (g_tasks[cpu_current_task()].state == task_state::blocked) {
         yield();
-        if (t.state == task_state::blocked) {
-            arch::cpu_halt();
-        }
     }
 }
 
@@ -529,14 +565,28 @@ void sched::wait_for_task(u64 task_id) {
 }
 
 [[noreturn]] void sched::exit_task() {
-    arch::disable_interrupts();
+    g_sched_lock.acquire();
     usize cur = cpu_current_task();
     g_tasks[cur].state = task_state::terminated;
+    g_tasks[cur].user_data = null;
     log::debug("Task terminated: %s", g_tasks[cur].name);
-    arch::enable_interrupts();
+    g_sched_lock.release();
     /* Yield to let scheduler pick another task */
     while (true) { sched::yield(); arch::cpu_halt(); }
     VK_UNREACHABLE();
+}
+
+auto sched::detach_current_task() -> void* {
+    g_sched_lock.acquire();
+    void* prev = null;
+    usize cur = cpu_current_task();
+    if (cur < g_task_count) {
+        prev = g_tasks[cur].user_data;
+        g_tasks[cur].user_data = null;
+        g_tasks[cur].state     = task_state::terminated;
+    }
+    g_sched_lock.release();
+    return prev;
 }
 
 void sched::dump_tasks() {

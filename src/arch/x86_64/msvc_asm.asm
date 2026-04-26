@@ -10,6 +10,7 @@
 ;
 
 EXTERN isr_stub_0:PROC
+EXTERN ap_init_secondary:PROC
 
 .code
 
@@ -389,6 +390,18 @@ asm_vzeroall PROC
     ret
 asm_vzeroall ENDP
 
+; void asm_fxsave(void* area)  — RCX = area, must be 16-byte aligned, 512 bytes
+asm_fxsave PROC
+    fxsave64 [rcx]
+    ret
+asm_fxsave ENDP
+
+; void asm_fxrstor(const void* area)  — RCX = area, must be 16-byte aligned, 512 bytes
+asm_fxrstor PROC
+    fxrstor64 [rcx]
+    ret
+asm_fxrstor ENDP
+
 ; void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx)
 ;   RCX = leaf, RDX = eax*, R8 = ebx*, R9 = ecx*, [rsp+40] = edx*
 asm_cpuid PROC
@@ -423,5 +436,86 @@ asm_cpuid PROC
     pop   rbx
     ret
 asm_cpuid ENDP
+
+; ==============================================================
+; Missing GCC parity helpers
+; These return linker-defined symbol addresses or provide simple
+; instruction wrappers that exist in the gcc_asm.S implementation.
+; ==============================================================
+
+; void asm_pause() — PAUSE hint for spin-wait loops
+asm_pause PROC
+    pause
+    ret
+asm_pause ENDP
+
+; u64 asm_get_image_base()
+asm_get_image_base PROC
+    lea rax, ImageBase
+    ret
+asm_get_image_base ENDP
+
+; u64 asm_get_data_start()
+asm_get_data_start PROC
+    lea rax, _data
+    ret
+asm_get_data_start ENDP
+
+; u64 asm_get_data_end()
+asm_get_data_end PROC
+    lea rax, _edata
+    ret
+asm_get_data_end ENDP
+
+; u64 asm_get_end()
+asm_get_end PROC
+    lea rax, _end
+    ret
+asm_get_end ENDP
+
+; u64 asm_get_got_start()
+asm_get_got_start PROC
+    lea rax, _got_start
+    ret
+asm_get_got_start ENDP
+
+; u64 asm_get_got_end()
+asm_get_got_end PROC
+    lea rax, _got_end
+    ret
+asm_get_got_end ENDP
+
+; ==============================================================
+; AP 64-bit entry point (MSVC)
+; Mirrors the implementation in gcc_asm.S: loads data selectors,
+; initializes RSP from the TRAM_STACK stored by the BSP, then
+; calls the C++ AP init routine. If ap_init_secondary returns,
+; halt the CPU.
+; ==============================================================
+ap_entry_64 PROC
+    ; Load 64-bit data selectors from the temporary trampoline GDT
+    mov ax, 20h          ; SEL_DATA64
+    mov ss, ax
+    mov ds, ax
+    mov es, ax
+    xor ax, ax
+    mov fs, ax
+    mov gs, ax
+
+    ; Load the AP stack pointer stored by the BSP at physical 0x8140
+    mov rax, 8140h
+    mov rsp, QWORD PTR [rax]
+
+    ; Zero the frame pointer for clean stack traces
+    xor rbp, rbp
+
+    ; Call the C++ AP initialization function
+    call ap_init_secondary
+
+ap_entry_halt:
+    cli
+    hlt
+    jmp ap_entry_halt
+ap_entry_64 ENDP
 
 END

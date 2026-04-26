@@ -9,6 +9,7 @@
 #include "types.h"
 #include "uefi.h"
 #include "console.h"
+#include "spinlock.h"
 #include "arch/x86_64/arch.h"
 
 using vk_va_list = __builtin_va_list;
@@ -840,9 +841,34 @@ static auto level_color(log_level level) -> console_color {
     }
 }
 
+/* Spinlock for serialising log output across CPUs.
+ *
+ * Crash-level messages also take this lock, but use a recursive
+ * try-acquire path so that:
+ *   - if no other CPU holds it, we acquire normally;
+ *   - if THIS CPU already holds it (we crashed mid-log), we just
+ *     proceed without re-acquiring (which would self-deadlock);
+ *   - if ANOTHER CPU holds it, we briefly spin then proceed anyway,
+ *     accepting interleaved output rather than a hang. */
+static spinlock s_log_lock;
+
 static void vlog(log_level level, bool append_newline, const char* format, vk_va_list args) {
     if (!level_enabled(level)) {
         return;
+    }
+
+    bool we_locked = false;
+    if (level == log_level::crash) {
+        if (!s_log_lock.held_by_self()) {
+            /* Try briefly; if another CPU is mid-log just print on top */
+            for (int i = 0; i < 1000; ++i) {
+                if (s_log_lock.try_acquire()) { we_locked = true; break; }
+                arch::cpu_pause();
+            }
+        }
+    } else {
+        s_log_lock.acquire();
+        we_locked = true;
     }
 
     format_state state{};
@@ -867,6 +893,8 @@ static void vlog(log_level level, bool append_newline, const char* format, vk_va
     if (level != log_level::printk) {
         console::set_color(console_color::white, console_color::black);
     }
+
+    if (we_locked) s_log_lock.release();
 }
 
 } // namespace

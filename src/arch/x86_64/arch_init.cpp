@@ -13,6 +13,7 @@
 #include "panic.h"
 #include "process_internal.h"
 #include "arch/x86_64/arch.h"
+#include "smp.h"
 #if defined(_MSC_VER)
 #include "msvc_asm.h"
 #else
@@ -173,9 +174,52 @@ static void idt_set_gate(u32 vector, u64 handler, u8 ist, u8 type_attr) {
 extern "C" register_state* interrupt_dispatch(register_state* regs) {
     u64 vec = regs->int_no;
 
+    /* Vector 2: NMI \u2014 used by vk_panic() to stop other CPUs.
+     * Just disable interrupts and halt; do not log (the BSP holds
+     * the log lock printing the panic message). */
+    if (vec == 2) {
+        disable_interrupts();
+        while (true) { cpu_halt(); }
+    }
+
     if (vec < 32) {
-        /* CPU exception — dump diagnostics */
-        log::crash("\n*** EXCEPTION: %s (vector %llu) ***",
+        u8 self_apic = smp::current_cpu_apic_id();
+        u32 self_idx = (self_apic < smp::MAX_CPUS) ? self_apic : 0;
+
+        /*
+         * Per-CPU re-entry guard FIRST.  If THIS CPU is already
+         * handling an exception and another fires (e.g. cleanup
+         * code itself faulted on corrupted heap), state is
+         * compromised — halt this CPU.  We may still hold the
+         * global exception lock at this point; release it so
+         * other CPUs can make progress.
+         */
+        static volatile bool s_in_exception[smp::MAX_CPUS] = {};
+        static spinlock s_exception_lock;  /* serialises exception handling across CPUs */
+
+        if (s_in_exception[self_idx]) {
+            if (s_exception_lock.held_by_self()) {
+                s_exception_lock.release();
+            }
+            log::crash("\n*** NESTED EXCEPTION on CPU %u (vec %llu) \u2014 halting CPU ***",
+                       self_apic, static_cast<unsigned long long>(vec));
+            disable_interrupts();
+            while (true) { cpu_halt(); }
+        }
+        s_in_exception[self_idx] = true;
+
+        /*
+         * Global exception serializer: only one CPU at a time may
+         * be in the exception dispatch / recovery path.  This
+         * prevents two crashing CPUs from interleaving their
+         * diagnostic output and from racing on shared cleanup
+         * paths (heap free, scheduler state).
+         */
+        s_exception_lock.acquire();
+
+        /* CPU exception \u2014 dump diagnostics */
+        log::crash("\n*** EXCEPTION on CPU %u: %s (vector %llu) ***",
+                   self_apic,
                    s_exception_names[vec],
                    static_cast<unsigned long long>(vec));
 
@@ -228,9 +272,15 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
         /*
          * If the faulting task is a userspace process, kill just
          * that process instead of bringing down the whole kernel.
+         *
+         * Atomically detach the task from its ctx FIRST: this
+         * read-and-clears user_data under the scheduler lock so two
+         * CPUs cannot both observe the same non-null ctx and race
+         * to free it twice.  Only the CPU that gets a non-null ctx
+         * back is responsible for cleanup.
          */
         auto* ctx = static_cast<process::process_task_context*>(
-            sched::current_task_user_data());
+            sched::detach_current_task());
         if (ctx != null) {
             log::warn("Terminating process '%s' (task %llu) due to %s",
                       sched::current_task_name(),
@@ -238,6 +288,17 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
                       s_exception_names[vec]);
 
             process::cleanup_process_context(ctx, -static_cast<int>(vec));
+
+            /*
+             * Cleanup completed without re-faulting.  Clear the
+             * per-CPU re-entry guard and release the global
+             * exception serializer so other CPUs can recover from
+             * their own faults.  exit_task() switches to another
+             * task and never returns to this dispatcher.
+             */
+            s_in_exception[self_idx] = false;
+            s_exception_lock.release();
+
             sched::exit_task();
             /* exit_task never returns */
         }

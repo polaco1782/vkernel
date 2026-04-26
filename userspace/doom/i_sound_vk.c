@@ -24,9 +24,6 @@
 
 #include "../include/vk.h"
 
-/* ---- per-channel playback end-time (in kernel ticks) ---- */
-static vk_u64 channel_end_tick[8];
-
 /* ---- config variables (referenced from m_config.c) ---- */
 int snd_samplerate = 44100;
 int snd_cachesize = 64 * 1024 * 1024;
@@ -69,9 +66,9 @@ static boolean vk_snd_init(GameMission_t mission)
 {
     (void)mission;
 
-    /* Program the AC97 codec to the configured output rate. */
-    VK_CALL(snd_set_sample_rate, (uint32_t)snd_samplerate);
-    VK_CALL(snd_set_volume, 127, 127);
+    /* Set master hardware volume to maximum; per-channel volume is
+     * controlled via the software mixer. */
+    VK_CALL(snd_set_volume, 255, 255);
 
     memset(channels, 0, sizeof(channels));
     return true;
@@ -79,6 +76,9 @@ static boolean vk_snd_init(GameMission_t mission)
 
 static void vk_snd_shutdown(void)
 {
+    /* Stop all mixer channels then the hardware. */
+    for (int i = 0; i < MAX_CHANNELS; ++i)
+        VK_CALL(snd_mix_stop, i);
     VK_CALL(snd_stop);
 }
 
@@ -93,9 +93,9 @@ static int vk_snd_get_sfx_lump_num(sfxinfo_t *sfx)
 
 static void vk_snd_update(void)
 {
-    /* Mix all active channels into a temporary buffer and submit to kernel */
-    /* For simplicity, we submit one channel at a time via vk_snd_play.
-     * A more sophisticated implementation would mix channels together. */
+    /* Re-submit the mixed buffer if the hardware window has expired
+     * but mixer channels still have remaining data. */
+    VK_CALL(snd_mix_update);
 }
 
 static void vk_snd_update_params(int channel, int vol, int sep)
@@ -131,16 +131,17 @@ static int vk_snd_start(sfxinfo_t *sfx, int channel, int vol, int sep, int pitch
     /* Stop previous sound on this channel. */
     channels[channel].active = 0;
 
-    /* Program the codec to the lump's native rate then play.
-     * The AC97 Variable Rate Audio (VRA) handles any rate the lump uses.
-     * The driver expands 8-bit mono to stereo 16-bit internally. */
-    VK_CALL(snd_set_sample_rate, sample_rate);
-    VK_CALL(snd_play, lumpdata + 8, num_samples, VK_SND_FORMAT_UNSIGNED_8);
+    /* Compute per-channel L/R volumes from Doom's vol (0-127) and
+     * sep (0-255, 128 = centre) parameters. */
+    uint32_t vol_l_u = ((uint32_t)vol * (255u - (uint32_t)sep)) >> 7;
+    uint32_t vol_r_u = ((uint32_t)vol * (uint32_t)sep) >> 7;
+    uint8_t vol_l = (vol_l_u > 255u) ? 255u : (uint8_t)vol_l_u;
+    uint8_t vol_r = (vol_r_u > 255u) ? 255u : (uint8_t)vol_r_u;
 
-    /* Record when this sound will finish (for vk_snd_playing). */
-    vk_u64 tps = VK_CALL(ticks_per_sec);
-    vk_u64 duration_ticks = ((vk_u64)num_samples * tps) / (vk_u64)sample_rate + tps / 20;
-    channel_end_tick[channel] = VK_CALL(tick_count) + duration_ticks;
+    /* Submit to the software mixer — it handles resampling to 48 kHz
+     * and blending with any other active channels. */
+    VK_CALL(snd_mix_play, channel, lumpdata + 8, num_samples,
+            VK_SND_FORMAT_UNSIGNED_8, sample_rate, vol_l, vol_r);
 
     channels[channel].data   = lumpdata + 8;
     channels[channel].length = num_samples;
@@ -152,12 +153,13 @@ static int vk_snd_start(sfxinfo_t *sfx, int channel, int vol, int sep, int pitch
     return channel;
 }
 
+
 static void vk_snd_stop_ch(int channel)
 {
     if (channel < 0 || channel >= MAX_CHANNELS) return;
     if (channels[channel].active) {
         channels[channel].active = 0;
-        VK_CALL(snd_stop);
+        VK_CALL(snd_mix_stop, channel);
     }
 }
 
@@ -165,10 +167,8 @@ static boolean vk_snd_playing(int channel)
 {
     if (channel < 0 || channel >= MAX_CHANNELS) return false;
     if (!channels[channel].active) return false;
-    /* Use elapsed time rather than querying the DSP — the kernel never
-     * auto-resets s_playing, so vk_snd_is_playing() would always return
-     * true and Doom would think all channels are permanently busy. */
-    if (VK_CALL(tick_count) >= channel_end_tick[channel]) {
+    /* Delegate to the kernel mixer which tracks per-channel position. */
+    if (!VK_CALL(snd_mix_is_playing, channel)) {
         channels[channel].active = 0;
         return false;
     }

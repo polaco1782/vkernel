@@ -61,6 +61,7 @@ unsigned long long asm_read_rflags();
 
 /* ---- Misc CPU instructions ---- */
 void asm_cpu_nop();
+void asm_pause();   /* PAUSE hint for spin-wait / HLT loops */
 
 /* ---- Memory barriers ---- */
 void asm_memory_barrier();
@@ -77,6 +78,15 @@ int                asm_atomic_cmpxchg(volatile unsigned long long* ptr,
                                        unsigned long long expected,
                                        unsigned long long new_value);
 
+/* ---- RIP-relative symbol address helpers ---- */
+unsigned long long asm_get_isr_stub_base();
+unsigned long long asm_get_image_base();
+unsigned long long asm_get_data_start();
+unsigned long long asm_get_data_end();
+unsigned long long asm_get_got_start();
+unsigned long long asm_get_got_end();
+unsigned long long asm_get_end();
+
 /* ---- Symbol address helper ---- */
 unsigned long long asm_get_isr_stub_base();
 
@@ -88,6 +98,11 @@ void asm_xsetbv(u32 xcr, u32 eax_val, u32 edx_val);
 u64  asm_xgetbv(u32 xcr);
 void asm_vzeroall();
 void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx);
+
+/* FXSAVE / FXRSTOR — save/restore x87+SSE state.
+ * The area must be 16-byte aligned and 512 bytes long. */
+void asm_fxsave(void* area);
+void asm_fxrstor(const void* area);
 
 } /* extern "C" */
 

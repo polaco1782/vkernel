@@ -258,9 +258,9 @@ auto efi_main(
     log::info("Driver framework initialised (2 built-in drivers registered)");
 
     /* Bring up Application Processors */
-    //log::info("Initializing SMP...");
-    //smp::init();
-    //smp::dump_cpus();
+    log::info("Initializing SMP...");
+    smp::init();
+    smp::dump_cpus();
 
     /* Initialize the scheduler (sets up PIC + PIT) */
     if (auto status = sched::init(); status != status_code::success) {

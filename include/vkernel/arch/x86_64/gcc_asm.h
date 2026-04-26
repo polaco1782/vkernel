@@ -96,6 +96,11 @@ u64  asm_xgetbv(u32 xcr);
 void asm_vzeroall();
 void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx);
 
+/* FXSAVE / FXRSTOR — save/restore x87+SSE state.
+ * The area must be 16-byte aligned and 512 bytes long. */
+void asm_fxsave(void* area);
+void asm_fxrstor(const void* area);
+
 } /* extern "C" */
 
 #endif /* !_MSC_VER */

@@ -146,6 +146,31 @@ static void stub_snd_set_volume(vk_u32 left, vk_u32 right) {
     sound::set_volume(static_cast<u8>(left & 0xFF), static_cast<u8>(right & 0xFF));
 }
 
+/* ---- software mixer ---- */
+
+static int stub_snd_mix_play(int channel, const void* data, vk_u32 num_samples,
+                              vk_u32 format, vk_u32 sample_rate,
+                              vk_u32 vol_left, vk_u32 vol_right) {
+    if (!data || num_samples == 0 || sample_rate == 0) return 0;
+    auto fmt = static_cast<sound_format>(format);
+    return sound::mix_play(channel, static_cast<const u8*>(data), num_samples,
+                           fmt, sample_rate,
+                           static_cast<u8>(vol_left  & 0xFF),
+                           static_cast<u8>(vol_right & 0xFF)) ? 1 : 0;
+}
+
+static void stub_snd_mix_stop(int channel) {
+    sound::mix_stop(channel);
+}
+
+static int stub_snd_mix_is_playing(int channel) {
+    return sound::mix_is_playing(channel) ? 1 : 0;
+}
+
+static void stub_snd_mix_update() {
+    sound::mix_update();
+}
+
 /* ---- driver management ---- */
 
 static int stub_drv_load(const char* name) {
@@ -580,6 +605,11 @@ void init() {
     s_api.vk_snd_is_playing = stub_snd_is_playing;
     s_api.vk_snd_set_sample_rate = stub_snd_set_sample_rate;
     s_api.vk_snd_set_volume = stub_snd_set_volume;
+    /* software mixer */
+    s_api.vk_snd_mix_play       = stub_snd_mix_play;
+    s_api.vk_snd_mix_stop       = stub_snd_mix_stop;
+    s_api.vk_snd_mix_is_playing = stub_snd_mix_is_playing;
+    s_api.vk_snd_mix_update     = stub_snd_mix_update;
     /* driver management */
     s_api.vk_drv_load = stub_drv_load;
     s_api.vk_drv_unload = stub_drv_unload;

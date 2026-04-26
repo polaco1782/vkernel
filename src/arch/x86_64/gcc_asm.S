@@ -423,6 +423,18 @@ asm_vzeroall:
     vzeroall
     ret
 
+/* void asm_fxsave(void* area)  — area must be 16-byte aligned, 512 bytes */
+.global asm_fxsave
+asm_fxsave:
+    fxsaveq (%rdi)
+    ret
+
+/* void asm_fxrstor(const void* area) — area must be 16-byte aligned, 512 bytes */
+.global asm_fxrstor
+asm_fxrstor:
+    fxrstorq (%rdi)
+    ret
+
 /* void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx)
  *   %edi = leaf, %rsi = eax*, %rdx = ebx*, %rcx = ecx*, %r8 = edx*  */
 /* void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx)

@@ -254,6 +254,10 @@ void ap_activate();
 /* PAUSE hint — thin inline wrapper around asm_pause() */
 inline auto cpu_pause() -> void { asm_pause(); }
 
+/* FXSAVE / FXRSTOR — save/restore x87+SSE state (512 bytes, 16B aligned) */
+inline auto fxsave(void* area)        -> void { asm_fxsave(area); }
+inline auto fxrstor(const void* area) -> void { asm_fxrstor(area); }
+
 } // namespace arch
 } // namespace vk
 

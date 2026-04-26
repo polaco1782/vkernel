@@ -56,6 +56,9 @@ struct sound_driver_t {
  * Sound subsystem management
  * ============================================================ */
 
+/* Maximum number of simultaneous software-mixer channels */
+constexpr u32 MIX_CHANNELS = 8;
+
 namespace sound {
 
 /* Register a sound driver.  Only one active driver at a time. */
@@ -72,6 +75,22 @@ bool play(const u8* samples, u32 length, sound_format fmt);
 void stop();
 bool is_playing();
 void set_volume(u8 left, u8 right);
+
+/* ---- Software mixer ----
+ *
+ * Maintains up to MIX_CHANNELS independent audio channels.  Each call to
+ * mix_play() mixes all active channels together and submits the result to
+ * the hardware driver as a single stereo 16-bit PCM buffer at
+ * MIX_OUTPUT_RATE Hz.  mix_update() should be called periodically (e.g.
+ * once per game tick) so that long sounds are re-submitted after the
+ * hardware has finished the previous window.
+ */
+bool mix_play(int ch, const u8* data, u32 src_samples, sound_format fmt,
+              u32 sample_rate, u8 vol_left, u8 vol_right);
+void mix_stop(int ch);
+bool mix_is_playing(int ch);
+void mix_update();
+void mix_shutdown();
 
 } // namespace sound
 } // namespace vk

@@ -163,6 +163,8 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
 auto phys_allocator::allocate_pages(u32 page_count, u32 alignment, phys_addr max_addr) -> phys_addr {
     if (page_count == 0) return 0;
 
+    lock_.acquire();
+
     size_phys req_size = static_cast<size_phys>(page_count) * PAGE_SIZE_4K;
 
     for (auto region = free_list_; region != null; region = region->next) {
@@ -220,15 +222,19 @@ auto phys_allocator::allocate_pages(u32 page_count, u32 alignment, phys_addr max
 
         used_pages_ += page_count;
         free_pages_ -= page_count;
+        lock_.release();
         return aligned_start;
     }
 
+    lock_.release();
     return 0; /* out of memory */
 }
 
 /* Free physical pages - marks the region free and coalesces adjacent free regions */
 void phys_allocator::free_pages(phys_addr addr, u32 page_count) {
     if (addr == 0 || page_count == 0) return;
+
+    lock_.acquire();
 
     memory_region* prev = null;
     for (auto region = free_list_; region != null; region = region->next) {
@@ -254,10 +260,13 @@ void phys_allocator::free_pages(phys_addr addr, u32 page_count) {
                 free_region_node(region);
             }
 
+            lock_.release();
             return;
         }
         prev = region;
     }
+
+    lock_.release();
 }
 
 /* Kernel heap initialization */
@@ -280,6 +289,8 @@ auto kernel_heap::allocate(size_phys size) -> void* {
     if (size == 0) {
         return null;
     }
+
+    lock_.acquire();
     
     /* Align size to 16 bytes so every allocation starts on a 16-byte boundary
      * (required by SSE/XMM constants in PE .rdata that use MOVAPS/XORPS). */
@@ -310,11 +321,13 @@ auto kernel_heap::allocate(size_phys size) -> void* {
                 block->size = size;
             }
             
+            lock_.release();
             return block->data();
         }
         block = block->next;
     }
     
+    lock_.release();
     /* No suitable block found */
     return null;
 }
@@ -333,6 +346,8 @@ void kernel_heap::free(void* ptr) {
     if (ptr == null) {
         return;
     }
+
+    lock_.acquire();
 
     log::debug("heap: freeing block at %p", ptr);
     
@@ -359,6 +374,8 @@ void kernel_heap::free(void* ptr) {
             block->next->prev = block->prev;
         }
     }
+
+    lock_.release();
 }
 
 /* Memory set */

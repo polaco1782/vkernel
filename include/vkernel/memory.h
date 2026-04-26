@@ -9,6 +9,7 @@
 #define VKERNEL_MEMORY_H
 
 #include "types.h"
+#include "spinlock.h"
 
 namespace vk {
 
@@ -152,6 +153,7 @@ private:
     size_phys total_pages_ = 0;
     size_phys used_pages_ = 0;
     size_phys free_pages_ = 0;
+    spinlock lock_;
 };
 
 /* ============================================================
@@ -196,6 +198,7 @@ public:
 
 private:
     heap_block* free_list_ = null;
+    spinlock lock_;
 };
 
 /* Global allocator instances */

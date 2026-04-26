@@ -58,3 +58,15 @@ void ImGui_ImplVK_ProcessMouse(const vk_mouse_event_t* evt);
  */
 void ImGui_ImplVK_RenderDrawData(ImDrawData* draw_data,
                                   const vk_framebuffer_info_t* fb);
+
+/* ---- Renderer options ---- */
+
+/*
+ * Enable/disable per-pixel alpha blending in the rasterizer.
+ *  - false (default): every pixel is written opaque -> fastest path.
+ *  - true:            do source-over blend against the back-buffer
+ *                     (lets translucent windows / fades work, costs
+ *                      a read-modify-write per pixel).
+ */
+void ImGui_ImplVK_SetTransparencyEnabled(bool enabled);
+bool ImGui_ImplVK_GetTransparencyEnabled();
