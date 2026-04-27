@@ -187,6 +187,7 @@ static inline const vk_api_t* vk_get_api(void) {
 /* Sound format constants for vk_snd_play() / vk_snd_mix_play() */
 #define VK_SND_FORMAT_UNSIGNED_8   0
 #define VK_SND_FORMAT_SIGNED_16    1
+#define VK_SND_FORMAT_SIGNED_16_STEREO 2
 
 /* Maximum simultaneous mixer channels */
 #define VK_SND_MIX_CHANNELS        8

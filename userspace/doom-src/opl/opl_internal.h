@@ -65,7 +65,7 @@ extern opl_driver_t opl_openbsd_driver;
 extern opl_driver_t opl_win32_driver;
 #endif
 extern opl_driver_t opl_sdl_driver;
+extern opl_driver_t opl_vk_driver;
 
 
 #endif /* #ifndef OPL_INTERNAL_H */
-

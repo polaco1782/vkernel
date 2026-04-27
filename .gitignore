@@ -33,6 +33,7 @@ ipch/
 *~
 .vscode/
 .idea/
+.codex
 
 # OS files
 .DS_Store

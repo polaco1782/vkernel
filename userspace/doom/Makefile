@@ -43,6 +43,7 @@ CFLAGS  += -I$(SDL_SHIM)
 CFLAGS  += -I.
 CFLAGS  += -I$(DOOM_SRC)
 CFLAGS  += -I$(DOOM_SRC)/doom
+CFLAGS  += -I$(DOOM_SRC)/../opl
 CFLAGS  += -DDISABLE_SDL2MIXER
 CFLAGS  += -DDISABLE_SDL2NET
 
@@ -84,6 +85,7 @@ COMMON_SRCS := \
 	$(DOOM_SRC)/midifile.c \
 	$(DOOM_SRC)/midifallback.c \
 	$(DOOM_SRC)/mus2mid.c \
+	$(DOOM_SRC)/i_oplmusic.c \
 	$(DOOM_SRC)/net_client.c \
 	$(DOOM_SRC)/net_common.c \
 	$(DOOM_SRC)/net_dedicated.c \
@@ -174,16 +176,23 @@ VK_SRCS := \
 	i_sound_vk.c \
 	i_timer_vk.c \
 	i_system_vk.c \
-	i_stubs_vk.c
+	i_stubs_vk.c \
+	opl_vk.c
 
-ALL_SRCS := $(COMMON_SRCS) $(GAME_SRCS) $(VK_SRCS)
+OPL_SRCS := \
+	$(DOOM_SRC)/../opl/opl.c \
+	$(DOOM_SRC)/../opl/opl_queue.c \
+	$(DOOM_SRC)/../opl/opl3.c
+
+ALL_SRCS := $(COMMON_SRCS) $(GAME_SRCS) $(VK_SRCS) $(OPL_SRCS)
 
 # Object files — flatten into obj/ directory
 OBJ_DIR := obj
 COMMON_OBJS := $(patsubst $(DOOM_SRC)/%.c,$(OBJ_DIR)/common_%.o,$(COMMON_SRCS))
 GAME_OBJS   := $(patsubst $(DOOM_GAME_SRC)/%.c,$(OBJ_DIR)/game_%.o,$(GAME_SRCS))
 VK_OBJS     := $(patsubst %.c,$(OBJ_DIR)/%.o,$(VK_SRCS))
-ALL_OBJS    := $(COMMON_OBJS) $(GAME_OBJS) $(VK_OBJS)
+OPL_OBJS    := $(patsubst $(DOOM_SRC)/../opl/%.c,$(OBJ_DIR)/opl_%.o,$(OPL_SRCS))
+ALL_OBJS    := $(COMMON_OBJS) $(GAME_OBJS) $(VK_OBJS) $(OPL_OBJS)
 
 TARGET := doom.vbin
 
@@ -201,6 +210,10 @@ $(OBJ_DIR)/common_%.o: $(DOOM_SRC)/%.c | $(OBJ_DIR)
 
 # Compile game sources
 $(OBJ_DIR)/game_%.o: $(DOOM_GAME_SRC)/%.c | $(OBJ_DIR)
+	@echo "  CC      $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/opl_%.o: $(DOOM_SRC)/../opl/%.c | $(OBJ_DIR)
 	@echo "  CC      $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 

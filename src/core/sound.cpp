@@ -165,18 +165,27 @@ static void mix_do_submit() {
             if (src_idx >= ch.src_total) break;
 
             i32 sample;
+            i32 sample_l;
+            i32 sample_r;
             if (ch.fmt == sound_format::unsigned_8) {
                 /* 8-bit unsigned mono → signed 16-bit range */
-                sample = (static_cast<i32>(ch.data[src_idx]) - 128) << 8;
-            } else {
+                sample_l = (static_cast<i32>(ch.data[src_idx]) - 128) << 8;
+                sample_r = sample_l;
+            } else if (ch.fmt == sound_format::signed_16) {
                 /* 16-bit signed mono */
-                sample = static_cast<i32>(
+                sample_l = static_cast<i32>(
                     reinterpret_cast<const i16*>(ch.data)[src_idx]);
+                sample_r = sample_l;
+            } else {
+                /* 16-bit signed stereo */
+                const auto* stereo = reinterpret_cast<const i16*>(ch.data);
+                sample_l = static_cast<i32>(stereo[src_idx * 2u]);
+                sample_r = static_cast<i32>(stereo[src_idx * 2u + 1u]);
             }
 
             /* Apply per-channel volume (0-255 scale) */
-            s_mix_acc[f * 2    ] += (sample * static_cast<i32>(ch.vol_left))  >> 8;
-            s_mix_acc[f * 2 + 1] += (sample * static_cast<i32>(ch.vol_right)) >> 8;
+            s_mix_acc[f * 2    ] += (sample_l * static_cast<i32>(ch.vol_left))  >> 8;
+            s_mix_acc[f * 2 + 1] += (sample_r * static_cast<i32>(ch.vol_right)) >> 8;
         }
     }
 

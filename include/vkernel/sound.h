@@ -24,6 +24,7 @@ namespace vk {
 enum class sound_format : u32 {
     unsigned_8  = 0,   /* 8-bit unsigned PCM  */
     signed_16   = 1,   /* 16-bit signed PCM   */
+    signed_16_stereo = 2, /* 16-bit signed stereo PCM */
 };
 
 /* ============================================================

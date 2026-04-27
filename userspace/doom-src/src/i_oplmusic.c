@@ -33,6 +33,7 @@
 
 #include "opl.h"
 #include "midifile.h"
+#include "vk.h"
 
 // #define OPL_MIDI_DEBUG
 
@@ -1612,36 +1613,37 @@ static boolean IsMid(byte *mem, int len)
     return len > 4 && !memcmp(mem, "MThd", 4);
 }
 
-static boolean ConvertMus(byte *musdata, int len, char *filename)
+static midi_file_t *ConvertMus(byte *musdata, int len)
 {
     MEMFILE *instream;
     MEMFILE *outstream;
     void *outbuf;
     size_t outbuf_len;
     int result;
+    midi_file_t *mid;
 
     instream = mem_fopen_read(musdata, len);
     outstream = mem_fopen_write();
 
     result = mus2mid(instream, outstream);
 
+    mid = NULL;
+
     if (result == 0)
     {
         mem_get_buf(outstream, &outbuf, &outbuf_len);
-
-        M_WriteFile(filename, outbuf, outbuf_len);
+        mid = MIDI_LoadFileFromBuffer(outbuf, outbuf_len);
     }
 
     mem_fclose(instream);
     mem_fclose(outstream);
 
-    return result;
+    return mid;
 }
 
 static void *I_OPL_RegisterSong(void *data, int len)
 {
     midi_file_t *result;
-    char *filename;
 
     if (!music_initialized)
     {
@@ -1651,30 +1653,21 @@ static void *I_OPL_RegisterSong(void *data, int len)
     // MUS files begin with "MUS"
     // Reject anything which doesnt have this signature
 
-    filename = M_TempFile("doom.mid");
-
     if (IsMid(data, len) && len < MAXMIDLENGTH)
     {
-        M_WriteFile(filename, data, len);
+        result = MIDI_LoadFileFromBuffer(data, len);
     }
     else
     {
         // Assume a MUS file and try to convert
 
-        ConvertMus(data, len, filename);
+        result = ConvertMus(data, len);
     }
-
-    result = MIDI_LoadFile(filename);
 
     if (result == NULL)
     {
         fprintf(stderr, "I_OPL_RegisterSong: Failed to load MID.\n");
     }
-
-    // remove file now
-
-    M_remove(filename);
-    free(filename);
 
     return result;
 }
@@ -1895,4 +1888,3 @@ void I_OPL_DevMessages(char *result, size_t result_len)
         i = (i + PERCUSSION_LOG_LEN - 1) % PERCUSSION_LOG_LEN;
     } while (lines < 25 && i != last_perc_count);
 }
-

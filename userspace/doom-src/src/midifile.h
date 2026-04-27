@@ -187,6 +187,7 @@ typedef struct
 // Load a MIDI file.
 
 midi_file_t *MIDI_LoadFile(char *filename);
+midi_file_t *MIDI_LoadFileFromBuffer(void *data, size_t len);
 
 // Free a MIDI file.
 
@@ -229,4 +230,3 @@ void MIDI_SetLoopPoint(midi_track_iter_t *iter);
 void MIDI_RestartAtLoopPoint(midi_track_iter_t *iter);
 
 #endif /* #ifndef MIDIFILE_H */
-

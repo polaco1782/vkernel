@@ -46,6 +46,8 @@ static opl_driver_t *drivers[] =
 #endif
 #ifndef DISABLE_SDL2MIXER
     &opl_sdl_driver,
+#else
+    &opl_vk_driver,
 #endif // DISABLE_SDL2MIXER
     NULL
 };
@@ -278,6 +280,9 @@ void OPL_WriteRegister(int reg, int value)
 
 opl_init_result_t OPL_Detect(void)
 {
+#ifdef DISABLE_SDL2MIXER
+    return OPL_INIT_OPL3;
+#else
     int result1, result2;
     int i;
 
@@ -332,6 +337,7 @@ opl_init_result_t OPL_Detect(void)
     {
         return OPL_INIT_NONE;
     }
+#endif
 }
 
 // Initialize registers on startup
@@ -447,6 +453,7 @@ void OPL_Unlock(void)
     }
 }
 
+#ifndef DISABLE_SDL2MIXER
 typedef struct
 {
     int finished;
@@ -466,11 +473,15 @@ static void DelayCallback(void *_delay_data)
 
     SDL_UnlockMutex(delay_data->mutex);
 }
+#endif
 
 // Delay for specified number of microseconds after OPL subsystem is initialized
 
 void OPL_Delay(uint64_t us)
 {
+#ifdef DISABLE_SDL2MIXER
+    (void) us;
+#else
     delay_data_t delay_data;
 
     if (driver == NULL)
@@ -510,6 +521,7 @@ void OPL_Delay(uint64_t us)
 
     SDL_DestroyMutex(delay_data.mutex);
     SDL_DestroyCond(delay_data.cond);
+#endif
 }
 
 void OPL_SetPaused(int paused)
@@ -527,4 +539,3 @@ void OPL_AdjustCallbacks(float value)
         driver->adjust_callbacks_func(value);
     }
 }
-

@@ -3,8 +3,6 @@
  *
  * Replaces i_sound.c + i_sdlsound.c.  Implements the sound_module_t
  * interface using the vkernel sound API (SB16 emulation in QEMU).
- *
- * Music is stubbed out (no OPL/MIDI support yet).
  */
 
 #include <stdio.h>
@@ -24,13 +22,18 @@
 
 #include "../include/vk.h"
 
+#define MUSIC_CHANNEL (VK_SND_MIX_CHANNELS - 1)
+#define MUSIC_SLICE_MAX_FRAMES 4096
+
+void OPL_VK_Render(int16_t *buffer, unsigned int nsamples);
+
 /* ---- config variables (referenced from m_config.c) ---- */
 int snd_samplerate = 44100;
 int snd_cachesize = 64 * 1024 * 1024;
 int snd_maxslicetime_ms = 28;
 char *snd_musiccmd = "";
 int snd_pitchshift = -1;
-int snd_musicdevice = SNDDEVICE_NONE;
+int snd_musicdevice = SNDDEVICE_SB;
 int snd_sfxdevice = SNDDEVICE_SB;
 
 /* DOS compat stubs */
@@ -38,6 +41,11 @@ static int snd_sbport = 0;
 static int snd_sbirq = 0;
 static int snd_sbdma = 0;
 static int snd_mport = 0;
+
+static const sound_module_t *active_sound  = NULL;
+static const music_module_t *active_music  = NULL;
+static int music_initialized = 0;
+static int16_t music_buffer[MUSIC_SLICE_MAX_FRAMES * 2];
 
 /* ============================================================
  * vkernel sound module — simple single-channel SFX playback
@@ -49,7 +57,7 @@ static int snd_mport = 0;
  *   ... unsigned 8-bit PCM data
  * ============================================================ */
 
-#define MAX_CHANNELS 8
+#define MAX_CHANNELS MUSIC_CHANNEL
 
 typedef struct {
     const uint8_t *data;
@@ -180,6 +188,50 @@ static void vk_snd_precache(sfxinfo_t *sounds, int num_sounds)
     (void)sounds; (void)num_sounds;
 }
 
+static unsigned int vk_music_slice_frames(void)
+{
+    unsigned int frames;
+
+    frames = (unsigned int) (((uint64_t) snd_samplerate * (uint64_t) snd_maxslicetime_ms) / 1000u);
+
+    if (frames < 256)
+    {
+        frames = 256;
+    }
+    else if (frames > MUSIC_SLICE_MAX_FRAMES)
+    {
+        frames = MUSIC_SLICE_MAX_FRAMES;
+    }
+
+    return frames;
+}
+
+static void vk_music_poll(void)
+{
+    unsigned int frames;
+
+    if (!music_initialized || active_music == NULL || active_music != &music_opl_module)
+    {
+        return;
+    }
+
+    if (!active_music->MusicIsPlaying())
+    {
+        VK_CALL(snd_mix_stop, MUSIC_CHANNEL);
+        return;
+    }
+
+    if (VK_CALL(snd_mix_is_playing, MUSIC_CHANNEL))
+    {
+        return;
+    }
+
+    frames = vk_music_slice_frames();
+    OPL_VK_Render(music_buffer, frames);
+    VK_CALL(snd_mix_play, MUSIC_CHANNEL, music_buffer, frames,
+            VK_SND_FORMAT_SIGNED_16_STEREO, snd_samplerate, 255, 255);
+}
+
 static const snddevice_t vk_sound_devices[] = {
     SNDDEVICE_SB,
     SNDDEVICE_ADLIB,
@@ -204,62 +256,47 @@ const sound_module_t sound_vk_module = {
 };
 
 /* ============================================================
- * Music module — stub (no music support yet)
- * ============================================================ */
-
-static boolean vk_mus_init(void) { return false; }
-static void vk_mus_shutdown(void) {}
-static void vk_mus_set_volume(int vol) { (void)vol; }
-static void vk_mus_pause(void) {}
-static void vk_mus_resume(void) {}
-static void *vk_mus_register(void *data, int len) { (void)data;(void)len; return NULL; }
-static void vk_mus_unregister(void *handle) { (void)handle; }
-static void vk_mus_play(void *handle, boolean looping) { (void)handle;(void)looping; }
-static void vk_mus_stop(void) {}
-static boolean vk_mus_playing(void) { return false; }
-
-static const snddevice_t vk_music_devices[] = { SNDDEVICE_SB };
-
-const music_module_t music_vk_module = {
-    vk_music_devices,
-    sizeof(vk_music_devices) / sizeof(*vk_music_devices),
-    vk_mus_init,
-    vk_mus_shutdown,
-    vk_mus_set_volume,
-    vk_mus_pause,
-    vk_mus_resume,
-    vk_mus_register,
-    vk_mus_unregister,
-    vk_mus_play,
-    vk_mus_stop,
-    vk_mus_playing,
-    NULL,  /* Poll */
-};
-
-/* ============================================================
  * Public sound interface (from i_sound.h)
  *
  * We bypass the module search in the original i_sound.c and wire
  * directly to our vkernel implementation.
  * ============================================================ */
 
-static const sound_module_t *active_sound  = NULL;
-static const music_module_t *active_music  = NULL;
-
 void I_InitSound(GameMission_t mission)
 {
-    if (snd_sfxdevice != SNDDEVICE_NONE) {
+    boolean nosound;
+    boolean nosfx;
+    boolean nomusic;
+
+    nosound = M_CheckParm("-nosound") > 0;
+    nosfx = M_CheckParm("-nosfx") > 0;
+    nomusic = M_CheckParm("-nomusic") > 0;
+
+    active_sound = NULL;
+    active_music = NULL;
+    music_initialized = 0;
+
+    if (!nosound && !nosfx && snd_sfxdevice != SNDDEVICE_NONE) {
         if (vk_snd_init(mission)) {
             active_sound = &sound_vk_module;
         }
     }
-    /* Music disabled for now */
-    active_music = NULL;
+
+    if (!nosound && !nomusic && snd_musicdevice != SNDDEVICE_NONE) {
+        if (music_opl_module.Init()) {
+            active_music = &music_opl_module;
+            music_initialized = 1;
+        }
+    }
 }
 
 void I_ShutdownSound(void)
 {
     if (active_sound) active_sound->Shutdown();
+    if (active_music) active_music->Shutdown();
+    active_sound = NULL;
+    active_music = NULL;
+    music_initialized = 0;
 }
 
 int I_GetSfxLumpNum(sfxinfo_t *sfx)
@@ -271,6 +308,7 @@ int I_GetSfxLumpNum(sfxinfo_t *sfx)
 void I_UpdateSound(void)
 {
     if (active_sound) active_sound->Update();
+    vk_music_poll();
 }
 
 void I_UpdateSoundParams(int channel, int vol, int sep)
@@ -302,15 +340,52 @@ void I_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
 
 /* Music interface */
 void I_InitMusic(void) {}
-void I_ShutdownMusic(void) {}
-void I_SetMusicVolume(int vol) { (void)vol; }
-void I_PauseSong(void) {}
-void I_ResumeSong(void) {}
-void *I_RegisterSong(void *data, int len) { (void)data;(void)len; return NULL; }
-void I_UnRegisterSong(void *handle) { (void)handle; }
-void I_PlaySong(void *handle, boolean looping) { (void)handle;(void)looping; }
-void I_StopSong(void) {}
-boolean I_MusicIsPlaying(void) { return false; }
+void I_ShutdownMusic(void)
+{
+    if (active_music) {
+        active_music->Shutdown();
+        active_music = NULL;
+        music_initialized = 0;
+    }
+}
+void I_SetMusicVolume(int vol)
+{
+    if (active_music) active_music->SetMusicVolume(vol);
+}
+void I_PauseSong(void)
+{
+    if (active_music) active_music->PauseMusic();
+}
+void I_ResumeSong(void)
+{
+    if (active_music) active_music->ResumeMusic();
+}
+void *I_RegisterSong(void *data, int len)
+{
+    if (active_music) return active_music->RegisterSong(data, len);
+    return NULL;
+}
+void I_UnRegisterSong(void *handle)
+{
+    if (active_music) active_music->UnRegisterSong(handle);
+}
+void I_PlaySong(void *handle, boolean looping)
+{
+    if (active_music) {
+        active_music->PlaySong(handle, looping);
+        vk_music_poll();
+    }
+}
+void I_StopSong(void)
+{
+    if (active_music) active_music->StopSong();
+    VK_CALL(snd_mix_stop, MUSIC_CHANNEL);
+}
+boolean I_MusicIsPlaying(void)
+{
+    if (active_music) return active_music->MusicIsPlaying();
+    return false;
+}
 
 void I_BindSoundVariables(void)
 {
@@ -325,4 +400,6 @@ void I_BindSoundVariables(void)
     M_BindIntVariable("snd_sbirq",            &snd_sbirq);
     M_BindIntVariable("snd_sbdma",            &snd_sbdma);
     M_BindIntVariable("snd_mport",            &snd_mport);
+    M_BindStringVariable("snd_dmxoption",     &snd_dmxoption);
+    M_BindIntVariable("opl_io_port",          &opl_io_port);
 }

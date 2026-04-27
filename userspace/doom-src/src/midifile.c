@@ -632,6 +632,51 @@ midi_file_t *MIDI_LoadFile(char *filename)
     return file;
 }
 
+midi_file_t *MIDI_LoadFileFromBuffer(void *data, size_t len)
+{
+    midi_file_t *file;
+    FILE *stream;
+
+    file = malloc(sizeof(midi_file_t));
+
+    if (file == NULL)
+    {
+        return NULL;
+    }
+
+    file->tracks = NULL;
+    file->num_tracks = 0;
+    file->buffer = NULL;
+    file->buffer_size = 0;
+
+    stream = fmemopen(data, len, "rb");
+
+    if (stream == NULL)
+    {
+        fprintf(stderr, "MIDI_LoadFileFromBuffer: Failed to open memory stream\n");
+        MIDI_FreeFile(file);
+        return NULL;
+    }
+
+    if (!ReadFileHeader(file, stream))
+    {
+        fclose(stream);
+        MIDI_FreeFile(file);
+        return NULL;
+    }
+
+    if (!ReadAllTracks(file, stream))
+    {
+        fclose(stream);
+        MIDI_FreeFile(file);
+        return NULL;
+    }
+
+    fclose(stream);
+
+    return file;
+}
+
 // Get the number of tracks in a MIDI file.
 
 unsigned int MIDI_NumTracks(midi_file_t *file)
@@ -835,4 +880,3 @@ int main(int argc, char *argv[])
 }
 
 #endif
-
