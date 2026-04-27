@@ -16,17 +16,17 @@ A minimal UEFI microkernel for x86_64, written in **C++26** as a hobby project.
 | PIT 8254 @ 100 Hz (preemption clock) | ✅ Working |
 | Round-robin preemptive scheduler | ✅ Working |
 | Kernel heap (64 MB static) | ✅ Working |
-| Physical page allocator | ⚠️ Stub (page count tracked, no free list) |
+| Physical page allocator | ✅ Working |
 | UEFI Simple File System loader | ✅ Working |
 | Ramfs (in-memory flat file table) | ✅ Working |
 | Kernel/userspace ABI header | ✅ Working |
-| Userspace compat layer (`printf`, `FILE`, stubs) | ✅ Working |
+| Newlib Userspace compat layer (`printf`, `FILE`, stubs) | ✅ Working |
 | Kernel input subsystem (PS/2 + serial) | ✅ Working |
 | Userspace shell | ✅ Working |
 | IPC mechanism | ❌ Not yet implemented |
 | Virtual memory / paging rework | ❌ Not yet implemented |
-| PCI enumeration | ❌ Not yet implemented |
-| SMP / multi-core | ❌ Not yet implemented |
+| PCI enumeration | ✅ Working |
+| SMP / multi-core | ⚠️ Disabled, task switching causes #UD/GPFs |
 
 ## Architecture
 
