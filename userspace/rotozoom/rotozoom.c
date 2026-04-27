@@ -296,7 +296,7 @@ int main(int argc, char **argv)
     float zoom_d = 0.0f; /* fractional degrees so step can vary smoothly */
     /* Orbit parameters: angle in degrees and radius in texture pixels */
     float orbit_angle = 0.0f;
-    float orbit_radius = (RW < RH ? (float)RW : (float)RH) * 0.25f;
+    float orbit_radius = (RW < RH ? (float)RW : (float)RH) * 0.55f;
 
     while (1) {
         /* ESC or Q to quit */
@@ -351,7 +351,7 @@ int main(int argc, char **argv)
         float zoom_step = 2.0f * step_mul;
         zoom_d = fmodf(zoom_d + zoom_step, 360.0f);
         /* Advance orbit angle for circular motion */
-        orbit_angle = fmodf(orbit_angle + 3.5f, 360.0f);
+        orbit_angle = fmodf(orbit_angle + 1.5f, 360.0f);
     }
 
     free(backbuf);
