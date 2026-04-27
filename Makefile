@@ -37,7 +37,7 @@ OBJDUMP := objdump
 CXXFLAGS := -Wall -Wextra -Werror
 CXXFLAGS += -nostdlib -nostdinc -fno-builtin -fno-stack-protector
 CXXFLAGS += -fno-exceptions -fno-rtti
-CXXFLAGS += -mno-red-zone -mno-mmx -mno-sse -mno-sse2
+CXXFLAGS += -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-3dnow -mno-avx
 CXXFLAGS += -I$(CURDIR)/include
 CXXFLAGS += -I$(CURDIR)/include/vkernel
 CXXFLAGS += -ffreestanding
@@ -123,9 +123,9 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@ls -lh $@
 
 # Create bootable GPT + EFI System Partition disk image
-$(BOOT_IMG): $(EFI_FILE) $(USERSPACE_BINARIES) scripts/make_disk.sh
+$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh
 	@echo "  DISK    $@"
-	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(USERSPACE_BINARIES)
+	@bash scripts/make_disk.sh $(EFI_FILE) $@
 
 # Build all userspace binaries
 .PHONY: userspace libc-glue newlib-setup

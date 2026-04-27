@@ -17,7 +17,6 @@ set -e
 EFI_FILE="$1"
 OUTPUT="$2"
 shift 2
-EXTRA_ELFS=("$@")   # remaining args are ELF binaries to stage under EFI/vkernel/
 
 if [ -z "${EFI_FILE}" ] || [ -z "${OUTPUT}" ]; then
     echo "Usage: $0 <efi_file> <output_image> [elf_file ...]"
@@ -72,18 +71,13 @@ echo "  Staging EFI application..."
 mmd    -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI ::/EFI/BOOT
 mcopy  -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${EFI_FILE}" ::/EFI/BOOT/bootx64.efi
 
-# add doom2.wad to extra ELF files to stage it as well
-EXTRA_ELFS+=("userspace/doom/doom2.wad")
-
-if [ ${#EXTRA_ELFS[@]} -gt 0 ]; then
-    echo "  Staging userspace binaries... (${#EXTRA_ELFS[@]} ELF files)"
-    mmd -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/vkernel
-    for elf in "${EXTRA_ELFS[@]}"; do
-        name=$(basename "${elf}")
-        echo "    ${name}"
-        mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${elf}" "::/EFI/vkernel/${name}"
-    done
-fi
+echo "  Staging userspace binaries... (${#EXTRA_ELFS[@]} ELF files)"
+mmd -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/vkernel
+for elf in build/esp/EFI/vkernel/*; do
+    name=$(basename "${elf}")
+    echo "    ${name}"
+    mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${elf}" "::/EFI/vkernel/${name}"
+done
 
 echo "  Done: ${OUTPUT}"
 mdir -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/BOOT 2>/dev/null || true

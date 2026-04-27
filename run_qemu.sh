@@ -39,7 +39,8 @@ if [ ! -f "${EFI_FILE}" ]; then
     exit 1
 fi
 
-QEMU="qemu-system-x86_64"
+#QEMU="qemu-system-x86_64"
+QEMU="qemu-kvm"
 OVMF_CODE="/usr/share/edk2/ovmf/OVMF_CODE_4M.qcow2"
 OVMF_VARS="/usr/share/edk2/ovmf/OVMF_VARS_4M.qcow2"
 

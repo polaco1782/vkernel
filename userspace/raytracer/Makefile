@@ -3,6 +3,9 @@
 #
 # Builds a static PIE binary linked against newlib + vkernel CRT.
 # Prerequisites: run scripts/setup_newlib.sh once, then make -C ../libc
+#
+# -march=native is used to enable AVX2 for faster raytracing, but you can change it to -mavx or -msse4.2 if your CPU doesn't support AVX2.
+#
 
 CC      ?= gcc
 OBJCOPY ?= objcopy
@@ -21,8 +24,7 @@ CFLAGS  += -m64
 ifdef DEBUG
 CFLAGS  += -Og -g3 -fno-omit-frame-pointer -DDEBUG
 else
-CFLAGS  += -Ofast -funroll-loops -march=native -DNDEBUG
-#CFLAGS  += -O2 -DNDEBUG
+CFLAGS  += -O3 -mfma -funroll-loops -ffast-math -march=native -DNDEBUG
 endif
 CFLAGS  += -Wall -Wextra
 CFLAGS  += -isystem $(SYSROOT)/include
