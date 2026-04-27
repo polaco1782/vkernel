@@ -102,6 +102,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     /* ---- 6. Compute the virtual address span of all PT_LOAD segments ---- */
     u64 vaddr_min = ~u64{0};
     u64 vaddr_max = 0;
+    u64 max_align  = 4096ULL;
     u32 load_count = 0;
 
     for (u16 i = 0; i < ehdr->e_phnum; ++i) {
@@ -118,6 +119,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
 
         if (seg_start < vaddr_min) vaddr_min = seg_start;
         if (seg_end   > vaddr_max) vaddr_max = seg_end;
+        if (ph.p_align > max_align) max_align = ph.p_align;
 
         ++load_count;
     }
@@ -139,7 +141,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
      * would map these at their requested virtual addresses via paging.
      */
     u64 image_size = align_up(vaddr_max - vaddr_min, 4096ULL);
-    auto* image_base = static_cast<u8*>(g_kernel_heap.allocate_zero(image_size));
+    auto* image_base = static_cast<u8*>(g_kernel_heap.allocate_zero_aligned(image_size, max_align));
 
     log::debug("elf: vaddr range %#llx - %#llx (size %llu bytes)",
                static_cast<unsigned long long>(vaddr_min),
@@ -153,8 +155,14 @@ auto load(const u8* file_data, usize file_size) -> load_result {
         log::warn("elf: heap allocation failed, trying physical allocator");
         u32 page_count = static_cast<u32>(
             (image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
+
+        // phys_addr phys = g_phys_alloc.allocate_pages(
+        //     page_count, static_cast<u32>(PAGE_SIZE_4K), 0);
+
         phys_addr phys = g_phys_alloc.allocate_pages(
-            page_count, static_cast<u32>(PAGE_SIZE_4K), 0);
+            page_count, static_cast<u32>(max(static_cast<u32>(PAGE_SIZE_4K), static_cast<u32>(max_align))),
+            0);
+
         if (phys == 0) {
             log::error("elf: physical allocation failed");
             result.error = elf_error::no_memory;

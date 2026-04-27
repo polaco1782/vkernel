@@ -104,6 +104,11 @@ void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx);
 void asm_fxsave(void* area);
 void asm_fxrstor(const void* area);
 
+/* XSAVE / XRSTOR — save/restore AVX + x87 + MMX + SSE state.
+ * The area must be 64-byte aligned and 2696 bytes long. */
+void asm_xsave(void* area);
+void asm_xrstor(const void* area);
+
 } /* extern "C" */
 
 #endif /* _MSC_VER */

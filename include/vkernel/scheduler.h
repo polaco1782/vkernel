@@ -49,15 +49,15 @@ struct task {
     void*       user_data;
     #if defined(_MSC_VER)
         __declspec(align(16)) u8 stack[TASK_STACK_SIZE];
-        /* FXSAVE area: 512 bytes, must be 16-byte aligned. Saves
-         * x87 + MMX + SSE state (XMM0..XMM15 + MXCSR + FPU regs). */
-        __declspec(align(16)) u8 fxsave_area[512];
+        /* XSAVE area: 512 bytes, must be 64-byte aligned. Saves
+         * AVX + x87 + MMX + SSE state (XMM0..XMM15 + MXCSR + FPU regs). */
+        __declspec(align(64)) u8 xsave_area[2696];
     #else
         u8 stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
-        u8 fxsave_area[512] __attribute__((aligned(16)));
+        u8 xsave_area[2696] __attribute__((aligned(64)));
     #endif
     task_entry_fn entry;
-    bool          fxsave_valid;             /* true after first FXSAVE for this task */
+    bool          xsave_valid;             /* true after first XSAVE for this task */
 
     [[nodiscard]] constexpr auto is_runnable() const -> bool {
         return state == task_state::ready || state == task_state::running;

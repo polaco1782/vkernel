@@ -435,6 +435,24 @@ asm_fxrstor:
     fxrstorq (%rdi)
     ret
 
+/* void asm_xsave(void* area)  — area must be 64-byte aligned */
+.global asm_xsave
+asm_xsave:
+    movl  %esi, %eax        /* mask low  */
+    movq  %rsi, %rdx
+    shrq  $32,  %rdx        /* mask high */
+    xsave (%rdi)
+    ret
+
+/* void asm_xrstor(const void* area) — area must be 64-byte aligned */
+.global asm_xrstor
+asm_xrstor:
+    movl  %esi, %eax
+    movq  %rsi, %rdx
+    shrq  $32,  %rdx
+    xrstor (%rdi)
+    ret
+
 /* void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx)
  *   %edi = leaf, %rsi = eax*, %rdx = ebx*, %rcx = ecx*, %r8 = edx*  */
 /* void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx)

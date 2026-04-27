@@ -117,16 +117,6 @@ static void pic_eoi() {
 }
 
 /* ============================================================
- * C-string helper
- * ============================================================ */
-
-static void str_copy(char* dst, const char* src, usize max) {
-    usize i = 0;
-    while (i + 1 < max && src[i]) { dst[i] = src[i]; ++i; }
-    dst[i] = '\0';
-}
-
-/* ============================================================
  * Scheduler internals
  * ============================================================ */
 
@@ -225,8 +215,9 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
     t.wake_tick = 0;
     t.entry = entry;
     t.user_data = user_data;
-    t.fxsave_valid = false;
-    str_copy(t.name, name, sizeof(t.name));
+    t.xsave_valid = false;
+    memory::memory_copy(t.name, name, sizeof(t.name) - 1);
+    t.name[sizeof(t.name) - 1] = '\0';
 
     /*
      * Set up the initial stack frame so the first context switch
@@ -302,7 +293,9 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
 
 void sched::yield() {
     if (!g_scheduler_active || g_task_count < 2) return;
+    arch::disable_interrupts();
     g_yield_in_progress[smp::current_cpu_apic_id()] = true;
+    arch::enable_interrupts();
     asm_int_timer();
 }
 
@@ -359,8 +352,8 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         /* Save x87/SSE state.  Without this, XMM register contents
          * leak across context switches and corrupt user processes
          * that use SSE (e.g. doom, anything compiled with -msse2). */
-        arch::fxsave(g_tasks[cur].fxsave_area);
-        g_tasks[cur].fxsave_valid = true;
+        arch::xsave(g_tasks[cur].xsave_area);
+        g_tasks[cur].xsave_valid = true;
         if (g_tasks[cur].state == task_state::running)
             g_tasks[cur].state = task_state::ready;
     }
@@ -386,12 +379,12 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     cpu_set_current_task(next);
     g_tasks[next].state = task_state::running;
 
-    /* Restore the next task's x87/SSE state.  On the very first
-     * dispatch the task has never run yet, so fxsave_valid is false
+    /* Restore the next task's x87/SSE/AVX state.  On the very first
+     * dispatch the task has never run yet, so xsave_valid is false
      * and we leave the FPU in its boot-time state (which the task
      * trampoline / entry point will initialise as needed). */
-    if (g_tasks[next].fxsave_valid) {
-        arch::fxrstor(g_tasks[next].fxsave_area);
+    if (g_tasks[next].xsave_valid) {
+        arch::xrstor(g_tasks[next].xsave_area);
     }
 
     g_sched_lock.release();

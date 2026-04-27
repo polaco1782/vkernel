@@ -258,6 +258,10 @@ inline auto cpu_pause() -> void { asm_pause(); }
 inline auto fxsave(void* area)        -> void { asm_fxsave(area); }
 inline auto fxrstor(const void* area) -> void { asm_fxrstor(area); }
 
+/* XSAVE / XRSTOR — save/restore AVX + x87 + MMX + SSE state (2696 bytes, 64B aligned) */
+inline auto xsave(void* area)        -> void { asm_xsave(area); }
+inline auto xrstor(const void* area) -> void { asm_xrstor(area); }
+
 } // namespace arch
 } // namespace vk
 

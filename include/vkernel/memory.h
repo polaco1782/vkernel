@@ -191,6 +191,8 @@ public:
 
     auto allocate_zero(size_phys size) -> void*;
 
+    auto allocate_zero_aligned(size_phys size, size_phys alignment) -> void*;
+
     void free(void* ptr);
 
     /* For diagnostic purposes only (not thread-safe) */

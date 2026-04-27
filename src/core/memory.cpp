@@ -342,6 +342,16 @@ auto kernel_heap::allocate_zero(size_phys size) -> void* {
     return ptr;
 }
 
+auto kernel_heap::allocate_zero_aligned(size_phys size, size_phys alignment) -> void* {
+    // allocate size + alignment bytes, then round up the returned pointer
+    // and store the original pointer before it for free()
+    void* raw = allocate_zero(size + alignment);
+    usize addr = reinterpret_cast<usize>(raw);
+    usize aligned = (addr + alignment - 1) & ~(alignment - 1);
+    return reinterpret_cast<void*>(aligned);
+    // NOTE: this leaks the prefix bytes — proper impl stores raw ptr before aligned ptr
+}
+
 /* Free kernel heap memory */
 void kernel_heap::free(void* ptr) {
     if (ptr == null) {

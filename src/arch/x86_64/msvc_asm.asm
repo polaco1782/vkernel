@@ -402,6 +402,29 @@ asm_fxrstor PROC
     ret
 asm_fxrstor ENDP
 
+; void asm_xsave(void* area, u64 mask)  — area must be 64-byte aligned
+; RCX = area, RDX = mask (Windows x64)
+asm_xsave PROC
+    ; Prepare EAX:EDX = mask (low32 in EAX, high32 in EDX)
+    mov eax, edx            ; low 32 bits -> EAX
+    mov r9, rdx             ; copy full mask to r9
+    shr r9, 32              ; high 32 bits -> low dword of r9
+    mov edx, r9d            ; move high 32 bits into EDX
+    xsave [rcx]
+    ret
+asm_xsave ENDP
+
+; void asm_xrstor(const void* area, u64 mask) — area must be 64-byte aligned
+; RCX = area, RDX = mask (Windows x64)
+asm_xrstor PROC
+    mov eax, edx            ; low 32 bits -> EAX
+    mov r9, rdx             ; copy full mask to r9
+    shr r9, 32              ; high 32 bits -> low dword of r9
+    mov edx, r9d            ; move high 32 bits into EDX
+    xrstor [rcx]
+    ret
+asm_xrstor ENDP
+
 ; void asm_cpuid(u32 leaf, u32* eax, u32* ebx, u32* ecx, u32* edx)
 ;   RCX = leaf, RDX = eax*, R8 = ebx*, R9 = ecx*, [rsp+40] = edx*
 asm_cpuid PROC
