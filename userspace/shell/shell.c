@@ -58,6 +58,41 @@ static int shell_has_framebuffer(void)
     return fb.valid != 0;
 }
 
+static void shell_put_spaces(vk_usize count)
+{
+    while (count-- > 0)
+        VK_CALL(putc, ' ');
+}
+
+static void shell_put_padded(const char* s, vk_usize width)
+{
+    vk_usize len = vk_strlen(s);
+    VK_CALL(puts, s);
+    if (len < width)
+        shell_put_spaces(width - len);
+}
+
+static void shell_put_dec_width(vk_u64 value, vk_usize width)
+{
+    char buf[21];
+    vk_usize len = 0;
+
+    if (value == 0) {
+        buf[len++] = '0';
+    } else {
+        while (value > 0 && len < sizeof(buf)) {
+            buf[len++] = (char)('0' + (value % 10));
+            value /= 10;
+        }
+    }
+
+    if (len < width)
+        shell_put_spaces(width - len);
+
+    while (len > 0)
+        VK_CALL(putc, buf[--len]);
+}
+
 /* -------------------------------------------------------------------------
  * Console I/O
  * ---------------------------------------------------------------------- */
@@ -107,6 +142,7 @@ static void cmd_help(const char* arg)
     VK_CALL(puts, "  version      - Show API version\n");
     VK_CALL(puts, "  mem          - Show memory info\n");
     VK_CALL(puts, "  tasks        - Show scheduler tasks\n");
+    VK_CALL(puts, "  top          - Show live CPU usage per task\n");
     VK_CALL(puts, "  ls           - Show staged files\n");
     VK_CALL(puts, "  cat <f>      - Print a ramfs file\n");
     VK_CALL(puts, "  clear        - Clear the screen\n");
@@ -138,6 +174,165 @@ static void cmd_tasks(const char* arg)
 {
     (void)arg;
     VK_CALL(dump_tasks);
+}
+
+#define TOP_MAX_TASKS 64
+#define TOP_MAX_ROWS  18
+
+static const char* task_state_name(vk_u32 state)
+{
+    switch (state) {
+        case 0: return "ready";
+        case 1: return "run";
+        case 2: return "sleep";
+        case 3: return "done";
+        default: return "?";
+    }
+}
+
+static vk_u64 top_find_previous_ticks(const vk_task_info_t* tasks,
+                                      vk_usize count,
+                                      vk_u64 id)
+{
+    for (vk_usize i = 0; i < count; ++i) {
+        if (tasks[i].id == id)
+            return tasks[i].cpu_ticks;
+    }
+    return 0;
+}
+
+static vk_u64 top_cpu_delta(const vk_task_info_t* task,
+                            const vk_task_info_t* prev,
+                            vk_usize prev_count)
+{
+    vk_u64 old_ticks = top_find_previous_ticks(prev, prev_count, task->id);
+    return task->cpu_ticks >= old_ticks ? task->cpu_ticks - old_ticks : 0;
+}
+
+static void top_print_percent(vk_u64 cpu_delta, vk_u64 elapsed_ticks)
+{
+    vk_u64 tenths;
+    if (elapsed_ticks == 0)
+        elapsed_ticks = 1;
+
+    tenths = (cpu_delta * 1000ULL + elapsed_ticks / 2ULL) / elapsed_ticks;
+    shell_put_dec_width(tenths / 10ULL, 3);
+    VK_CALL(putc, '.');
+    VK_CALL(putc, (char)('0' + (tenths % 10ULL)));
+}
+
+static void top_print_row(const vk_task_info_t* task,
+                          vk_u64 cpu_delta,
+                          vk_u64 elapsed_ticks)
+{
+    shell_put_dec_width(task->id, 3);
+    VK_CALL(puts, "  ");
+    top_print_percent(cpu_delta, elapsed_ticks);
+    VK_CALL(puts, "  ");
+    shell_put_dec_width(task->cpu_ticks, 8);
+    VK_CALL(puts, "  ");
+    shell_put_padded(task_state_name(task->state), 7);
+    VK_CALL(puts, "  ");
+    VK_CALL(puts, task->name);
+    VK_CALL(putc, '\n');
+}
+
+static void top_render(const vk_task_info_t* prev,
+                       vk_usize prev_count,
+                       const vk_task_info_t* now,
+                       vk_usize now_count,
+                       vk_usize total_tasks,
+                       vk_u64 elapsed_ticks)
+{
+    int printed[TOP_MAX_TASKS];
+    vk_usize rows = now_count < TOP_MAX_ROWS ? now_count : TOP_MAX_ROWS;
+
+    for (vk_usize i = 0; i < TOP_MAX_TASKS; ++i)
+        printed[i] = 0;
+
+    VK_CALL(clear);
+    VK_CALL(puts, "vkernel top - press q to quit\n");
+    VK_CALL(puts, "Tasks: ");
+    VK_CALL(put_dec, (vk_u64)total_tasks);
+    VK_CALL(puts, "   Sample: ");
+    VK_CALL(put_dec, elapsed_ticks);
+    VK_CALL(puts, " ticks\n\n");
+    VK_CALL(puts, "PID  CPU%   CPU TICKS  STATE    NAME\n");
+
+    for (vk_usize row = 0; row < rows; ++row) {
+        vk_usize best = TOP_MAX_TASKS;
+        vk_u64 best_delta = 0;
+
+        for (vk_usize i = 0; i < now_count; ++i) {
+            vk_u64 delta;
+            if (printed[i])
+                continue;
+
+            delta = top_cpu_delta(&now[i], prev, prev_count);
+            if (best == TOP_MAX_TASKS || delta > best_delta ||
+                (delta == best_delta && now[i].id < now[best].id)) {
+                best = i;
+                best_delta = delta;
+            }
+        }
+
+        if (best == TOP_MAX_TASKS)
+            break;
+
+        printed[best] = 1;
+        top_print_row(&now[best], best_delta, elapsed_ticks);
+    }
+
+    if (total_tasks > now_count) {
+        VK_CALL(puts, "\n");
+        VK_CALL(put_dec, (vk_u64)(total_tasks - now_count));
+        VK_CALL(puts, " more task(s) not shown.\n");
+    }
+}
+
+static void cmd_top(const char* arg)
+{
+    vk_task_info_t prev[TOP_MAX_TASKS];
+    vk_task_info_t now[TOP_MAX_TASKS];
+    vk_usize prev_total;
+    vk_usize prev_count;
+    int once = 0;
+
+    arg = vk_skip_spaces(arg);
+    if (vk_strcmp(arg, "once") == 0)
+        once = 1;
+
+    prev_total = VK_CALL(task_snapshot, prev, TOP_MAX_TASKS);
+    prev_count = prev_total < TOP_MAX_TASKS ? prev_total : TOP_MAX_TASKS;
+
+    for (;;) {
+        vk_u64 start = VK_CALL(tick_count);
+        vk_u64 end;
+        vk_u64 elapsed;
+        vk_usize total;
+        vk_usize count;
+
+        VK_CALL(sleep, VK_CALL(ticks_per_sec));
+        end = VK_CALL(tick_count);
+        elapsed = end >= start ? end - start : 1;
+
+        total = VK_CALL(task_snapshot, now, TOP_MAX_TASKS);
+        count = total < TOP_MAX_TASKS ? total : TOP_MAX_TASKS;
+        top_render(prev, prev_count, now, count, total, elapsed);
+
+        for (vk_usize i = 0; i < count; ++i)
+            prev[i] = now[i];
+        prev_count = count;
+
+        if (once)
+            break;
+
+        char c = VK_CALL(try_getc);
+        if (c == 'q' || c == 'Q' || c == 27 || c == '\r' || c == '\n') {
+            VK_CALL(puts, "\n");
+            break;
+        }
+    }
 }
 
 static void cmd_ls(const char* arg)
@@ -314,6 +509,7 @@ static const exact_cmd_t EXACT_CMDS[] = {
     { "version", cmd_version  },
     { "mem",     cmd_mem      },
     { "tasks",   cmd_tasks    },
+    { "top",     cmd_top      },
     { "ls",      cmd_ls       },
     { "clear",   cmd_clear    },
     { "uptime",  cmd_uptime   },
@@ -326,6 +522,7 @@ static const exact_cmd_t EXACT_CMDS[] = {
 
 static const prefix_cmd_t PREFIX_CMDS[] = {
     { "cat ",       4,  cmd_cat       },
+    { "top ",       4,  cmd_top       },
     { "run ",       4,  cmd_run       },
     { "drvload ",   8,  cmd_drvload   },
     { "drvunload ", 10, cmd_drvunload },
