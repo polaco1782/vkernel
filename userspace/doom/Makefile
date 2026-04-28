@@ -31,7 +31,7 @@ CFLAGS  += -ffunction-sections -fdata-sections
 ifdef DEBUG
 CFLAGS  += -Og -g3 -fno-omit-frame-pointer -DDEBUG
 else
-CFLAGS  += -O2 -DNDEBUG
+CFLAGS  += -O3 -DNDEBUG
 endif
 CFLAGS  += -Wall -Wno-unused-parameter -Wno-unused-variable
 CFLAGS  += -Wno-missing-field-initializers -Wno-sign-compare
