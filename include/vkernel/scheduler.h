@@ -58,10 +58,18 @@ struct task {
     #endif
     task_entry_fn entry;
     bool          xsave_valid;             /* true after first XSAVE for this task */
+    u64           cpu_ticks;               /* Timer ticks consumed while running */
 
     [[nodiscard]] constexpr auto is_runnable() const -> bool {
         return state == task_state::ready || state == task_state::running;
     }
+};
+
+struct task_snapshot {
+    u64        id;
+    task_state state;
+    u64        cpu_ticks;
+    char       name[32];
 };
 
 /* ============================================================
@@ -122,6 +130,7 @@ auto detach_current_task() -> void*;
 [[nodiscard]] auto current_task_name() -> const char*;
 [[nodiscard]] auto current_task_user_data() -> void*;
 [[nodiscard]] auto tick_count() -> u64;
+[[nodiscard]] auto snapshot_tasks(task_snapshot* out, usize max_tasks) -> usize;
 
 /* Debug: print task list */
 void dump_tasks();

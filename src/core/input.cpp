@@ -10,8 +10,8 @@
  *   2. COM1 serial  — 0x3F8
  *      Any byte arriving on the serial line is forwarded directly.
  *
- * input::getc() yields to the scheduler between polls so the idle
- * task can HLT and other tasks can make progress.
+ * input::getc() sleeps briefly between polls so the idle task can HLT
+ * and other tasks can make progress.
  */
 
 #include "config.h"
@@ -423,7 +423,7 @@ auto getc() -> char {
     while (true) {
         char c = try_getc();
         if (c != '\0') return c;
-        sched::yield();
+        sched::sleep(1);
     }
 }
 
@@ -439,7 +439,7 @@ auto getc_ps2() -> char {
     while (true) {
         char c = try_getc_ps2();
         if (c != '\0') return c;
-        sched::yield();
+        sched::sleep(1);
     }
 }
 
@@ -451,7 +451,7 @@ auto getc_serial() -> char {
     while (true) {
         char c = try_getc_serial();
         if (c != '\0') return c;
-        sched::yield();
+        sched::sleep(1);
     }
 }
 

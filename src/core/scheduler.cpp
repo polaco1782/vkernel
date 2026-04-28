@@ -145,6 +145,30 @@ static void wake_sleeping_tasks() {
     }
 }
 
+static auto pick_next_task(usize cur) -> usize {
+    if (g_task_count == 0) {
+        return SCHED_NO_TASK;
+    }
+
+    /* Task 0 is the idle task. Keep it out of normal round-robin so it
+     * only consumes CPU when every real task is blocked or terminated. */
+    if (g_task_count > 1) {
+        usize start = (cur > 0 && cur < g_task_count) ? cur : 0;
+        for (usize i = 1; i < g_task_count; ++i) {
+            usize next = ((start + i - 1) % (g_task_count - 1)) + 1;
+            if (g_tasks[next].state == task_state::ready) {
+                return next;
+            }
+        }
+    }
+
+    if (g_tasks[0].state == task_state::ready) {
+        return 0;
+    }
+
+    return SCHED_NO_TASK;
+}
+
 /* ============================================================
  * Entry point validation helper (freestanding-safe)
  * ============================================================ */
@@ -216,6 +240,7 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
     t.entry = entry;
     t.user_data = user_data;
     t.xsave_valid = false;
+    t.cpu_ticks = 0;
     memory::memory_copy(t.name, name, sizeof(t.name) - 1);
     t.name[sizeof(t.name) - 1] = '\0';
 
@@ -304,6 +329,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
      * Note: on APs the LAPIC timer fires on vector 32 as well;  the
      * PIT only fires on the BSP (IRQ0 is wired to the BSP by the PIC). */
     u8 this_apic = smp::current_cpu_apic_id();
+    const bool timer_tick = !g_yield_in_progress[this_apic];
     if (g_yield_in_progress[this_apic]) {
         g_yield_in_progress[this_apic] = false;
     } else if (this_apic == g_bsp_apic_id) {
@@ -340,6 +366,9 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     wake_sleeping_tasks();
 
     usize cur = cpu_current_task();
+    if (timer_tick && cur < g_task_count && g_tasks[cur].state == task_state::running) {
+        ++g_tasks[cur].cpu_ticks;
+    }
 
     /* Save current task only if this CPU is actually running one.
      * cur == SCHED_NO_TASK on an AP that has never been assigned a task yet
@@ -358,20 +387,8 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
             g_tasks[cur].state = task_state::ready;
     }
 
-    /* Round-robin: find next runnable task.
-     * When cur is SCHED_NO_TASK, start scanning from the last slot so that
-     * the very first increment wraps to slot 0, giving a fair start point. */
-    usize next = (cur < g_task_count) ? cur : (g_task_count - 1);
-    bool found = false;
-    for (usize i = 0; i < g_task_count; ++i) {
-        next = (next + 1) % g_task_count;
-        if (g_tasks[next].state == task_state::ready) {
-            found = true;
-            break;
-        }
-    }
-
-    if (!found) {
+    usize next = pick_next_task(cur);
+    if (next >= g_task_count) {
         g_sched_lock.release();
         return regs;
     }
@@ -519,6 +536,27 @@ auto sched::tick_count() -> u64 {
     return g_tick_count;
 }
 
+auto sched::snapshot_tasks(task_snapshot* out, usize max_tasks) -> usize {
+    g_sched_lock.acquire();
+    usize total = g_task_count;
+
+    if (out == null || max_tasks == 0) {
+        g_sched_lock.release();
+        return total;
+    }
+
+    usize count = total < max_tasks ? total : max_tasks;
+    for (usize i = 0; i < count; ++i) {
+        out[i].id = g_tasks[i].id;
+        out[i].state = g_tasks[i].state;
+        out[i].cpu_ticks = g_tasks[i].cpu_ticks;
+        memory::memory_copy(out[i].name, g_tasks[i].name, sizeof(out[i].name));
+        out[i].name[sizeof(out[i].name) - 1] = '\0';
+    }
+    g_sched_lock.release();
+    return total;
+}
+
 void sched::sleep(u64 ticks) {
     if (ticks == 0) {
         yield();
@@ -554,7 +592,7 @@ void sched::wait_for_task(u64 task_id) {
             }
         }
         if (!found) return; /* task never existed */
-        yield();
+        sleep(1);
     }
 }
 

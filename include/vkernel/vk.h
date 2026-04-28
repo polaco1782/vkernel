@@ -64,6 +64,14 @@ typedef struct vk_mouse_event {
 
 typedef vk_u64 vk_file_handle_t;
 
+typedef struct vk_task_info {
+    vk_u64 id;
+    vk_u32 state;       /* 0=ready, 1=running, 2=blocked, 3=terminated */
+    vk_u32 _reserved;
+    vk_u64 cpu_ticks;   /* Scheduler ticks spent running on any CPU */
+    char   name[32];
+} vk_task_info_t;
+
 /* ============================================================
  * Add new fields only at the END to preserve ABI compatibility.
  * Bump VK_API_VERSION when the layout changes in a breaking way.
@@ -157,10 +165,13 @@ typedef struct vk_api {
     /* ---- mouse input ---- */
     int  (*vk_poll_mouse)(vk_mouse_event_t* out);
 
+    /* ---- task stats ---- */
+    vk_usize (*vk_task_snapshot)(vk_task_info_t* out, vk_usize max_tasks);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 13ULL
+#define VK_API_VERSION 14ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

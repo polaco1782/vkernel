@@ -123,6 +123,28 @@ static void stub_wait_task(vk_i64 task_id) {
     sched::wait_for_task(static_cast<u64>(task_id));
 }
 
+static vk_usize stub_task_snapshot(vk_task_info_t* out, vk_usize max_tasks) {
+    if (out == null || max_tasks == 0) {
+        return sched::snapshot_tasks(null, 0);
+    }
+
+    task_snapshot snapshots[MAX_TASKS];
+    vk_usize total = sched::snapshot_tasks(snapshots, max_tasks < MAX_TASKS ? max_tasks : MAX_TASKS);
+    vk_usize count = total < max_tasks ? total : max_tasks;
+    if (count > MAX_TASKS) count = MAX_TASKS;
+
+    for (vk_usize i = 0; i < count; ++i) {
+        out[i].id = snapshots[i].id;
+        out[i].state = static_cast<vk_u32>(snapshots[i].state);
+        out[i]._reserved = 0;
+        out[i].cpu_ticks = snapshots[i].cpu_ticks;
+        memory::memory_copy(out[i].name, snapshots[i].name, sizeof(out[i].name));
+        out[i].name[sizeof(out[i].name) - 1] = '\0';
+    }
+
+    return total;
+}
+
 /* ---- sound ---- */
 
 static int stub_snd_play(const void* samples, vk_u32 length, vk_u32 format) {
@@ -616,6 +638,8 @@ void init() {
     s_api.vk_drv_unload = stub_drv_unload;
     /* mouse */
     s_api.vk_poll_mouse = stub_poll_mouse;
+    /* task stats */
+    s_api.vk_task_snapshot = stub_task_snapshot;
 
     s_api_ready = true;
 }

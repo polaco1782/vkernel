@@ -103,8 +103,8 @@ void asm_fxrstor(const void* area);
 
 /* XSAVE / XRSTOR — save/restore AVX + x87 + MMX + SSE state.
  * The area must be 64-byte aligned and 2696 bytes long. */
-void asm_xsave(void* area);
-void asm_xrstor(const void* area);
+void asm_xsave(void* area, u64 mask);
+void asm_xrstor(const void* area, u64 mask);
 
 } /* extern "C" */
 
