@@ -126,6 +126,9 @@ using efi_file_read_fn  = VK_MSABI uefi::status(*)(
 using efi_file_write_fn = VK_MSABI uefi::status(*)(
     efi_file_protocol* self, usize* buffer_size, const void* buffer);
 
+using efi_file_set_position_fn = VK_MSABI uefi::status(*)(
+    efi_file_protocol* self, u64 position);
+
 using efi_file_get_info_fn = VK_MSABI uefi::status(*)(
     efi_file_protocol* self, const uefi::guid* info_type,
     usize* buffer_size, void* buffer);
@@ -138,7 +141,7 @@ struct efi_file_protocol {
     efi_file_read_fn     read;       /* offset 32 */
     efi_file_write_fn    write;      /* offset 40 */
     void*                get_position; /* offset 48 */
-    void*                set_position; /* offset 56 */
+    efi_file_set_position_fn set_position; /* offset 56 */
     efi_file_get_info_fn get_info;   /* offset 64 */
     /* ... more we don't need */
 };
@@ -207,35 +210,127 @@ static auto to_ucs2(const char* ascii) -> const char16_t* {
     return s_ucs2_buf;
 }
 
-} // anonymous namespace
+static void ucs2_to_ascii(const char16_t* src, char* dst, usize max) {
+    usize i = 0;
+    while (i + 1 < max && src[i]) {
+        char16_t c = src[i];
+        if (c >= 32 && c < 127)
+            dst[i] = static_cast<char>(c);
+        else
+            dst[i] = '?';
+        ++i;
+    }
+    dst[i] = '\0';
+}
 
-auto loader::load_file_from_esp(const char* path) -> loaded_file {
+static bool is_dot_entry(const char* name) {
+    return name[0] == '.'
+        && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
+}
+
+static auto open_esp_root() -> efi_file_protocol* {
     if (uefi::g_system_table == null || uefi::g_system_table->boot_services == null)
-        return { null, 0 };
+        return null;
 
     auto* bs = uefi::g_system_table->boot_services;
 
-    /* Locate the Simple File System Protocol */
     void* sfs_iface = null;
     auto st = bs->locate_protocol(&uefi::SFS_GUID, null, &sfs_iface);
     if (st != uefi::status::success || sfs_iface == null) {
         log::warn("SFS protocol not found");
-        return { null, 0 };
+        return null;
     }
-    auto* sfs = static_cast<efi_sfs_protocol*>(sfs_iface);
-    log::debug("SFS protocol located");
 
-    /* Open the root volume */
+    auto* sfs = static_cast<efi_sfs_protocol*>(sfs_iface);
     efi_file_protocol* root = null;
     st = sfs->open_volume(sfs, &root);
     if (st != uefi::status::success || root == null) {
         log::warn("Failed to open ESP volume");
-        return { null, 0 };
+        return null;
     }
+
+    return root;
+}
+
+template <typename Visitor>
+static auto for_each_directory_entry(
+    efi_file_protocol* directory,
+    Visitor&& visit
+) -> status_code {
+    if (directory == null) return status_code::invalid_param;
+
+    if (directory->set_position != null) {
+        auto st = directory->set_position(directory, 0);
+        if (st != uefi::status::success) {
+            log::error("Failed to rewind directory (status=%llu)", static_cast<unsigned long long>(st));
+            return status_code::error;
+        }
+    }
+
+    u8 info_buf[1024];
+    while (true) {
+        usize info_size = sizeof(info_buf);
+        auto st = directory->read(directory, &info_size, info_buf);
+        if (st != uefi::status::success) {
+            log::error("Failed reading ESP directory (status=%llu)", static_cast<unsigned long long>(st));
+            return status_code::error;
+        }
+
+        if (info_size == 0) break;
+
+        auto* fi = reinterpret_cast<efi_file_info*>(info_buf);
+        char name[256];
+        ucs2_to_ascii(fi->FileName, name, sizeof(name));
+
+        if (is_dot_entry(name)) continue;
+
+        auto rc = visit(*fi, name);
+        if (rc != status_code::success) return rc;
+    }
+
+    return status_code::success;
+}
+
+static auto build_esp_path(
+    char* dst,
+    usize max,
+    const char* directory,
+    const char* name
+) -> bool {
+    if (dst == null || directory == null || name == null || max == 0) return false;
+
+    usize out = 0;
+    for (usize i = 0; directory[i] != '\0'; ++i) {
+        if (out + 1 >= max) return false;
+        dst[out++] = directory[i];
+    }
+
+    if (out == 0 || (dst[out - 1] != '\\' && dst[out - 1] != '/')) {
+        if (out + 1 >= max) return false;
+        dst[out++] = '\\';
+    }
+
+    for (usize i = 0; name[i] != '\0'; ++i) {
+        if (out + 1 >= max) return false;
+        dst[out++] = name[i];
+    }
+
+    dst[out] = '\0';
+    return true;
+}
+
+} // anonymous namespace
+
+auto loader::load_file_from_esp(const char* path) -> loaded_file {
+    auto* root = open_esp_root();
+    if (root == null)
+        return { null, 0 };
+
+    auto* bs = uefi::g_system_table->boot_services;
 
     /* Open the requested file */
     efi_file_protocol* file = null;
-    st = root->open(root, &file, to_ucs2(path), EFI_FILE_MODE_READ, 0);
+    auto st = root->open(root, &file, to_ucs2(path), EFI_FILE_MODE_READ, 0);
     if (st != uefi::status::success || file == null) {
         log::warn("ESP file not found: %s", path);
         root->close(root);
@@ -290,127 +385,55 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     return { static_cast<u8*>(buf), file_size };
 }
 
-auto loader::scan_filesystem() -> status_code {
-    if (uefi::g_system_table == null || uefi::g_system_table->boot_services == null)
-        return status_code::not_ready;
-
-    auto* bs = uefi::g_system_table->boot_services;
-
-    /* Locate the Simple File System Protocol */
-    void* sfs_iface = null;
-    auto st = bs->locate_protocol(&uefi::SFS_GUID, null, &sfs_iface);
-    if (st != uefi::status::success || sfs_iface == null) {
-        log::error("SFS protocol not found!");
-        return status_code::error;
-    }
-
-    auto* sfs = static_cast<efi_sfs_protocol*>(sfs_iface);
-    log::debug("SFS protocol located");
-
-    /* Open the root volume */
-    efi_file_protocol* root = null;
-    st = sfs->open_volume(sfs, &root);
-    if (st != uefi::status::success || root == null) {
-        log::error("Failed to open ESP volume!");
-        return status_code::error;
-    }
-
-    log::debug("ESP volume opened");
-    /* Helper: convert UCS-2 filename to ASCII (best-effort) */
-    auto ucs2_to_ascii = [](const char16_t* src, char* dst, usize max) {
-        usize i = 0;
-        while (i + 1 < max && src[i]) {
-            char16_t c = src[i];
-            if (c >= 32 && c < 127)
-                dst[i] = static_cast<char>(c);
-            else
-                dst[i] = '?';
-            ++i;
-        }
-        dst[i] = '\0';
-    };
-
-    log::info("ESP files:");
-
-    /* Read directory entries one by one using Read() */
-    u8 info_buf[1024];
-    while (true) {
-        usize info_size = sizeof(info_buf);
-        st = root->read(root, &info_size, info_buf);
-        if (st != uefi::status::success) {
-            log::error("Failed reading ESP directory (status=%llu)", static_cast<unsigned long long>(st));
-            root->close(root);
-            return status_code::error;
-        }
-
-        /* A zero-size read indicates end-of-directory */
-        if (info_size == 0) break;
-
-        auto* fi = reinterpret_cast<efi_file_info*>(info_buf);
-        const char16_t* name16 = fi->FileName;
-        char name[256];
-        ucs2_to_ascii(name16, name, sizeof(name));
-
-        /* Skip current/parent entries if present */
-        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
-
-        log::info("  %s", name);
-    }
-
-    root->close(root);
-
-    return status_code::success;
-}
-
-/* Load well-known files from the ESP into the ramfs */
+/* Load all regular files from the vkernel ESP directory into the ramfs. */
 auto loader::load_initrd() -> status_code {
     log::info("Loading files from ESP...");
 
     ramfs::init();
 
-    // hardcoded for now
-    static const char* const files[] = {
-        "\\EFI\\vkernel\\shell.txt",
-        "\\EFI\\vkernel\\hello.vbin",
-        "\\EFI\\vkernel\\motd.txt",
-        "\\EFI\\vkernel\\framebuffer.vbin",
-        "\\EFI\\vkernel\\framebuffer_text.vbin",
-        "\\EFI\\vkernel\\raytracer.vbin",
-        "\\EFI\\vkernel\\ramfs_reader.vbin",
-        "\\EFI\\vkernel\\shell.vbin",
-        "\\EFI\\vkernel\\doom.vbin",
-        "\\EFI\\vkernel\\doom2.wad",
-        "\\EFI\\vkernel\\modplay.vbin",
-        "\\EFI\\vkernel\\rotozoom.vbin",
-        "\\EFI\\vkernel\\makemove.mod",
-        "\\EFI\\vkernel\\head.bmp",
-        "\\EFI\\vkernel\\vgui.vbin",
-    };
-    constexpr usize file_count = sizeof(files) / sizeof(files[0]);
+    auto* root = open_esp_root();
+    if (root == null) return status_code::error;
+
+    constexpr const char* initrd_dir = "\\EFI\\vkernel";
+    efi_file_protocol* dir = null;
+    auto st = root->open(root, &dir, to_ucs2(initrd_dir), EFI_FILE_MODE_READ, 0);
+    if (st != uefi::status::success || dir == null) {
+        log::error("Failed to open ESP directory: %s", initrd_dir);
+        root->close(root);
+        return status_code::error;
+    }
 
     usize loaded = 0;
-    for (usize i = 0; i < file_count; ++i) {
-        auto result = load_file_from_esp(files[i]);
+    auto rc = for_each_directory_entry(dir, [&](const efi_file_info& fi, const char* name) {
+        if ((fi.attribute & EFI_FILE_DIRECTORY) != 0) {
+            log::debug("Skipping directory: %s", name);
+            return status_code::success;
+        }
+
+        char path[256];
+        if (!build_esp_path(path, sizeof(path), initrd_dir, name)) {
+            log::warn("Skipping overlong ESP path: %s", name);
+            return status_code::success;
+        }
+
+        auto result = load_file_from_esp(path);
         if (result.data != null && result.size > 0) {
-            /* Extract just the filename part for the ramfs name */
-            const char* name = files[i];
-            const char* p = name;
-            while (*p) {
-                if (*p == '\\' || *p == '/') name = p + 1;
-                ++p;
-            }
             if (ramfs::add_file_nocopy(name, result.data, result.size) == status_code::success) {
                 log::info("Loaded: %s (%zu bytes)", name, result.size);
                 ++loaded;
             }
+        } else {
+            log::warn("Failed to load: %s", path);
         }
-    }
+        return status_code::success;
+    });
+
+    dir->close(dir);
+    root->close(root);
 
     log::info("%zu file(s) loaded from ESP", loaded);
 
-    loader::scan_filesystem();
-
-    return status_code::success;
+    return rc;
 }
 
 } // namespace vk
