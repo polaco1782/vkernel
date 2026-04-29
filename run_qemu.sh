@@ -76,6 +76,7 @@ find userspace -name "*.vbin" | while read -r vbin; do
 done
 
 # Copy DOOM WAD file (check multiple search locations)
+cp -va "userspace/doom/doom1.wad" "${ESP_VKERNEL}/doom1.wad"
 cp -va "userspace/doom/doom2.wad" "${ESP_VKERNEL}/doom2.wad"
 cp -va "userspace/shell/shell_exec.txt" "${ESP_VKERNEL}/shell.txt"
 cp -va "userspace/MODPlay/makemove.mod" "${ESP_VKERNEL}/makemove.mod"
