@@ -299,7 +299,7 @@ static bool sb16_play(const u8* samples, u32 length, sound_format fmt) {
     (void)arch::inb(SB_DSP_ACK16);    /* ack 16-bit IRQ */
 
     /* Copy samples into the DMA buffer */
-    memory::memory_copy(s_dma_buffer, samples, transfer);
+    memory::copy(s_dma_buffer, samples, transfer);
 
     /* Program sample rate only when changed to reduce command overhead. */
     if (s_programmed_rate != s_sample_rate) {

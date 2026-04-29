@@ -337,7 +337,7 @@ auto kernel_heap::allocate(size_phys size) -> void* {
 auto kernel_heap::allocate_zero(size_phys size) -> void* {
     void* ptr = allocate(size);
     if (ptr != null) {
-        memory::memory_set(ptr, 0, size);
+        memory::set(ptr, 0, size);
     }
     return ptr;
 }
@@ -390,7 +390,7 @@ void kernel_heap::free(void* ptr) {
 }
 
 /* Memory set */
-void* memory::memory_set(void* dest, i32 c, size_phys n) {
+void* memory::set(void* dest, i32 c, size_phys n) {
     auto d = static_cast<u8*>(dest);
     for (size_phys i = 0; i < n; ++i) {
         d[i] = static_cast<u8>(c);
@@ -399,7 +399,7 @@ void* memory::memory_set(void* dest, i32 c, size_phys n) {
 }
 
 /* Memory copy */
-void* memory::memory_copy(void* dest, const void* src, size_phys n) {
+void* memory::copy(void* dest, const void* src, size_phys n) {
     auto d = static_cast<u8*>(dest);
     auto s = static_cast<const u8*>(src);
     for (size_phys i = 0; i < n; ++i) {
@@ -409,7 +409,7 @@ void* memory::memory_copy(void* dest, const void* src, size_phys n) {
 }
 
 /* Memory compare */
-i32 memory::memory_compare(const void* s1, const void* s2, size_phys n) {
+i32 memory::compare(const void* s1, const void* s2, size_phys n) {
     auto p1 = static_cast<const u8*>(s1);
     auto p2 = static_cast<const u8*>(s2);
     for (size_phys i = 0; i < n; ++i) {
@@ -421,13 +421,13 @@ i32 memory::memory_compare(const void* s1, const void* s2, size_phys n) {
 }
 
 /* Memory move (handles overlapping regions) */
-void* memory::memory_move(void* dest, const void* src, size_phys n) {
+void* memory::move(void* dest, const void* src, size_phys n) {
     auto d = static_cast<u8*>(dest);
     auto s = static_cast<const u8*>(src);
     
     if (d < s) {
         /* Copy forward */
-        return memory_copy(dest, src, n);
+        return copy(dest, src, n);
     } else if (d > s) {
         /* Copy backward */
         size_phys i = n;

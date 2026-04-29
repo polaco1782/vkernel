@@ -182,7 +182,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
                 .from_phys = true,
             });
         /* Physical pages are not guaranteed to be zeroed — clear them now. */
-        memory::memory_set(image_base.get(), 0, image_size);
+        memory::set(image_base.get(), 0, image_size);
         result.image_from_phys = true;
     }
 
@@ -200,12 +200,12 @@ auto load(const u8* file_data, usize file_size) -> load_result {
 
         /* Copy file image */
         if (ph.p_filesz > 0) {
-            memory::memory_copy(dest, file_data + ph.p_offset, ph.p_filesz);
+            memory::copy(dest, file_data + ph.p_offset, ph.p_filesz);
         }
         /* Zero-fill BSS region (p_memsz > p_filesz) — already zeroed by
          * allocate_zero, but be explicit for clarity */
         if (ph.p_memsz > ph.p_filesz) {
-            memory::memory_set(dest + ph.p_filesz, 0,
+            memory::set(dest + ph.p_filesz, 0,
                                ph.p_memsz - ph.p_filesz);
         }
     }

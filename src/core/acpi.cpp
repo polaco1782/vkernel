@@ -136,7 +136,7 @@ void init(void* system_table_ptr) {
     const auto* rsdp1 = static_cast<const rsdp_v1*>(rsdp_ptr);
 
     /* Signature sanity check */
-    if (memory::memory_compare(rsdp1->signature, "RSD PTR ", 8) != 0) {
+    if (memory::compare(rsdp1->signature, "RSD PTR ", 8) != 0) {
         log::error("ACPI: RSDP signature mismatch");
         return;
     }

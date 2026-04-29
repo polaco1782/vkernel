@@ -62,47 +62,6 @@ void* find_configuration_table(const guid& target_guid) {
     return null;
 }
 
-/* Calculate UCS-2 string length */
-usize strlen(const char16_t* str) {
-    usize len = 0;
-    
-    if (str == null) {
-        return 0;
-    }
-    
-    while (str[len] != 0) {
-        ++len;
-    }
-    
-    return len;
-}
-
-/* Copy UCS-2 string */
-void strcpy(char16_t* dest, const char16_t* src) {
-    if (dest == null || src == null) {
-        return;
-    }
-    
-    while (*src != 0) {
-        *dest++ = *src++;
-    }
-    *dest = 0;
-}
-
-/* Compare UCS-2 strings */
-i32 strcmp(const char16_t* s1, const char16_t* s2) {
-    if (s1 == null || s2 == null) {
-        return -1;
-    }
-    
-    while (*s1 && (*s1 == *s2)) {
-        ++s1;
-        ++s2;
-    }
-    
-    return static_cast<i32>(*s1 - *s2);
-}
-
 /* Backing storage for raw UEFI memory map descriptors.
  * Start with an inline buffer to avoid pool allocations on common firmware,
  * then grow it via AllocatePool when real hardware needs a larger map. */

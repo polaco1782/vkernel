@@ -121,7 +121,7 @@ void init_gdt() {
     gdt_set_entry(4, 0, 0xFFFFF, 0xF2, 0x00); /* User Data */
 
     /* TSS */
-    memory::memory_set(&g_tss, 0, sizeof(tss));
+    memory::set(&g_tss, 0, sizeof(tss));
     g_tss.iomap_base = sizeof(tss);
     gdt_set_tss(5, reinterpret_cast<u64>(&g_tss), sizeof(tss) - 1);
 

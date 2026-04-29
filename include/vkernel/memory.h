@@ -215,10 +215,10 @@ namespace memory {
 
 auto init(span<const memory_map_entry> map) -> status_code;
 
-void* memory_set(void* dest, i32 c, size_phys n);
-void* memory_copy(void* dest, const void* src, size_phys n);
-i32 memory_compare(const void* s1, const void* s2, size_phys n);
-void* memory_move(void* dest, const void* src, size_phys n);
+void* set(void* dest, i32 c, size_phys n);
+void* copy(void* dest, const void* src, size_phys n);
+i32 compare(const void* s1, const void* s2, size_phys n);
+void* move(void* dest, const void* src, size_phys n);
 
 auto get_memory_map() -> span<const memory_map_entry>;
 auto find_entry(phys_addr addr) -> const memory_map_entry*;

@@ -41,11 +41,11 @@ static void stub_free(void* ptr) {
 }
 
 static void* stub_memset(void* dest, int c, vk_usize n) {
-    return memory::memory_set(dest, c, n);
+    return memory::set(dest, c, n);
 }
 
 static void* stub_memcpy(void* dest, const void* src, vk_usize n) {
-    return memory::memory_copy(dest, src, n);
+    return memory::copy(dest, src, n);
 }
 
 /* ---- filesystem ---- */
@@ -63,7 +63,7 @@ static vk_usize stub_file_read(const char* name, void* buf, vk_usize buf_size) {
     const auto* f = ramfs::find(name);
     if (!f || buf == null) return 0;
     vk_usize to_copy = f->size < buf_size ? f->size : buf_size;
-    memory::memory_copy(buf, f->data, to_copy);
+    memory::copy(buf, f->data, to_copy);
     return to_copy;
 }
 
@@ -139,7 +139,7 @@ static vk_usize stub_task_snapshot(vk_task_info_t* out, vk_usize max_tasks) {
         out[i]._reserved = 0;
         out[i].cpu_ticks = snapshots[i].cpu_ticks;
         static_string<32> name_buf(snapshots[i].name);
-        memory::memory_copy(out[i].name, name_buf.c_str(), sizeof(out[i].name));
+        memory::copy(out[i].name, name_buf.c_str(), sizeof(out[i].name));
         out[i].name[sizeof(out[i].name) - 1] = '\0';
     }
 
@@ -395,7 +395,7 @@ static void* stub_realloc(void* ptr, vk_usize size) {
     void* new_ptr = g_kernel_heap.allocate(size);
     if (new_ptr == null) return null;
 
-    memory::memory_copy(new_ptr, ptr, old_size);
+    memory::copy(new_ptr, ptr, old_size);
     g_kernel_heap.free(ptr);
     return new_ptr;
 }
@@ -486,7 +486,7 @@ static vk_usize stub_file_read_handle(vk_file_handle_t handle, void* buf, vk_usi
 
     vk_usize remaining = stream->entry->size - stream->position;
     vk_usize to_copy = remaining < buf_size ? remaining : buf_size;
-    memory::memory_copy(buf, stream->entry->data + stream->position, to_copy);
+    memory::copy(buf, stream->entry->data + stream->position, to_copy);
     stream->position += to_copy;
     stream->eof = stream->position >= stream->entry->size;
     return to_copy;

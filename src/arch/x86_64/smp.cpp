@@ -353,7 +353,7 @@ void init() {
     /* Copy the blob to physical 0x8000 */
     const usize blob_size =
         static_cast<usize>(ap_trampoline_end - ap_trampoline_start);
-    memory::memory_copy(phys_ptr<void>(TRAM_PHYS_BASE),
+    memory::copy(phys_ptr<void>(TRAM_PHYS_BASE),
                         ap_trampoline_start, blob_size);
     log::debug("SMP: trampoline blob (%zu bytes) copied to %#llx",
                blob_size, static_cast<unsigned long long>(TRAM_PHYS_BASE));

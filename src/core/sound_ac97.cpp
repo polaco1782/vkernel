@@ -217,7 +217,7 @@ static bool ac97_init() {
     }
     s_bdl_phys = static_cast<u32>(reinterpret_cast<phys_addr>(bdl.get()));
     s_bdl      = bdl.get();
-    memory::memory_set(s_bdl, 0, PAGE_SIZE_4K);
+    memory::set(s_bdl, 0, PAGE_SIZE_4K);
 
     /* DMA buffer — 64 KB, 4K aligned */
     constexpr u32 DMA_PAGE_COUNT = DMA_BUFFER_SIZE / PAGE_SIZE_4K;
@@ -231,7 +231,7 @@ static bool ac97_init() {
     }
     s_dma_phys = static_cast<u32>(reinterpret_cast<phys_addr>(dma_buf.get()));
     s_dma_buf  = dma_buf.get();
-    memory::memory_set(s_dma_buf, 0, DMA_BUFFER_SIZE);
+    memory::set(s_dma_buf, 0, DMA_BUFFER_SIZE);
 
     log::debug("ac97: DMA buffer at %#x, BDL at %#x", s_dma_phys, s_bdl_phys);
 
@@ -298,7 +298,7 @@ static bool ac97_play(const u8* samples, u32 length, sound_format fmt) {
     nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
 
     /* Copy samples to DMA buffer */
-    memory::memory_copy(s_dma_buf, samples, transfer);
+    memory::copy(s_dma_buf, samples, transfer);
 
     /* Set sample rate */
     nam_write16(NAM_PCM_FRONT_RATE, static_cast<u16>(s_sample_rate));

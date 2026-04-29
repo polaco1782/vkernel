@@ -103,7 +103,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     }
 
     /* ---- 4. Copy mapped headers ---- */
-    memory::memory_copy(image.get(), file_data, size_of_headers);
+    memory::copy(image.get(), file_data, size_of_headers);
 
     /* ---- 5. Copy sections ---- */
     const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(
@@ -124,7 +124,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
             return result;
         }
 
-        memory::memory_copy(image.get() + sec.VirtualAddress,
+        memory::copy(image.get() + sec.VirtualAddress,
                             file_data + sec.PointerToRawData,
                             sec.SizeOfRawData);
     }

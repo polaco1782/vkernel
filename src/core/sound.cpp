@@ -152,7 +152,7 @@ static void mix_do_submit() {
     if (out_frames > MIX_WINDOW_FRAMES) out_frames = MIX_WINDOW_FRAMES;
 
     /* Zero the accumulation buffer for this window */
-    memory::memory_set(s_mix_acc, 0, out_frames * 2u * sizeof(i32));
+    memory::set(s_mix_acc, 0, out_frames * 2u * sizeof(i32));
 
     /* Mix each active channel into the accumulation buffer */
     for (u32 i = 0; i < MIX_CHANNELS; ++i) {

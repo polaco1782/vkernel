@@ -25,7 +25,7 @@ static usize      g_file_count = 0;
 
 auto ramfs::init() -> status_code {
     g_file_count = 0;
-    memory::memory_set(g_files, 0, sizeof(g_files));
+    memory::set(g_files, 0, sizeof(g_files));
     return status_code::success;
 }
 
@@ -39,7 +39,7 @@ auto ramfs::add_file(string_view name, const u8* data, usize size) -> status_cod
     /* Allocate a copy in kernel heap */
     kernel_heap_ptr<u8> buf(static_cast<u8*>(g_kernel_heap.allocate(size)));
     if (!buf) return status_code::no_memory;
-    memory::memory_copy(buf.get(), data, size);
+    memory::copy(buf.get(), data, size);
 
     f.data  = buf.release();
     f.size  = size;

@@ -201,7 +201,7 @@ static auto pick_next_task(usize cur) -> usize {
  * ============================================================ */
 
 auto sched::init() -> status_code {
-    memory::memory_set(g_tasks, 0, sizeof(g_tasks));
+    memory::set(g_tasks, 0, sizeof(g_tasks));
     /* Initialise every CPU's "current task" slot to SCHED_NO_TASK.
      * Zero-filling would leave them pointing at task 0, which is wrong:
      * an AP that fires its LAPIC timer before calling start_ap() would
