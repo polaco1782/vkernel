@@ -52,6 +52,9 @@ void init();
 /* Local APIC ID of the calling CPU (reads LAPIC MMIO register) */
 [[nodiscard]] u8 current_cpu_apic_id();
 
+/* Stable CPU table index for the calling CPU. */
+[[nodiscard]] u32 current_cpu_index();
+
 /* Get the cpu_info record for CPU index [0 .. cpu_count()-1].
  * Returns null if idx is out of range. */
 [[nodiscard]] const cpu_info* get_cpu_info(u32 idx);

@@ -258,22 +258,28 @@ auto efi_main(
     ac97_driver::register_builtin();
     log::info("Driver framework initialised (2 built-in drivers registered)");
 
-    /* Bring up Application Processors */
-    //log::info("Initializing SMP...");
-    //smp::init();
-    //smp::dump_cpus();
-
     /* Initialize the scheduler (sets up PIC + PIT) */
     if (auto status = sched::init(); status != status_code::success) {
         vk_panic(__FILE__, __LINE__, "Scheduler initialization failed");
     }
+
+    /* Bring up Application Processors */
+    log::info("Initializing SMP...");
+    smp::init();
+    smp::dump_cpus();
 
     /* Create the idle task (task 0) — just halts when nothing else runs */
     (void)sched::create_task("idle", [](void*) {
         while (true) { arch::cpu_halt(); }
     });
 
-    /* Launch the userspace shell binary. */
+    /* Launch the serial shell first so scheduler startup is visible on COM1. */
+    log::info("Launching serial shell...");
+    if (process::run("shell.vbin", process::console_interface::serial) < 0) {
+        vk_panic(__FILE__, __LINE__, "Failed to launch serial shell!");
+    }
+
+    /* Launch the graphical shell when framebuffer output is available. */
     if (fb_info.valid) {
         log::info("Launching graphical shell...");
         if (process::run("shell.vbin", process::console_interface::graphical) < 0) {
@@ -281,11 +287,6 @@ auto efi_main(
         }
     } else {
         log::warn("Framebuffer unavailable; graphical shell not launched");
-    }
-
-    log::info("Launching serial shell...");
-    if (process::run("shell.vbin", process::console_interface::serial) < 0) {
-        vk_panic(__FILE__, __LINE__, "Failed to launch serial shell!");
     }
 
     /* Start the scheduler — does not return */

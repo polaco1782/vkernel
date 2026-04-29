@@ -111,6 +111,26 @@ asm_sched_switch_to:
     iretq
 
 /*
+ * int asm_call_process_entry(u64 entry, const void* api)
+ *   %rdi = process entry address
+ *   %rsi = vk_api_t pointer passed to the process as arg0
+ *
+ * Process images are normal SysV AMD64 code.  Before a call instruction the
+ * caller's stack must be 16-byte aligned so the callee observes %rsp % 16 == 8.
+ */
+.global asm_call_process_entry
+asm_call_process_entry:
+    pushq %rbp
+    movq  %rsp, %rbp
+    movq  %rdi, %rax
+    movq  %rsi, %rdi
+    andq  $-16, %rsp
+    callq *%rax
+    movq  %rbp, %rsp
+    popq  %rbp
+    ret
+
+/*
  * u64 asm_get_isr_stub_base()
  *   Returns the RIP-relative runtime address of isr_stub_0.
  *   Needed because the PE loaded by UEFI may be relocated.

@@ -24,6 +24,7 @@
 #include "vk.h"
 #include "process_internal.h"
 #include "resource_ptr.h"
+#include "gcc_asm.h"
 
 namespace vk {
 namespace process {
@@ -62,10 +63,8 @@ void cleanup_process_context(process_task_context* ctx, int exit_code) {
 
 static void process_task_main(void* user_data) {
     auto* ctx = static_cast<process_task_context*>(user_data);
-    using entry_fn = int (*)(const vk_api_t*);
-    auto entry = reinterpret_cast<entry_fn>(ctx->entry);
 
-    int ret = entry(kernel_api::get_api());
+    int ret = asm_call_process_entry(ctx->entry, kernel_api::get_api());
 
     cleanup_process_context(ctx, ret);
 }

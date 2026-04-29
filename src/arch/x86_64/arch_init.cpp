@@ -69,42 +69,40 @@ static const char* const s_exception_names[32] = {
  *  [5-6] TSS        (16-byte system segment descriptor)
  * ============================================================ */
 
-static gdt_entry g_gdt[7];
-static gdt_ptr g_gdt_ptr;
-static tss g_tss;
+static gdt_entry g_gdt[smp::MAX_CPUS][7];
+static gdt_ptr g_gdt_ptr[smp::MAX_CPUS];
+static tss g_tss[smp::MAX_CPUS];
 
 /* Helper: install a standard (8-byte) GDT descriptor */
-static void gdt_set_entry(u32 idx, u32 base, u32 limit,
+static void gdt_set_entry(u32 cpu, u32 idx, u32 base, u32 limit,
                            u8 access, u8 granularity) {
-    g_gdt[idx].limit_low    = limit & 0xFFFF;
-    g_gdt[idx].base_low     = base & 0xFFFF;
-    g_gdt[idx].base_middle  = (base >> 16) & 0xFF;
-    g_gdt[idx].access       = access;
-    g_gdt[idx].granularity  = static_cast<u8>(((limit >> 16) & 0x0F) | (granularity & 0xF0));
-    g_gdt[idx].base_high    = (base >> 24) & 0xFF;
+    g_gdt[cpu][idx].limit_low    = limit & 0xFFFF;
+    g_gdt[cpu][idx].base_low     = base & 0xFFFF;
+    g_gdt[cpu][idx].base_middle  = (base >> 16) & 0xFF;
+    g_gdt[cpu][idx].access       = access;
+    g_gdt[cpu][idx].granularity  = static_cast<u8>(((limit >> 16) & 0x0F) | (granularity & 0xF0));
+    g_gdt[cpu][idx].base_high    = (base >> 24) & 0xFF;
 }
 
 /* Install the 16-byte TSS descriptor at g_gdt[5..6] */
-static void gdt_set_tss(u32 idx, u64 base, u32 limit) {
+static void gdt_set_tss(u32 cpu, u32 idx, u64 base, u32 limit) {
     /* Low 8 bytes — identical to a normal descriptor */
-    g_gdt[idx].limit_low   = limit & 0xFFFF;
-    g_gdt[idx].base_low    = base & 0xFFFF;
-    g_gdt[idx].base_middle = (base >> 16) & 0xFF;
-    g_gdt[idx].access      = 0x89; /* Present, 64-bit TSS (Available) */
-    g_gdt[idx].granularity = static_cast<u8>(((limit >> 16) & 0x0F));
-    g_gdt[idx].base_high   = (base >> 24) & 0xFF;
+    g_gdt[cpu][idx].limit_low   = limit & 0xFFFF;
+    g_gdt[cpu][idx].base_low    = base & 0xFFFF;
+    g_gdt[cpu][idx].base_middle = (base >> 16) & 0xFF;
+    g_gdt[cpu][idx].access      = 0x89; /* Present, 64-bit TSS (Available) */
+    g_gdt[cpu][idx].granularity = static_cast<u8>(((limit >> 16) & 0x0F));
+    g_gdt[cpu][idx].base_high   = (base >> 24) & 0xFF;
 
     /* High 8 bytes — base[63:32] + reserved */
-    auto* high = reinterpret_cast<u32*>(&g_gdt[idx + 1]);
+    auto* high = reinterpret_cast<u32*>(&g_gdt[cpu][idx + 1]);
     high[0] = static_cast<u32>(base >> 32);
     high[1] = 0;
 }
 
-void init_gdt() {
-    log::info("Preparing GDT...");
-
+static void init_gdt_for_cpu(u32 cpu) {
     /* Null descriptor */
-    gdt_set_entry(0, 0, 0, 0, 0);
+    gdt_set_entry(cpu, 0, 0, 0, 0, 0);
 
     /*
      * Long-mode code segments:
@@ -115,18 +113,26 @@ void init_gdt() {
      *   access  = 0x92 (Present, ring 0, data, writable)
      *   gran    = 0x00 (L and D ignored for data in long mode)
      */
-    gdt_set_entry(1, 0, 0xFFFFF, 0x9A, 0xA0); /* Kernel Code 64-bit */
-    gdt_set_entry(2, 0, 0xFFFFF, 0x92, 0x00); /* Kernel Data */
-    gdt_set_entry(3, 0, 0xFFFFF, 0xFA, 0xA0); /* User Code 64-bit */
-    gdt_set_entry(4, 0, 0xFFFFF, 0xF2, 0x00); /* User Data */
+    gdt_set_entry(cpu, 1, 0, 0xFFFFF, 0x9A, 0xA0); /* Kernel Code 64-bit */
+    gdt_set_entry(cpu, 2, 0, 0xFFFFF, 0x92, 0x00); /* Kernel Data */
+    gdt_set_entry(cpu, 3, 0, 0xFFFFF, 0xFA, 0xA0); /* User Code 64-bit */
+    gdt_set_entry(cpu, 4, 0, 0xFFFFF, 0xF2, 0x00); /* User Data */
 
     /* TSS */
-    memory::set(&g_tss, 0, sizeof(tss));
-    g_tss.iomap_base = sizeof(tss);
-    gdt_set_tss(5, reinterpret_cast<u64>(&g_tss), sizeof(tss) - 1);
+    memory::set(&g_tss[cpu], 0, sizeof(tss));
+    g_tss[cpu].iomap_base = sizeof(tss);
+    gdt_set_tss(cpu, 5, reinterpret_cast<u64>(&g_tss[cpu]), sizeof(tss) - 1);
 
-    g_gdt_ptr.limit = sizeof(g_gdt) - 1;
-    g_gdt_ptr.base  = reinterpret_cast<u64>(&g_gdt);
+    g_gdt_ptr[cpu].limit = sizeof(g_gdt[cpu]) - 1;
+    g_gdt_ptr[cpu].base  = reinterpret_cast<u64>(&g_gdt[cpu]);
+}
+
+void init_gdt() {
+    log::info("Preparing per-CPU GDTs...");
+
+    for (u32 cpu = 0; cpu < smp::MAX_CPUS; ++cpu) {
+        init_gdt_for_cpu(cpu);
+    }
 
     log::info("GDT prepared");
 }
@@ -135,7 +141,7 @@ void init_gdt() {
  * Keep this separate from selector/TSS reload so activate() can
  * place additional diagnostics around the risky transition steps. */
 static void load_gdt() {
-    asm_lgdt(&g_gdt_ptr);
+    asm_lgdt(&g_gdt_ptr[smp::current_cpu_index()]);
 }
 
 /* Reload CS/DS/ES/SS to the kernel descriptors from our GDT. */
@@ -146,7 +152,7 @@ static void reload_kernel_segments() {
 /* Load the task register with our TSS selector.
  * Seed rsp0 so privilege transitions have a valid ring-0 stack. */
 static void activate_tss() {
-    g_tss.rsp0 = read_rsp();
+    g_tss[smp::current_cpu_index()].rsp0 = read_rsp();
     asm_ltr(SEG_TSS);
 }
 
@@ -185,7 +191,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
 
     if (vec < 32) {
         u8 self_apic = smp::current_cpu_apic_id();
-        u32 self_idx = (self_apic < smp::MAX_CPUS) ? self_apic : 0;
+        u32 self_idx = smp::current_cpu_index();
 
         /*
          * Per-CPU re-entry guard FIRST.  If THIS CPU is already
@@ -618,13 +624,14 @@ void activate() {
  * running with the temporary trampoline GDT, so we need to switch to
  * the kernel GDT before executing any selector-sensitive code.
  *
- * The AP does NOT load the TSS (which has a BSP-owned RSP0).
- * Per-AP TSS support can be added later.
+ * Each CPU loads its own GDT/TSS pair.  The TSS is required for any
+ * interrupt or exception that enters the kernel from ring 3 on this AP.
  */
 void ap_activate() {
     load_gdt();
     reload_kernel_segments();
     activate_idt();
+    activate_tss();
     activate_fpu_state();
 }
 

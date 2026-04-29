@@ -269,12 +269,11 @@ extern "C" void ap_init_secondary() {
     arch::memory_barrier();
     *phys_ptr<volatile u32>(TRAM_READY) = 1;
 
-    log::info("AP APIC %u: online, entering scheduler", current_cpu_apic_id());
+    log::info("AP APIC %u: online, parking in scheduler AP loop", current_cpu_apic_id());
 
     /*
-     * Step 4: enter the scheduler.  start_ap() arms the LAPIC timer,
-     * sets this CPU's initial task slot, enables interrupts, and idles.
-     * The LAPIC timer preemption will distribute runnable tasks to this AP.
+     * Step 4: enter the AP scheduler loop.  APs are online but do not
+     * dispatch normal tasks until the runtime and scheduler are SMP-safe.
      */
     sched::start_ap();
 }
@@ -438,6 +437,17 @@ u32 cpu_count() {
 u8 current_cpu_apic_id() {
     if (!s_lapic_base) return s_bsp_apic_id;
     return static_cast<u8>((lapic_read(LAPIC_ID) >> 24) & 0xFF);
+}
+
+u32 current_cpu_index() {
+    u8 apic_id = current_cpu_apic_id();
+    for (u32 i = 0; i < s_cpu_count; ++i) {
+        if (s_cpus[i].apic_id == apic_id) {
+            return i;
+        }
+    }
+
+    return (apic_id < MAX_CPUS) ? apic_id : 0;
 }
 
 const cpu_info* get_cpu_info(u32 idx) {

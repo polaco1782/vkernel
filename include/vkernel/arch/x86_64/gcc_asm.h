@@ -31,6 +31,7 @@ void asm_ltr(unsigned short selector);
 void asm_reload_segments(unsigned long long code_sel, unsigned long long data_sel);
 void asm_int_0xff();
 [[noreturn]] void asm_sched_switch_to(unsigned long long rsp);
+int asm_call_process_entry(unsigned long long entry, const void* api);
 
 /* ---- Port I/O ---- */
 unsigned char  asm_inb(unsigned short port);
