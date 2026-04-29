@@ -167,7 +167,7 @@ if "%DEBUG_QEMU%"=="1" (
 )
 
 "%QEMU_EXE%" ^
-    -machine q35 ^
+    -machine pc ^
     -drive if=pflash,format=raw,readonly=on,file="%OVMF_CODE%" ^
     -drive if=pflash,format=raw,file="%NVRAM_FILE%" ^
     -drive if=ide,index=0,media=disk,format=raw,file="fat:rw:%ESP_ROOT%" ^

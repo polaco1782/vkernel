@@ -12,6 +12,7 @@
 #include "memory.h"
 #include "driver.h"
 #include "sound.h"
+#include "block.h"
 
 namespace vk {
 namespace driver {
@@ -102,6 +103,15 @@ auto load(string_view name) -> i32 {
                         }
                     }
                     break;
+                case driver_type::block:
+                    if (s_drivers[i].desc->block) {
+                        block::init();
+                        if (!s_drivers[i].desc->block->init()) {
+                            log::error("driver: block init failed for %s", s_drivers[i].desc->name);
+                            return -1;
+                        }
+                    }
+                    break;
                 default:
                     log::error("driver: unknown type for %s", s_drivers[i].desc->name);
                     return -1;
@@ -134,6 +144,11 @@ auto unload(string_view name) -> i32 {
                 case driver_type::sound:
                     sound::shutdown_active();
                     break;
+                case driver_type::block:
+                    if (s_drivers[i].desc->block && s_drivers[i].desc->block->shutdown) {
+                        s_drivers[i].desc->block->shutdown();
+                    }
+                    break;
                 default:
                     break;
             }
@@ -160,6 +175,7 @@ void list_loaded() {
             log::info("driver: found loaded driver %s", s_drivers[i].desc->name);
             switch (s_drivers[i].desc->type) {
                 case driver_type::sound: log::info(" (sound)"); break;
+                case driver_type::block: log::info(" (block)"); break;
                 default: log::info(" (unknown)"); break;
             }
             any = true;
@@ -180,6 +196,7 @@ void list_available() {
             log::info("driver: found available driver %s", s_drivers[i].desc->name);
             switch (s_drivers[i].desc->type) {
                 case driver_type::sound: log::info(" (sound)"); break;
+                case driver_type::block: log::info(" (block)"); break;
                 default: log::info(" (unknown)"); break;
             }
         }

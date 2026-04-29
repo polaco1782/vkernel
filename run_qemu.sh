@@ -113,7 +113,7 @@ echo "Mouse: press Ctrl+Alt+G to grab/release the mouse inside the VM."
 echo ""
 
 exec ${QEMU} \
-    -machine q35 \
+    -machine pc \
     -cpu Haswell \
     -smp 2 \
     -drive if=pflash,format=${PFLASH_FMT},readonly=on,file="${OVMF_CODE}" \

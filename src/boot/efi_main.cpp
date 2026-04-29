@@ -27,6 +27,7 @@ namespace vk {
 /* Forward declarations for built-in driver registration */
 namespace sb16_driver { void register_builtin(); }
 namespace ac97_driver { void register_builtin(); }
+namespace ata_pio_driver { void register_builtin(); }
 
 /* ============================================================
  * Self-relocator for the GOT
@@ -254,9 +255,15 @@ auto efi_main(
 
     /* Initialize the driver framework and register built-in drivers */
     driver::init();
+    ata_pio_driver::register_builtin();
     sb16_driver::register_builtin();
     ac97_driver::register_builtin();
-    log::info("Driver framework initialised (2 built-in drivers registered)");
+    log::info("Driver framework initialised (3 built-in drivers registered)");
+
+    /* Bring up the first block backend while keeping the RAMFS boot path
+     * active.  FAT32/VFS will start consuming block devices in the next
+     * layer. */
+    (void)driver::load("ata_pio");
 
     /* Initialize the scheduler (sets up PIC + PIT) */
     if (auto status = sched::init(); status != status_code::success) {

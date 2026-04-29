@@ -63,6 +63,7 @@ LDFLAGS += -T src/boot/linker.ld
 # Source files
 CXX_SRCS := $(wildcard src/boot/*.cpp)
 CXX_SRCS += $(wildcard src/core/*.cpp)
+CXX_SRCS += $(wildcard src/drivers/*.cpp)
 CXX_SRCS += $(wildcard src/arch/x86_64/*.cpp)
 
 # Object files
@@ -78,16 +79,16 @@ ALL_OBJS := $(CXX_OBJS) $(ASM_OBJS)
 all: $(EFI_FILE)
 
 # Create build directories
-$(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64:
+$(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64:
 	@mkdir -p $@
 
 # Compile C++ files
-$(BUILD_DIR)/obj/%.o: src/%.cpp | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
+$(BUILD_DIR)/obj/%.o: src/%.cpp | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
 	@echo "  CXX     $<"
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Compile assembly files
-$(BUILD_DIR)/obj/%.o: src/%.S | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
+$(BUILD_DIR)/obj/%.o: src/%.S | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
 	@echo "  ASM     $<"
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 

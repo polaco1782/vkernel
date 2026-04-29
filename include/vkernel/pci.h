@@ -56,6 +56,8 @@ namespace pci_ids {
     /* PCI class codes */
     inline constexpr u8 CLASS_MULTIMEDIA = 0x04;
     inline constexpr u8 SUBCLASS_AUDIO   = 0x01;
+    inline constexpr u8 CLASS_STORAGE    = 0x01;
+    inline constexpr u8 SUBCLASS_IDE     = 0x01;
 }
 
 /* ============================================================

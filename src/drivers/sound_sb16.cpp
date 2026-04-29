@@ -432,6 +432,7 @@ static const driver_descriptor sb16_descriptor = {
     .name  = "sb16",
     .type  = driver_type::sound,
     .sound = &sb16_sound_driver,
+    .block = null,
 };
 
 /* ============================================================
