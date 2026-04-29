@@ -114,8 +114,7 @@ echo ""
 
 exec ${QEMU} \
     -machine pc \
-    -cpu Haswell \
-    -smp 2 \
+    -cpu host \
     -drive if=pflash,format=${PFLASH_FMT},readonly=on,file="${OVMF_CODE}" \
     -drive if=pflash,format=${PFLASH_FMT},file="${NVRAM_FILE}" \
     -drive if=ide,index=0,media=disk,format=raw,file="fat:rw:${ESP_ROOT}" \

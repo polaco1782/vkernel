@@ -24,7 +24,8 @@ DOOM_VBIN       := $(USERSPACE_DIR)/doom/doom.vbin
 MODPLAY_VBIN    := $(USERSPACE_DIR)/MODPlay/modplay.vbin
 ROTOZOOM_VBIN    := $(USERSPACE_DIR)/rotozoom/rotozoom.vbin
 VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(RAMFS_READER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN)
+SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(RAMFS_READER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -183,6 +184,9 @@ $(VGUI_VBIN): $(wildcard $(USERSPACE_DIR)/vgui/*.cpp) $(USERSPACE_DIR)/vgui/Make
 	     bash $(USERSPACE_DIR)/vgui/setup_imgui.sh)
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui $(_DEBUG_FLAG)
 
+$(SR_CUBE_VBIN): $(USERSPACE_DIR)/sr_cube/Makefile libc-glue
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
+
 # Disassembly for debugging
 disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@$(OBJDUMP) -d $< > $(BUILD_DIR)/$(KERNEL_NAME).dis
@@ -202,6 +206,7 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube clean
 
 # Deep clean — also remove newlib sysroot and source (requires re-running setup_newlib.sh)
 distclean: clean
