@@ -46,7 +46,7 @@ struct task {
     u64         id;
     task_state  state;
     u64         wake_tick;
-    char        name[32];
+    static_string<32> name;
     void*       user_data;
     #if defined(_MSC_VER)
         __declspec(align(16)) u8 stack[TASK_STACK_SIZE];
@@ -70,7 +70,7 @@ struct task_snapshot {
     u64        id;
     task_state state;
     u64        cpu_ticks;
-    char       name[32];
+    string_view name;
 };
 
 /* ============================================================
@@ -88,6 +88,7 @@ namespace sched {
  * @param user_data First argument passed to entry function
  * @return Task ID on success, -1 on failure
  */
+[[nodiscard]] auto create_task(string_view name, task_entry_fn entry, void* user_data = null) -> i64;
 [[nodiscard]] auto create_task(const char* name, task_entry_fn entry, void* user_data = null) -> i64;
 
 /* Start the scheduler on the BSP — does not return */
@@ -128,6 +129,7 @@ auto detach_current_task() -> void*;
 
 /* Query current task info */
 [[nodiscard]] auto current_task_id() -> u64;
+[[nodiscard]] auto current_task_name_view() -> string_view;
 [[nodiscard]] auto current_task_name() -> const char*;
 [[nodiscard]] auto current_task_user_data() -> void*;
 [[nodiscard]] auto tick_count() -> u64;

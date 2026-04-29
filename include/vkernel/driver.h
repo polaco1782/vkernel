@@ -58,12 +58,15 @@ void init();
 void register_driver(const driver_descriptor* desc);
 
 /* Look up a driver by name (e.g. "sb16.vko" or just "sb16"). */
+auto find(string_view name) -> const driver_descriptor*;
 auto find(const char* name) -> const driver_descriptor*;
 
 /* Load (activate) a driver by name.  Returns 0 on success, -1 on error. */
+auto load(string_view name) -> i32;
 auto load(const char* name) -> i32;
 
 /* Unload a driver by name.  Returns 0 on success, -1 on error. */
+auto unload(string_view name) -> i32;
 auto unload(const char* name) -> i32;
 
 /* List loaded drivers to console. */

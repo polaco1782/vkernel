@@ -28,7 +28,9 @@ enum class console_interface : u8 {
  * Prints progress and errors to the console.
  * Returns the spawned task ID, or -1 on load error.
  */
+auto run(string_view filename) -> i64;
 auto run(const char* filename) -> i64;
+auto run(string_view filename, console_interface interface) -> i64;
 auto run(const char* filename, console_interface interface) -> i64;
 
 } // namespace process

@@ -231,12 +231,12 @@ public:
     constexpr static_string() noexcept : data_{'\0'}, size_(0) {}
 
     constexpr static_string(string_view str) noexcept : data_{'\0'}, size_(0) {
-        assign(str);
+        (void)assign(str);
     }
 
     template<usize N>
     constexpr static_string(const char (&str)[N]) noexcept : data_{'\0'}, size_(0) {
-        assign(string_view(str));
+        (void)assign(string_view(str));
     }
 
     [[nodiscard]] constexpr auto assign(string_view str) noexcept -> bool {

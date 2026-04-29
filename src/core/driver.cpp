@@ -43,24 +43,18 @@ void init() {
 }
 
 /* helper: compare driver names, ignoring a trailing ".vko" */
-static bool name_match(const char* query, const char* driver_name) {
-    /* Try exact match first */
-    const char* a = query;
-    const char* b = driver_name;
-    while (*a && *b && *a == *b) { ++a; ++b; }
-    if (*a == '\0' && *b == '\0') return true;
-
-    /* Try stripping ".vko" from query */
-    a = query;
-    b = driver_name;
-    while (*a && *b && *a == *b) { ++a; ++b; }
-    if (*b == '\0') {
-        /* remaining of a must be ".vko" */
-        if (a[0] == '.' && a[1] == 'v' && a[2] == 'k' && a[3] == 'o' && a[4] == '\0')
-            return true;
+static auto normalize_driver_name(string_view name) -> string_view {
+    if (name.size() >= 4) {
+        string_view suffix(name.data() + name.size() - 4, 4);
+        if (suffix.equals(".vko")) {
+            return string_view(name.data(), name.size() - 4);
+        }
     }
+    return name;
+}
 
-    return false;
+static bool name_match(string_view query, string_view driver_name) {
+    return normalize_driver_name(query).equals(driver_name);
 }
 
 void register_driver(const driver_descriptor* desc) {
@@ -74,7 +68,7 @@ void register_driver(const driver_descriptor* desc) {
     ++s_driver_count;
 }
 
-auto find(const char* name) -> const driver_descriptor* {
+auto find(string_view name) -> const driver_descriptor* {
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc && name_match(name, s_drivers[i].desc->name)) {
             return s_drivers[i].desc;
@@ -83,7 +77,11 @@ auto find(const char* name) -> const driver_descriptor* {
     return null;
 }
 
-auto load(const char* name) -> i32 {
+auto find(const char* name) -> const driver_descriptor* {
+    return find(string_view(name));
+}
+
+auto load(string_view name) -> i32 {
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc && name_match(name, s_drivers[i].desc->name)) {
             if (s_drivers[i].loaded) {
@@ -115,11 +113,16 @@ auto load(const char* name) -> i32 {
         }
     }
 
-    log::warn("driver: not found: %s", name);
+    static_string<64> name_buf(name);
+    log::warn("driver: not found: %s", name_buf.c_str());
     return -1;
 }
 
-auto unload(const char* name) -> i32 {
+auto load(const char* name) -> i32 {
+    return load(string_view(name));
+}
+
+auto unload(string_view name) -> i32 {
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc && name_match(name, s_drivers[i].desc->name)) {
             if (!s_drivers[i].loaded) {
@@ -141,8 +144,13 @@ auto unload(const char* name) -> i32 {
         }
     }
 
-    log::warn("driver: not found: %s", name);
+    static_string<64> name_buf(name);
+    log::warn("driver: not found: %s", name_buf.c_str());
     return -1;
+}
+
+auto unload(const char* name) -> i32 {
+    return unload(string_view(name));
 }
 
 void list_loaded() {

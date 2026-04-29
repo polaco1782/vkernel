@@ -67,19 +67,24 @@ static void process_task_main(void* user_data) {
  * run()
  * ============================================================ */
 
-auto run(const char* filename) -> i64 {
+auto run(string_view filename) -> i64 {
     return run(filename, current_console_interface());
 }
 
-auto run(const char* filename, console_interface interface) -> i64 {
+auto run(const char* filename) -> i64 {
+    return run(string_view(filename), current_console_interface());
+}
+
+auto run(string_view filename, console_interface interface) -> i64 {
     /* Look up the file in ramfs */
     const file_entry* f = ramfs::find(filename);
     if (f == null) {
-        log::warn("process: file not found: %s", filename);
+        static_string<128> filename_buf(filename);
+        log::warn("process: file not found: %s", filename_buf.c_str());
         return -1;
     }
 
-    log::info("Loading binary: %s (%zu bytes)", filename, f->size);
+    log::info("Loading binary: %s (%zu bytes)", f->name.c_str(), f->size);
 
     const u8*  data = f->data;
     const usize sz  = f->size;
@@ -164,9 +169,13 @@ auto run(const char* filename, console_interface interface) -> i64 {
     }
 
     log::info("Spawned task id %llu for %s",
-              static_cast<unsigned long long>(task_id), filename);
+              static_cast<unsigned long long>(task_id), f->name.c_str());
 
     return task_id;
+}
+
+auto run(const char* filename, console_interface interface) -> i64 {
+    return run(string_view(filename), interface);
 }
 
 } // namespace process

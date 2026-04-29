@@ -226,7 +226,7 @@ auto sched::init() -> status_code {
     return status_code::success;
 }
 
-auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) -> i64 {
+auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) -> i64 {
     g_sched_lock.acquire();
     if (g_task_count >= MAX_TASKS) {
         g_sched_lock.release();
@@ -241,8 +241,10 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
     t.user_data = user_data;
     t.xsave_valid = false;
     t.cpu_ticks = 0;
-    memory::memory_copy(t.name, name, sizeof(t.name) - 1);
-    t.name[sizeof(t.name) - 1] = '\0';
+    if (!t.name.assign(name)) {
+        g_sched_lock.release();
+        return -1;
+    }
 
     /*
      * Set up the initial stack frame so the first context switch
@@ -282,16 +284,16 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
 
     if constexpr (log::debug_enabled()) {
         log::debug("task '%s': entry=%#llx user_data=%p rsp=%#llx",
-                   name,
+                   t.name.c_str(),
                    static_cast<unsigned long long>(reinterpret_cast<u64>(entry)),
                    user_data,
                    static_cast<unsigned long long>(t.rsp));
 
         if (!validate_entry_point(reinterpret_cast<u64>(entry))) {
-            log::warn("Task '%s' entry point may contain fill pattern", name);
+            log::warn("Task '%s' entry point may contain fill pattern", t.name.c_str());
             dump_entry_bytes(reinterpret_cast<u64>(entry), 32);
         } else {
-            log::debug("Task '%s' entry point looks like valid code", name);
+            log::debug("Task '%s' entry point looks like valid code", t.name.c_str());
             dump_entry_bytes(reinterpret_cast<u64>(entry), 16);
         }
 
@@ -311,9 +313,13 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
     g_sched_lock.release();
 
     log::info("Task created: %s (id=%llu)",
-              name, static_cast<unsigned long long>(id));
+              t.name.c_str(), static_cast<unsigned long long>(id));
 
     return id;
+}
+
+auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) -> i64 {
+    return create_task(string_view(name), entry, user_data);
 }
 
 void sched::yield() {
@@ -520,10 +526,16 @@ auto sched::current_task_id() -> u64 {
     return g_tasks[t].id;
 }
 
+auto sched::current_task_name_view() -> string_view {
+    usize t = cpu_current_task();
+    if (t >= g_task_count) return "<idle>";
+    return g_tasks[t].name.view();
+}
+
 auto sched::current_task_name() -> const char* {
     usize t = cpu_current_task();
     if (t >= g_task_count) return "<idle>";
-    return g_tasks[t].name;
+    return g_tasks[t].name.c_str();
 }
 
 auto sched::current_task_user_data() -> void* {
@@ -550,8 +562,7 @@ auto sched::snapshot_tasks(task_snapshot* out, usize max_tasks) -> usize {
         out[i].id = g_tasks[i].id;
         out[i].state = g_tasks[i].state;
         out[i].cpu_ticks = g_tasks[i].cpu_ticks;
-        memory::memory_copy(out[i].name, g_tasks[i].name, sizeof(out[i].name));
-        out[i].name[sizeof(out[i].name) - 1] = '\0';
+        out[i].name = g_tasks[i].name.view();
     }
     g_sched_lock.release();
     return total;
@@ -601,7 +612,7 @@ void sched::wait_for_task(u64 task_id) {
     usize cur = cpu_current_task();
     g_tasks[cur].state = task_state::terminated;
     g_tasks[cur].user_data = null;
-    log::debug("Task terminated: %s", g_tasks[cur].name);
+    log::debug("Task terminated: %s", g_tasks[cur].name.c_str());
     g_sched_lock.release();
     /* Yield to let scheduler pick another task */
     while (true) { sched::yield(); arch::cpu_halt(); }
@@ -626,7 +637,7 @@ void sched::dump_tasks() {
     for (usize i = 0; i < g_task_count; ++i) {
         log::info("  [%llu] %s - %s",
                   static_cast<unsigned long long>(g_tasks[i].id),
-                  g_tasks[i].name,
+                  g_tasks[i].name.c_str(),
                   (g_tasks[i].state == task_state::ready) ? "ready" :
                   (g_tasks[i].state == task_state::running) ? "running" :
                   (g_tasks[i].state == task_state::blocked) ? "blocked" :

@@ -171,7 +171,7 @@ typedef struct vk_api {
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 14ULL
+#define VK_API_VERSION 16ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

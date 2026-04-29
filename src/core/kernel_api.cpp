@@ -138,7 +138,8 @@ static vk_usize stub_task_snapshot(vk_task_info_t* out, vk_usize max_tasks) {
         out[i].state = static_cast<vk_u32>(snapshots[i].state);
         out[i]._reserved = 0;
         out[i].cpu_ticks = snapshots[i].cpu_ticks;
-        memory::memory_copy(out[i].name, snapshots[i].name, sizeof(out[i].name));
+        static_string<32> name_buf(snapshots[i].name);
+        memory::memory_copy(out[i].name, name_buf.c_str(), sizeof(out[i].name));
         out[i].name[sizeof(out[i].name) - 1] = '\0';
     }
 
@@ -412,16 +413,16 @@ struct kernel_file_stream {
 static constexpr usize k_max_kernel_file_streams = 16;
 static kernel_file_stream s_file_streams[k_max_kernel_file_streams];
 
-static auto parse_mode_flags(const char* mode) -> bool {
-    if (mode == null) return false;
+static auto parse_mode_flags(string_view mode) -> bool {
+    if (mode.data() == null) return false;
 
     bool saw_read = false;
     bool saw_write = false;
     bool saw_append = false;
     bool saw_plus = false;
 
-    for (const char* p = mode; *p != '\0'; ++p) {
-        switch (*p) {
+    for (usize i = 0; i < mode.size(); ++i) {
+        switch (mode[i]) {
             case 'r': saw_read = true; break;
             case 'w': saw_write = true; break;
             case 'a': saw_append = true; break;
