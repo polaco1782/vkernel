@@ -217,9 +217,7 @@ static bool ata_block_read(block_device* dev, u64 lba, u32 count, void* buffer) 
     auto* out = static_cast<u8*>(buffer);
     for (u32 i = 0; i < count; ++i) {
         if (!ata_read_one_lba28(drive, lba + i, out + i * ATA_SECTOR_SIZE)) {
-            log::warn("ata_pio: read failed dev=%s lba=%llu",
-                      dev->name.c_str(),
-                      static_cast<unsigned long long>(lba + i));
+            log::warn() << "ata_pio: read failed dev=" << dev->name.c_str() << " lba=" << static_cast<unsigned long long>(lba + i);
             return false;
         }
     }
@@ -251,13 +249,11 @@ static bool register_ata_drive(ata_drive& drive) {
     i32 id = block::register_device(dev);
     if (id < 0) return false;
 
-    log::info("ata_pio: %s %s %s, %llu sectors",
-              dev.name.c_str(),
-              drive.channel.name,
-              drive.drive == 0 ? "master" : "slave",
-              static_cast<unsigned long long>(drive.sectors));
+    log::info() << "ata_pio: " << dev.name.c_str() << " " << drive.channel.name << " "
+                << (drive.drive == 0 ? "master" : "slave") << ", "
+                << static_cast<unsigned long long>(drive.sectors) << " sectors";
     if (!drive.model.empty()) {
-        log::info("ata_pio: model: %s", drive.model.c_str());
+        log::info() << "ata_pio: model: " << drive.model.c_str();
     }
     return true;
 }
@@ -269,16 +265,10 @@ static bool ata_pio_init() {
 
     auto* ide = pci::find_by_class(pci_ids::CLASS_STORAGE, pci_ids::SUBCLASS_IDE);
     if (ide != null) {
-        log::info("ata_pio: IDE controller at %#x:%#x.%#x vendor=%#x device=%#x prog_if=%#x",
-                  ide->addr.bus,
-                  ide->addr.device,
-                  ide->addr.function,
-                  ide->vendor_id,
-                  ide->device_id,
-                  ide->prog_if);
+        log::info() << "ata_pio: IDE controller at " << log::hex(static_cast<u64>(ide->addr.bus), 1, true, false) << ":" << log::hex(static_cast<u64>(ide->addr.device), 1, true, false) << "." << log::hex(static_cast<u64>(ide->addr.function), 1, true, false) << " vendor=" << log::hex(static_cast<u64>(ide->vendor_id), 1, true, false) << " device=" << log::hex(static_cast<u64>(ide->device_id), 1, true, false) << " prog_if=" << log::hex(static_cast<u64>(ide->prog_if), 1, true, false);
         pci::enable_bus_master(ide->addr);
     } else {
-        log::warn("ata_pio: no PCI IDE controller found, probing legacy ports");
+        log::warn() << "ata_pio: no PCI IDE controller found, probing legacy ports";
     }
 
     const ata_channel channels[2] = {
@@ -300,7 +290,7 @@ static bool ata_pio_init() {
     }
 
     if (s_drive_count == 0) {
-        log::warn("ata_pio: no ATA disks detected");
+        log::warn() << "ata_pio: no ATA disks detected";
         return false;
     }
 
@@ -310,7 +300,7 @@ static bool ata_pio_init() {
     if (block::device_count() > 0 &&
         block::read_blocks(block::get_device(0), 0, 1, sector)) {
         u16 sig = static_cast<u16>((static_cast<u16>(sector[511]) << 8) | sector[510]);
-        log::info("ata_pio: block0 sector0 signature %#x", sig);
+        log::info() << "ata_pio: block0 sector0 signature " << log::hex(sig);
     }
 
     return true;

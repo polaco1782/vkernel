@@ -363,14 +363,13 @@ auto mouse_init() -> status_code {
     u8 ack = ps2_read_data();
 
     if (ack != PS2_MOUSE_ACK) {
-        log::warn("input: PS/2 mouse init: unexpected ACK 0x%02x (expected 0xFA)",
-                  static_cast<unsigned>(ack));
+        log::warn() << "input: PS/2 mouse init: unexpected ACK 0x" << log::hex(static_cast<u64>(static_cast<unsigned>(ack)), 1, false, false) << " (expected 0xFA)";
         /* Not a fatal error — mouse packets may still arrive. */
     }
 
     s_mouse_phase = 0;
     s_mouse_ready = true;
-    log::debug("Input: PS/2 mouse ready");
+    log::debug() << "Input: PS/2 mouse ready";
     return status_code::success;
 }
 
@@ -409,7 +408,7 @@ auto init() -> status_code {
     /* Initialise the PS/2 mouse port */
     mouse_init();
 
-    log::debug("Input subsystem ready (PS/2 keyboard + mouse + COM1)");
+    log::debug() << "Input subsystem ready (PS/2 keyboard + mouse + COM1)";
     return status_code::success;
 }
 

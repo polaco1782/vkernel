@@ -10,31 +10,12 @@
 #include "console.h"
 #include "spinlock.h"
 
-using vk_va_list = __builtin_va_list;
-
 namespace vk {
 
 namespace log {
 
-enum class log_level : u8 {
-    printk = 0,
-    error = 1,
-    warn = 2,
-    info = 3,
-    debug = 4,
-    verbose = 5,
-    crash = 6,
-};
-
 struct format_state {
     char last_char = '\0';
-};
-
-enum class length_modifier : u8 {
-    none,
-    l,
-    ll,
-    z,
 };
 
 static void format_putc(format_state& state, char c) {
@@ -171,159 +152,42 @@ static void format_signed(format_state& state, i64 value) {
     format_unsigned(state, magnitude, 10, false, false);
 }
 
-static auto read_unsigned_arg(vk_va_list args, length_modifier length) -> u64 {
-    switch (length) {
-        case length_modifier::ll:
-            return __builtin_va_arg(args, unsigned long long);
-        case length_modifier::l:
-            return __builtin_va_arg(args, unsigned long);
-        case length_modifier::z:
-            return __builtin_va_arg(args, usize);
-        case length_modifier::none:
-        default:
-            return __builtin_va_arg(args, unsigned int);
-    }
-}
-
-static auto read_signed_arg(vk_va_list args, length_modifier length) -> i64 {
-    switch (length) {
-        case length_modifier::ll:
-            return __builtin_va_arg(args, long long);
-        case length_modifier::l:
-            return __builtin_va_arg(args, long);
-        case length_modifier::z:
-            return __builtin_va_arg(args, isize);
-        case length_modifier::none:
-        default:
-            return __builtin_va_arg(args, int);
-    }
-}
-
-static void vformat_to_console(format_state& state, const char* format, vk_va_list args) {
-    if (format == null) {
-        return;
-    }
-
-    while (*format != '\0') {
-        if (*format != '%') {
-            format_putc(state, *format++);
-            continue;
-        }
-
-        ++format;
-        if (*format == '%') {
-            format_putc(state, *format++);
-            continue;
-        }
-
-        bool alternate = false;
-        while (*format == '-' || *format == '+' || *format == ' ' || *format == '#' || *format == '0') {
-            if (*format == '#') {
-                alternate = true;
-            }
-            ++format;
-        }
-
-        while (*format >= '0' && *format <= '9') {
-            ++format;
-        }
-
-        if (*format == '.') {
-            ++format;
-            while (*format >= '0' && *format <= '9') {
-                ++format;
-            }
-        }
-
-        length_modifier length = length_modifier::none;
-        if (*format == 'l') {
-            ++format;
-            if (*format == 'l') {
-                ++format;
-                length = length_modifier::ll;
-            } else {
-                length = length_modifier::l;
-            }
-        } else if (*format == 'z') {
-            ++format;
-            length = length_modifier::z;
-        }
-
-        char spec = *format;
-        if (spec == '\0') {
-            break;
-        }
-        ++format;
-
-        switch (spec) {
-            case 'c':
-                format_putc(state, static_cast<char>(__builtin_va_arg(args, int)));
-                break;
-            case 's':
-                format_puts(state, __builtin_va_arg(args, const char*));
-                break;
-            case 'd':
-            case 'i':
-                format_signed(state, read_signed_arg(args, length));
-                break;
-            case 'u':
-                format_unsigned(state, read_unsigned_arg(args, length), 10, false, false);
-                break;
-            case 'x':
-                format_unsigned(state, read_unsigned_arg(args, length), 16, false, alternate);
-                break;
-            case 'X':
-                format_unsigned(state, read_unsigned_arg(args, length), 16, true, alternate);
-                break;
-            case 'p': {
-                auto value = reinterpret_cast<usize>(__builtin_va_arg(args, const void*));
-                format_unsigned(state, value, 16, false, true, sizeof(void*) * 2);
-                break;
-            }
-            default:
-                format_putc(state, '%');
-                format_putc(state, spec);
-                break;
-        }
-    }
-}
-
-static auto level_enabled(log_level level) -> bool {
-    switch (level) {
-        case log_level::printk:  return true;
-        case log_level::crash:   return true;
-        case log_level::error:   return error_enabled();
-        case log_level::warn:    return warn_enabled();
-        case log_level::info:    return info_enabled();
-        case log_level::debug:   return debug_enabled();
-        case log_level::verbose: return verbose_enabled();
+static auto level_enabled(level lvl) -> bool {
+    switch (lvl) {
+        case level::printk:  return true;
+        case level::crash:   return true;
+        case level::error:   return error_enabled();
+        case level::warn:    return warn_enabled();
+        case level::info:    return info_enabled();
+        case level::debug:   return debug_enabled();
+        case level::verbose: return verbose_enabled();
         default:                 return false;
     }
 }
 
-static auto level_prefix(log_level level) -> const char* {
-    switch (level) {
-        case log_level::crash:   return null;
-        case log_level::error:   return "[ERROR] ";
-        case log_level::warn:    return "[WARN] ";
-        case log_level::info:    return "[INFO] ";
-        case log_level::debug:   return "[DEBUG] ";
-        case log_level::verbose: return "[VERBOSE] ";
-        case log_level::printk:
+static auto level_prefix(level lvl) -> const char* {
+    switch (lvl) {
+        case level::crash:   return null;
+        case level::error:   return "[ERROR] ";
+        case level::warn:    return "[WARN] ";
+        case level::info:    return "[INFO] ";
+        case level::debug:   return "[DEBUG] ";
+        case level::verbose: return "[VERBOSE] ";
+        case level::printk:
         default:
             return null;
     }
 }
 
-static auto level_color(log_level level) -> console_color {
-    switch (level) {
-        case log_level::crash:   return console_color::white;
-        case log_level::error:   return console_color::light_red;
-        case log_level::warn:    return console_color::yellow;
-        case log_level::info:    return console_color::light_green;
-        case log_level::debug:   return console_color::blue;
-        case log_level::verbose: return console_color::gray;
-        case log_level::printk:
+static auto level_color(level lvl) -> console_color {
+    switch (lvl) {
+        case level::crash:   return console_color::white;
+        case level::error:   return console_color::light_red;
+        case level::warn:    return console_color::yellow;
+        case level::info:    return console_color::light_green;
+        case level::debug:   return console_color::blue;
+        case level::verbose: return console_color::gray;
+        case level::printk:
         default:
             return console_color::white;
     }
@@ -340,49 +204,144 @@ static auto level_color(log_level level) -> console_color {
  *     accepting interleaved output rather than a hang. */
 static spinlock s_log_lock;
 
-static void vlog(log_level level, bool append_newline, const char* format, vk_va_list args) {
-    if (!level_enabled(level)) {
-        return;
-    }
-
-    bool we_locked = false;
-    if (level == log_level::crash) {
+void line::lock() {
+    if (level_ == level::crash) {
         if (!s_log_lock.held_by_self()) {
-            /* Try briefly; if another CPU is mid-log just print on top */
             for (int i = 0; i < 1000; ++i) {
-                if (s_log_lock.try_acquire()) { we_locked = true; break; }
+                if (s_log_lock.try_acquire()) {
+                    locked_ = true;
+                    break;
+                }
                 arch::cpu_pause();
             }
         }
     } else {
         s_log_lock.acquire();
-        we_locked = true;
+        locked_ = true;
+    }
+}
+
+void line::unlock() {
+    if (locked_) {
+        s_log_lock.release();
+        locked_ = false;
+    }
+}
+
+line::line(level lvl, bool append_newline)
+    : level_(lvl),
+      enabled_(level_enabled(lvl)),
+      append_newline_(append_newline),
+      locked_(false),
+      last_char_('\0') {
+    if (!enabled_) {
+        return;
     }
 
-    format_state state{};
+    lock();
 
-    const char* prefix = level_prefix(level);
-    if (level == log_level::crash) {
-        /* Keep existing behaviour: entire crash message highlighted */
+    const char* prefix = level_prefix(level_);
+    if (level_ == level::crash) {
         console::set_color(console_color::white, console_color::red);
     } else if (prefix != null) {
-        /* Print only the coloured prefix, then reset to white for the message */
-        console::set_color(level_color(level), console_color::black);
-        format_puts(state, prefix);
+        console::set_color(level_color(level_), console_color::black);
+        puts(prefix);
+        console::set_color(console_color::white, console_color::black);
+    }
+}
+
+line::~line() {
+    if (!enabled_) {
+        return;
+    }
+
+    if (append_newline_ && last_char_ != '\n') {
+        putc('\n');
+    }
+
+    if (level_ != level::printk) {
         console::set_color(console_color::white, console_color::black);
     }
 
-    vformat_to_console(state, format, args);
+    unlock();
+}
 
-    if (append_newline && state.last_char != '\n') {
-        format_putc(state, '\n');
+void line::putc(char c) {
+    if (!enabled_) {
+        return;
     }
+    console::putc(c);
+    last_char_ = c;
+}
 
-    if (level != log_level::printk) {
-        console::set_color(console_color::white, console_color::black);
+void line::puts(const char* str) {
+    if (!enabled_) {
+        return;
     }
+    if (str == null) {
+        str = "(null)";
+    }
+    while (*str != '\0') {
+        putc(*str++);
+    }
+}
 
-    if (we_locked) s_log_lock.release();
+void line::append_unsigned(u64 value, u32 base, bool uppercase, bool prefix, usize min_digits) {
+    if (!enabled_) {
+        return;
+    }
+    format_state state{ last_char_ };
+    format_unsigned(state, value, base, uppercase, prefix, min_digits);
+    last_char_ = state.last_char;
+}
+
+void line::append_signed(i64 value) {
+    if (!enabled_) {
+        return;
+    }
+    format_state state{ last_char_ };
+    format_signed(state, value);
+    last_char_ = state.last_char;
+}
+
+auto line::operator<<(const char* value) -> line& {
+    puts(value);
+    return *this;
+}
+
+auto line::operator<<(char value) -> line& {
+    putc(value);
+    return *this;
+}
+
+auto line::operator<<(bool value) -> line& {
+    puts(value ? "true" : "false");
+    return *this;
+}
+
+auto line::operator<<(const void* value) -> line& {
+    append_unsigned(reinterpret_cast<usize>(value), 16, false, true, sizeof(void*) * 2);
+    return *this;
+}
+
+auto line::operator<<(const volatile void* value) -> line& {
+    append_unsigned(reinterpret_cast<usize>(value), 16, false, true, sizeof(void*) * 2);
+    return *this;
+}
+
+auto line::operator<<(string_view value) -> line& {
+    if (!enabled_) {
+        return *this;
+    }
+    for (usize i = 0; i < value.size(); ++i) {
+        putc(value.data()[i]);
+    }
+    return *this;
+}
+
+auto line::operator<<(hex_value value) -> line& {
+    append_unsigned(value.value, 16, value.uppercase, value.prefix, value.min_digits);
+    return *this;
 }
 
 auto hex(char* out, usize out_size, u64 value) -> usize {
@@ -393,53 +352,32 @@ auto hex_bytes(char* out, usize out_size, const u8* data, usize length) -> usize
     return format_hex_bytes_to_buffer(out, out_size, data, length);
 }
 
-void printk(const char* format, ...) {
-    vk_va_list args;
-    __builtin_va_start(args, format);
-    vlog(log_level::printk, false, format, args);
-    __builtin_va_end(args);
+auto printk() -> line {
+    return line(level::printk, false);
 }
 
-void crash(const char* format, ...) {
-    vk_va_list args;
-    __builtin_va_start(args, format);
-    vlog(log_level::crash, true, format, args);
-    __builtin_va_end(args);
+auto crash() -> line {
+    return line(level::crash);
 }
 
-void error(const char* format, ...) {
-    vk_va_list args;
-    __builtin_va_start(args, format);
-    vlog(log_level::error, true, format, args);
-    __builtin_va_end(args);
+auto error() -> line {
+    return line(level::error);
 }
 
-void warn(const char* format, ...) {
-    vk_va_list args;
-    __builtin_va_start(args, format);
-    vlog(log_level::warn, true, format, args);
-    __builtin_va_end(args);
+auto warn() -> line {
+    return line(level::warn);
 }
 
-void info(const char* format, ...) {
-    vk_va_list args;
-    __builtin_va_start(args, format);
-    vlog(log_level::info, true, format, args);
-    __builtin_va_end(args);
+auto info() -> line {
+    return line(level::info);
 }
 
-void debug(const char* format, ...) {
-    vk_va_list args;
-    __builtin_va_start(args, format);
-    vlog(log_level::debug, true, format, args);
-    __builtin_va_end(args);
+auto debug() -> line {
+    return line(level::debug);
 }
 
-void verbose(const char* format, ...) {
-    vk_va_list args;
-    __builtin_va_start(args, format);
-    vlog(log_level::verbose, true, format, args);
-    __builtin_va_end(args);
+auto verbose() -> line {
+    return line(level::verbose);
 }
 
 } // namespace log

@@ -149,7 +149,7 @@ void init() {
         }
     }
 
-    log::info("pci: enumerated %zu device(s)", s_count);
+    log::info() << "pci: enumerated " << s_count << " device(s)";
 }
 
 /* ============================================================
@@ -190,13 +190,10 @@ auto get_device(usize index) -> const pci_device* {
  * ============================================================ */
 
 void list_devices() {
-    log::info("PCI devices:");
+    log::info() << "PCI devices:";
     for (usize i = 0; i < s_count; ++i) {
         auto& d = s_devices[i];
-        log::info("  %#02x:%#02x.%#x vendor=%#04x device=%#04x class=%#02x:%#02x irq=%u",
-                  d.addr.bus, d.addr.device, d.addr.function,
-                  d.vendor_id, d.device_id,
-                  d.class_code, d.subclass, d.irq_line);
+        log::info() << "  " << log::hex(static_cast<u64>(d.addr.bus), 1, true, false) << ":" << log::hex(static_cast<u64>(d.addr.device), 1, true, false) << "." << log::hex(static_cast<u64>(d.addr.function), 1, true, false) << " vendor=" << log::hex(static_cast<u64>(d.vendor_id), 1, true, false) << " device=" << log::hex(static_cast<u64>(d.device_id), 1, true, false) << " class=" << log::hex(static_cast<u64>(d.class_code), 1, true, false) << ":" << log::hex(static_cast<u64>(d.subclass), 1, true, false) << " irq=" << d.irq_line;
     }
 }
 

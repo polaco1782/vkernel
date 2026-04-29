@@ -149,16 +149,13 @@ auto load(const u8* file_data, usize file_size) -> load_result {
             .from_phys = false,
         });
 
-    log::debug("elf: vaddr range %#llx - %#llx (size %llu bytes)",
-               static_cast<unsigned long long>(vaddr_min),
-               static_cast<unsigned long long>(vaddr_max),
-               static_cast<unsigned long long>(image_size));
+    log::debug() << "elf: vaddr range " << log::hex(static_cast<u64>(static_cast<unsigned long long>(vaddr_min)), 1, true, false) << " - " << log::hex(static_cast<u64>(static_cast<unsigned long long>(vaddr_max)), 1, true, false) << " (size " << static_cast<unsigned long long>(image_size) << " bytes)";
 
     if (!image_base) {
         /* Heap too small — fall back to the physical allocator.  The
          * physical allocator works in pages; cast the phys_addr to a
          * pointer (valid because the kernel runs identity-mapped). */
-        log::warn("elf: heap allocation failed, trying physical allocator");
+        log::warn() << "elf: heap allocation failed, trying physical allocator";
         u32 page_count = static_cast<u32>(
             (image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
 
@@ -170,7 +167,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
             0);
 
         if (phys == 0) {
-            log::error("elf: physical allocation failed");
+            log::error() << "elf: physical allocation failed";
             result.error = elf_error::no_memory;
             return result;
         }
@@ -257,10 +254,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     result.image_size = image_size;
     result.error      = elf_error::ok;
 
-    log::debug("elf: loaded image_base=%p size=%llu entry=%#llx",
-               result.image_base,
-               static_cast<unsigned long long>(image_size),
-               static_cast<unsigned long long>(result.entry));
+    log::debug() << "elf: loaded image_base=" << reinterpret_cast<const void*>(result.image_base) << " size=" << static_cast<unsigned long long>(image_size) << " entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(result.entry)), 1, true, false);
 
     return result;
 }

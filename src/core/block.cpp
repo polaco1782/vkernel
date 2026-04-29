@@ -29,20 +29,17 @@ void init() {
 auto register_device(const block_device& dev) -> i32 {
     if (!s_initialised) init();
     if (s_device_count >= MAX_BLOCK_DEVICES) {
-        log::warn("block: registry full, cannot register %s", dev.name.c_str());
+        log::warn() << "block: registry full, cannot register " << dev.name.c_str();
         return -1;
     }
     if (dev.block_size == 0 || dev.block_count == 0 || dev.ops == null ||
         dev.ops->read_blocks == null) {
-        log::warn("block: invalid device descriptor for %s", dev.name.c_str());
+        log::warn() << "block: invalid device descriptor for " << dev.name.c_str();
         return -1;
     }
 
     s_devices[s_device_count] = dev;
-    log::info("block: registered %s (%llu blocks x %u bytes)",
-              s_devices[s_device_count].name.c_str(),
-              static_cast<unsigned long long>(s_devices[s_device_count].block_count),
-              s_devices[s_device_count].block_size);
+    log::info() << "block: registered " << s_devices[s_device_count].name.c_str() << " (" << static_cast<unsigned long long>(s_devices[s_device_count].block_count) << " blocks x " << s_devices[s_device_count].block_size << " bytes)";
     ++s_device_count;
     return static_cast<i32>(s_device_count - 1);
 }
@@ -78,20 +75,15 @@ bool read_blocks(block_device* dev, u64 lba, u32 count, void* buffer) {
 }
 
 void list_devices() {
-    log::info("Block devices:");
+    log::info() << "Block devices:";
     if (s_device_count == 0) {
-        log::info("  (none)");
+        log::info() << "  (none)";
         return;
     }
 
     for (usize i = 0; i < s_device_count; ++i) {
         auto& d = s_devices[i];
-        log::info("  [%zu] %s: %llu KiB (%llu blocks x %u)",
-                  i,
-                  d.name.c_str(),
-                  static_cast<unsigned long long>((d.block_count * d.block_size) / 1024),
-                  static_cast<unsigned long long>(d.block_count),
-                  d.block_size);
+        log::info() << "  [" << i << "] " << d.name.c_str() << ": " << static_cast<unsigned long long>((d.block_count * d.block_size) / 1024) << " KiB (" << static_cast<unsigned long long>(d.block_count) << " blocks x " << d.block_size << ")";
     }
 }
 

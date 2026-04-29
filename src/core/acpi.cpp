@@ -66,14 +66,12 @@ static void index_rsdt(const rsdt* table) {
             static_cast<usize>(entries[i]));
 
         if (!verify_checksum(hdr, hdr->length)) {
-            log::warn("ACPI: SDT %.4s at %p has bad checksum — skipped",
-                      hdr->signature, hdr);
+            log::warn() << "ACPI: SDT " << vk::string_view(hdr->signature, 4) << " at " << reinterpret_cast<const void*>(hdr) << " has bad checksum — skipped";
             continue;
         }
 
         s_tables[s_table_count++] = hdr;
-        log::debug("ACPI: indexed SDT %.4s at %p (%u bytes)",
-                   hdr->signature, hdr, hdr->length);
+        log::debug() << "ACPI: indexed SDT " << vk::string_view(hdr->signature, 4) << " at " << reinterpret_cast<const void*>(hdr) << " (" << hdr->length << " bytes)";
     }
 }
 
@@ -89,14 +87,12 @@ static void index_xsdt(const xsdt* table) {
             static_cast<usize>(entries[i]));
 
         if (!verify_checksum(hdr, hdr->length)) {
-            log::warn("ACPI: SDT %.4s at %p has bad checksum — skipped",
-                      hdr->signature, hdr);
+            log::warn() << "ACPI: SDT " << vk::string_view(hdr->signature, 4) << " at " << reinterpret_cast<const void*>(hdr) << " has bad checksum — skipped";
             continue;
         }
 
         s_tables[s_table_count++] = hdr;
-        log::debug("ACPI: indexed SDT %.4s at %p (%u bytes)",
-                   hdr->signature, hdr, hdr->length);
+        log::debug() << "ACPI: indexed SDT " << vk::string_view(hdr->signature, 4) << " at " << reinterpret_cast<const void*>(hdr) << " (" << hdr->length << " bytes)";
     }
 }
 
@@ -108,7 +104,7 @@ void init(void* system_table_ptr) {
     if (s_initialized) return;
 
     if (!system_table_ptr) {
-        log::error("ACPI: null system table pointer");
+        log::error() << "ACPI: null system table pointer";
         return;
     }
 
@@ -121,15 +117,16 @@ void init(void* system_table_ptr) {
     }
 
     if (!rsdp_ptr) {
-        log::error("ACPI: RSDP not found in UEFI configuration tables");
+        log::error() << "ACPI: RSDP not found in UEFI configuration tables";
         return;
     }
 
-    log::info("ACPI: RSDP at %p (ACPI %s)", rsdp_ptr, is_v2 ? "2.0+" : "1.0");
+    log::info() << "ACPI: RSDP at " << reinterpret_cast<const void*>(rsdp_ptr)
+                << " (ACPI " << (is_v2 ? "2.0+" : "1.0") << ")";
 
     /* Validate RSDP v1 checksum (always covers first 20 bytes) */
     if (!verify_checksum(rsdp_ptr, sizeof(rsdp_v1))) {
-        log::error("ACPI: RSDP checksum invalid");
+        log::error() << "ACPI: RSDP checksum invalid";
         return;
     }
 
@@ -137,7 +134,7 @@ void init(void* system_table_ptr) {
 
     /* Signature sanity check */
     if (memory::compare(rsdp1->signature, "RSD PTR ", 8) != 0) {
-        log::error("ACPI: RSDP signature mismatch");
+        log::error() << "ACPI: RSDP signature mismatch";
         return;
     }
 
@@ -149,8 +146,7 @@ void init(void* system_table_ptr) {
 
         /* Validate extended checksum */
         if (!verify_checksum(rsdp2, rsdp2->length)) {
-            log::warn("ACPI: RSDP v2 extended checksum invalid, "
-                      "falling back to RSDT");
+            log::warn() << "ACPI: RSDP v2 extended checksum invalid, falling back to RSDT";
         } else if (rsdp2->xsdt_address != 0) {
             s_use_xsdt = true;
 
@@ -158,13 +154,11 @@ void init(void* system_table_ptr) {
                 static_cast<usize>(rsdp2->xsdt_address));
 
             if (verify_checksum(xsdt_ptr, xsdt_ptr->header.length)) {
-                log::info("ACPI: XSDT at %p, %u entries",
-                          xsdt_ptr,
-                          (xsdt_ptr->header.length - (u32)sizeof(sdt_header))
-                          / (u32)sizeof(u64));
+                log::info() << "ACPI: XSDT at " << reinterpret_cast<const void*>(xsdt_ptr) << ", " << (xsdt_ptr->header.length - (u32)sizeof(sdt_header))
+                          / (u32)sizeof(u64) << " entries";
                 index_xsdt(xsdt_ptr);
             } else {
-                log::warn("ACPI: XSDT checksum invalid, falling back to RSDT");
+                log::warn() << "ACPI: XSDT checksum invalid, falling back to RSDT";
                 s_use_xsdt = false;
             }
         }
@@ -172,7 +166,7 @@ void init(void* system_table_ptr) {
 
     if (!s_use_xsdt) {
         if (rsdp1->rsdt_address == 0) {
-            log::error("ACPI: no valid RSDT or XSDT found");
+            log::error() << "ACPI: no valid RSDT or XSDT found";
             return;
         }
 
@@ -180,19 +174,17 @@ void init(void* system_table_ptr) {
             static_cast<usize>(rsdp1->rsdt_address));
 
         if (!verify_checksum(rsdt_ptr, rsdt_ptr->header.length)) {
-            log::error("ACPI: RSDT checksum invalid");
+            log::error() << "ACPI: RSDT checksum invalid";
             return;
         }
 
-        log::info("ACPI: RSDT at %p, %u entries",
-                  rsdt_ptr,
-                  (rsdt_ptr->header.length - (u32)sizeof(sdt_header))
-                  / (u32)sizeof(u32));
+        log::info() << "ACPI: RSDT at " << reinterpret_cast<const void*>(rsdt_ptr) << ", " << (rsdt_ptr->header.length - (u32)sizeof(sdt_header))
+                  / (u32)sizeof(u32) << " entries";
 
         index_rsdt(rsdt_ptr);
     }
 
-    log::info("ACPI: initialized, %u SDTs indexed", s_table_count);
+    log::info() << "ACPI: initialized, " << s_table_count << " SDTs indexed";
     s_initialized = true;
 }
 

@@ -225,10 +225,11 @@ auto query_gop() -> framebuffer_info {
         auto* mode = gop->mode;
         auto* info = mode->info;
         if (info) {
-            log::debug("GOP found: %ux%u, format %u, stride %u, fb_base %p",
-                       info->horizontal_resolution, info->vertical_resolution,
-                       info->fmt, info->pixels_per_scan_line,
-                       (void*)(phys_addr)(u64)mode->frame_buffer_base);
+            log::debug() << "GOP found: " << info->horizontal_resolution << "x"
+                         << info->vertical_resolution << ", format "
+                         << static_cast<u32>(info->fmt) << ", stride "
+                         << info->pixels_per_scan_line << ", fb_base "
+                         << reinterpret_cast<const void*>((void*)(phys_addr)(u64)mode->frame_buffer_base);
             return {
                 .base   = mode->frame_buffer_base,
                 .width  = info->horizontal_resolution,
@@ -241,7 +242,7 @@ auto query_gop() -> framebuffer_info {
     }
 
     /* GOP not available — fall back to direct BochsVBE programming */
-    log::warn("GOP not found, trying direct BochsVBE probe...");
+    log::warn() << "GOP not found, trying direct BochsVBE probe...";
     return probe_bochs_vbe();
 }
 

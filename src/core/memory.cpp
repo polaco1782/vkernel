@@ -123,7 +123,7 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
 
         auto node = alloc_region_node();
         if (node == null) {
-            log::warn("phys_alloc: region pool exhausted");
+            log::warn() << "phys_alloc: region pool exhausted";
             break;
         }
 
@@ -152,9 +152,7 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
         free_pages_ += entry.number_of_pages;
     }
 
-    log::debug("phys_alloc: %llu pages free (%llu MB)",
-               static_cast<unsigned long long>(total_pages_),
-               static_cast<unsigned long long>((total_pages_ * PAGE_SIZE_4K) / (1024 * 1024)));
+    log::debug() << "phys_alloc: " << static_cast<unsigned long long>(total_pages_) << " pages free (" << static_cast<unsigned long long>((total_pages_ * PAGE_SIZE_4K) / (1024 * 1024)) << " MB)";
 
     return status_code::success;
 }
@@ -278,9 +276,7 @@ auto kernel_heap::init(void* base, size_phys size) -> status_code {
     free_list_->next = null;
     free_list_->prev = null;
 
-    log::debug("heap: base=%p, capacity=%llu MB",
-               base,
-               static_cast<unsigned long long>(size / (1024 * 1024)));
+    log::debug() << "heap: base=" << reinterpret_cast<const void*>(base) << ", capacity=" << static_cast<unsigned long long>(size / (1024 * 1024)) << " MB";
 
     return status_code::success;
 }
@@ -360,7 +356,7 @@ void kernel_heap::free(void* ptr) {
 
     lock_.acquire();
 
-    log::debug("heap: freeing block at %p", ptr);
+    log::debug() << "heap: freeing block at " << reinterpret_cast<const void*>(ptr);
     
     /* Find the block header */
     auto block = reinterpret_cast<heap_block*>(
@@ -466,9 +462,7 @@ auto memory::init(span<const memory_map_entry> map) -> status_code {
         return status;
     }
     
-    log::info("Memory subsystem initialized (%llu pages total, %llu MB)",
-              static_cast<unsigned long long>(g_phys_alloc.total_pages()),
-              static_cast<unsigned long long>((g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024)));
+    log::info() << "Memory subsystem initialized (" << static_cast<unsigned long long>(g_phys_alloc.total_pages()) << " pages total, " << static_cast<unsigned long long>((g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024)) << " MB)";
     
     return status_code::success;
 }
@@ -490,20 +484,20 @@ auto memory::find_entry(phys_addr addr) -> const memory_map_entry* {
 
 /* Dump memory map */
 void memory::dump_map() {
-    log::info("Memory Map:");
-    log::info("========================================");
+    log::info() << "Memory Map:";
+    log::info() << "========================================";
     for (u32 i = 0; i < g_memory_map_count; ++i) {
-        log::info("Entry %u: %s", i, g_memory_map[i].type_string());
+        log::info() << "Entry " << i << ": " << g_memory_map[i].type_string();
     }
-    log::info("========================================\n");
+    log::info() << "========================================\n";
 }
 
 /* Dump kernel heap allocations */
 void memory::dump_heap() {
-    log::info("Kernel Heap Allocations:");
-    log::info("========================================");
-    log::info("  Address          Size       Status");
-    log::info("  ---------------  ---------  -------");
+    log::info() << "Kernel Heap Allocations:";
+    log::info() << "========================================";
+    log::info() << "  Address          Size       Status";
+    log::info() << "  ---------------  ---------  -------";
     
     auto block = g_kernel_heap.get_free_list();
     u64 used_total = 0;
@@ -512,10 +506,10 @@ void memory::dump_heap() {
     u32 free_count = 0;
     
     while (block != null) {
-        log::info("  0x%016llx  %9llu  %s",
-                  reinterpret_cast<u64>(block->data()),
-                  static_cast<unsigned long long>(block->size),
-                  block->used ? "USED" : "FREE");
+        log::info() << "  0x"
+                    << log::hex(static_cast<u64>(reinterpret_cast<u64>(block->data())), 1, false, false)
+                    << "  " << static_cast<unsigned long long>(block->size)
+                    << "  " << (block->used ? "USED" : "FREE");
         
         if (block->used) {
             used_total += block->size;
@@ -528,10 +522,10 @@ void memory::dump_heap() {
         block = block->next;
     }
     
-    log::info("----------------------------------------");
-    log::info("  Total Used:  %u blocks, %llu bytes", used_count, used_total);
-    log::info("  Total Free:  %u blocks, %llu bytes", free_count, free_total);
-    log::info("========================================\n\n");
+    log::info() << "----------------------------------------";
+    log::info() << "  Total Used:  " << used_count << " blocks, " << used_total << " bytes";
+    log::info() << "  Total Free:  " << free_count << " blocks, " << free_total << " bytes";
+    log::info() << "========================================\n\n";
 }
 
 } // namespace vk

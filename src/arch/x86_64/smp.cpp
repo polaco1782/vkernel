@@ -269,7 +269,7 @@ extern "C" void ap_init_secondary() {
     arch::memory_barrier();
     *phys_ptr<volatile u32>(TRAM_READY) = 1;
 
-    log::info("AP APIC %u: online, parking in scheduler AP loop", current_cpu_apic_id());
+    log::info() << "AP APIC " << current_cpu_apic_id() << ": online, parking in scheduler AP loop";
 
     /*
      * Step 4: enter the AP scheduler loop.  APs are online but do not
@@ -283,30 +283,30 @@ extern "C" void ap_init_secondary() {
  * ============================================================ */
 
 void init() {
-    log::info("SMP: initializing...");
+    log::info() << "SMP: initializing...";
 
     if (!acpi::is_initialized()) {
-        log::warn("SMP: ACPI not initialized — skipping AP bringup");
+        log::warn() << "SMP: ACPI not initialized — skipping AP bringup";
         return;
     }
 
     /* Locate the LAPIC base address */
     u64 apic_base_msr = arch::rdmsr(MSR_IA32_APIC_BASE);
     if (!(apic_base_msr & APIC_BASE_ENABLE)) {
-        log::warn("SMP: LAPIC globally disabled — skipping AP bringup");
+        log::warn() << "SMP: LAPIC globally disabled — skipping AP bringup";
         return;
     }
 
     u64 lapic_phys = apic_base_msr & APIC_BASE_PHYS_MASK;
     s_lapic_base = reinterpret_cast<volatile u32*>(static_cast<usize>(lapic_phys));
-    log::debug("SMP: LAPIC MMIO at %p", s_lapic_base);
+    log::debug() << "SMP: LAPIC MMIO at " << s_lapic_base;
 
     /* Enable the BSP's LAPIC */
     lapic_init_local();
 
     /* Record the BSP's APIC ID */
     s_bsp_apic_id = static_cast<u8>((lapic_read(LAPIC_ID) >> 24) & 0xFF);
-    log::debug("SMP: BSP APIC ID = %u", s_bsp_apic_id);
+    log::debug() << "SMP: BSP APIC ID = " << s_bsp_apic_id;
 
     /* Enumerate CPUs from MADT */
     struct lapic_enum_ctx {
@@ -337,13 +337,13 @@ void init() {
         &enum_ctx);
 
     s_cpu_count = enum_ctx.count;
-    log::info("SMP: found %u CPU(s) in MADT", s_cpu_count);
+    log::info() << "SMP: found " << s_cpu_count << " CPU(s) in MADT";
 
     if (s_cpu_count == 0) {
         /* No LAPIC entries — treat BSP as CPU 0 */
         s_cpus[0] = { s_bsp_apic_id, 0, true };
         s_cpu_count = 1;
-        log::warn("SMP: no MADT LAPIC entries found; single-CPU mode");
+        log::warn() << "SMP: no MADT LAPIC entries found; single-CPU mode";
         return;
     }
 
@@ -354,8 +354,7 @@ void init() {
         static_cast<usize>(ap_trampoline_end - ap_trampoline_start);
     memory::copy(phys_ptr<void>(TRAM_PHYS_BASE),
                         ap_trampoline_start, blob_size);
-    log::debug("SMP: trampoline blob (%zu bytes) copied to %#llx",
-               blob_size, static_cast<unsigned long long>(TRAM_PHYS_BASE));
+    log::debug() << "SMP: trampoline blob (" << blob_size << " bytes) copied to " << log::hex(static_cast<u64>(static_cast<unsigned long long>(TRAM_PHYS_BASE)), 1, true, false);
 
     /* Write the temporary GDT into the data area */
     write_trampoline_gdt();
@@ -371,15 +370,13 @@ void init() {
     *phys_ptr<u32>(TRAM_JUMP_FP)     = static_cast<u32>(entry_addr);
     *phys_ptr<u16>(TRAM_JUMP_FP + 4) = 0x18; /* SEL_CODE64 */
 
-    log::debug("SMP: ap_entry_64 @ %#llx",
-               static_cast<unsigned long long>(entry_addr));
+    log::debug() << "SMP: ap_entry_64 @ " << log::hex(static_cast<u64>(static_cast<unsigned long long>(entry_addr)), 1, true, false);
 
     u32 ap_count = 0;
     for (u32 i = 0; i < s_cpu_count; ++i) {
         if (s_cpus[i].apic_id == s_bsp_apic_id) continue; /* skip BSP */
 
-        log::info("SMP - Booting processor #%u: APIC ID %u, ACPI UID %u",
-                  i, s_cpus[i].apic_id, s_cpus[i].acpi_uid);
+        log::info() << "SMP - Booting processor #" << i << ": APIC ID " << s_cpus[i].apic_id << ", ACPI UID " << s_cpus[i].acpi_uid;
 
         const u8 apic_id = s_cpus[i].apic_id;
         const u32 ap_idx = i;
@@ -393,9 +390,7 @@ void init() {
         *phys_ptr<volatile u32>(TRAM_READY) = 0;
         arch::memory_barrier();
 
-        log::debug("SMP: starting AP APIC ID %u (stack top %#llx)...",
-                   apic_id,
-                   static_cast<unsigned long long>(stack_top));
+        log::debug() << "SMP: starting AP APIC ID " << apic_id << " (stack top " << log::hex(static_cast<u64>(static_cast<unsigned long long>(stack_top)), 1, true, false) << ")...";
 
         /* INIT IPI */
         send_init_ipi(apic_id);
@@ -411,15 +406,14 @@ void init() {
         /* Wait up to 1 s for the AP to set its ready flag */
         if (wait_ap_ready(ap_idx, 1000)) {
             ++ap_count;
-            log::info("SMP: AP APIC %u up", apic_id);
+            log::info() << "SMP: AP APIC " << apic_id << " up";
         } else {
-            log::warn("SMP: AP APIC %u did not respond within 1 s", apic_id);
+            log::warn() << "SMP: AP APIC " << apic_id << " did not respond within 1 s";
             s_cpus[ap_idx].online = false;
         }
     }
 
-    log::info("SMP: %u AP(s) started; total %u CPU(s) online",
-              ap_count, ap_count + 1 /* BSP */);
+    log::info() << "SMP: " << ap_count << " AP(s) started; total " << ap_count + 1 /* BSP */ << " CPU(s) online";
 }
 
 /* ============================================================
@@ -456,11 +450,11 @@ const cpu_info* get_cpu_info(u32 idx) {
 }
 
 void dump_cpus() {
-    log::info("SMP: %u CPU(s) detected:", s_cpu_count);
+    log::info() << "SMP: " << s_cpu_count << " CPU(s) detected:";
     for (u32 i = 0; i < s_cpu_count; ++i) {
-        log::info("  CPU %u: APIC ID=%u, ACPI UID=%u, %s",
-                  i, s_cpus[i].apic_id, s_cpus[i].acpi_uid,
-                  s_cpus[i].online ? "online" : "offline");
+        log::info() << "  CPU " << i << ": APIC ID=" << s_cpus[i].apic_id
+                    << ", ACPI UID=" << s_cpus[i].acpi_uid << ", "
+                    << (s_cpus[i].online ? "online" : "offline");
     }
 }
 

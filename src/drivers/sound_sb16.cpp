@@ -208,21 +208,21 @@ static void mixer_write(u8 reg, u8 value) {
 
 static bool sb16_init() {
     if (!dsp_reset()) {
-        log::warn("sb16: DSP reset failed - hardware not found");
+        log::warn() << "sb16: DSP reset failed - hardware not found";
         return false;
     }
 
     /* Get version */
     if (!dsp_write(DSP_CMD_GET_VERSION)) {
-        log::error("sb16: failed to query DSP version");
+        log::error() << "sb16: failed to query DSP version";
         return false;
     }
     u8 major = dsp_read();
     u8 minor = dsp_read();
-    log::info("sb16: DSP version %u.%u", major, minor);
+    log::info() << "sb16: DSP version " << major << "." << minor;
 
     if (major < 4) {
-        log::warn("sb16: DSP version < 4 - not a true SB16");
+        log::warn() << "sb16: DSP version < 4 - not a true SB16";
         /* Still usable for 8-bit, proceed anyway */
     }
 
@@ -239,15 +239,14 @@ static bool sb16_init() {
         )),
         physical_pages_deleter { .page_count = DMA_PAGE_COUNT });
     if (!dma_buf) {
-        log::error("sb16: failed to allocate DMA buffer below 16 MB");
+        log::error() << "sb16: failed to allocate DMA buffer below 16 MB";
         return false;
     }
     s_dma_phys_addr = static_cast<u32>(reinterpret_cast<phys_addr>(dma_buf.get()));
     s_dma_buffer    = dma_buf.get(); /* identity-mapped */
     (void)dma_buf.release();
 
-    log::debug("sb16: DMA buffer at physical %#x (%u bytes)",
-               s_dma_phys_addr, DMA_BUFFER_SIZE);
+    log::debug() << "sb16: DMA buffer at physical " << log::hex(static_cast<u64>(s_dma_phys_addr), 1, true, false) << " (" << DMA_BUFFER_SIZE << " bytes)";
 
     /* Turn speaker on */
     (void)dsp_write(DSP_CMD_SPEAKER_ON);
@@ -260,7 +259,7 @@ static bool sb16_init() {
     s_programmed_rate = 0;
     s_playing = false;
 
-    log::info("sb16: initialised");
+    log::info() << "sb16: initialised";
     return true;
 }
 
@@ -275,7 +274,7 @@ static void sb16_shutdown() {
         s_dma_phys_addr = 0;
     }
     s_playing = false;
-    log::info("sb16: shutdown");
+    log::info() << "sb16: shutdown";
 }
 
 static bool sb16_set_sample_rate(u32 rate_hz) {

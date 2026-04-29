@@ -72,7 +72,7 @@ static void pic_remap() {
     u8 mask1 = arch::inb(PIC1_DATA);
     u8 mask2 = arch::inb(PIC2_DATA);
 
-    log::debug("PIC: remapping — IRQ0→vec32, IRQ8→vec40");
+    log::debug() << "PIC: remapping — IRQ0→vec32, IRQ8→vec40";
 
     /* ICW1: init + cascade + ICW4 needed */
     arch::outb(PIC1_CMD, 0x11);
@@ -98,7 +98,7 @@ static void pic_remap() {
 static void pit_init() {
     u16 divisor = static_cast<u16>(PIT_FREQ / SCHED_HZ);
 
-    log::debug("PIT: divisor=%#x (target %u Hz)", divisor, SCHED_HZ);
+    log::debug() << "PIT: divisor=" << log::hex(static_cast<u64>(divisor), 1, true, false) << " (target " << SCHED_HZ << " Hz)";
 
     /* Channel 0, lobyte/hibyte, rate generator */
     arch::outb(PIT_CMD, 0x36);
@@ -194,7 +194,7 @@ static auto pick_next_task(usize cur) -> usize {
 
     char bytes_buf[count * 3 + 1];
     log::hex_bytes(bytes_buf, sizeof(bytes_buf), bytes, count);
-    log::debug("Dumping %zu bytes at entry point %#llx: %s", count, static_cast<unsigned long long>(entry_va), bytes_buf);
+    log::debug() << "Dumping " << count << " bytes at entry point " << log::hex(static_cast<u64>(static_cast<unsigned long long>(entry_va)), 1, true, false) << ": " << bytes_buf;
 }
 
 /* ============================================================
@@ -223,7 +223,7 @@ auto sched::init() -> status_code {
     /* Init PIT for periodic ticks */
     pit_init();
 
-    log::info("Scheduler initialized (PIT @ 100 Hz)");
+    log::info() << "Scheduler initialized (PIT @ 100 Hz)";
     return status_code::success;
 }
 
@@ -296,36 +296,25 @@ auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) 
     t.rsp = reinterpret_cast<u64>(iret_frame - 19);
 
     if constexpr (log::debug_enabled()) {
-        log::debug("task '%s': entry=%#llx user_data=%p rsp=%#llx",
-                   t.name.c_str(),
-                   static_cast<unsigned long long>(reinterpret_cast<u64>(entry)),
-                   user_data,
-                   static_cast<unsigned long long>(t.rsp));
+        log::debug() << "task '" << t.name.c_str() << "': entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(reinterpret_cast<u64>(entry))), 1, true, false) << " user_data=" << reinterpret_cast<const void*>(user_data) << " rsp=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(t.rsp)), 1, true, false);
 
         if (!validate_entry_point(reinterpret_cast<u64>(entry))) {
-            log::warn("Task '%s' entry point may contain fill pattern", t.name.c_str());
+            log::warn() << "Task '" << t.name.c_str() << "' entry point may contain fill pattern";
             dump_entry_bytes(reinterpret_cast<u64>(entry), 32);
         } else {
-            log::debug("Task '%s' entry point looks like valid code", t.name.c_str());
+            log::debug() << "Task '" << t.name.c_str() << "' entry point looks like valid code";
             dump_entry_bytes(reinterpret_cast<u64>(entry), 16);
         }
 
         auto* frame = reinterpret_cast<u64*>(t.rsp);
-        log::debug("Initial frame @%#llx: RIP=%#llx CS=%#llx RFLAGS=%#llx entry_rsp=%#llx RCX=%#llx",
-                   static_cast<unsigned long long>(t.rsp),
-                   static_cast<unsigned long long>(frame[19]),
-                   static_cast<unsigned long long>(frame[20]),
-                   static_cast<unsigned long long>(frame[21]),
-                   static_cast<unsigned long long>(frame[22]),
-                   static_cast<unsigned long long>(frame[16]));
+        log::debug() << "Initial frame @" << log::hex(static_cast<u64>(static_cast<unsigned long long>(t.rsp)), 1, true, false) << ": RIP=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[19])), 1, true, false) << " CS=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[20])), 1, true, false) << " RFLAGS=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[21])), 1, true, false) << " entry_rsp=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[22])), 1, true, false) << " RCX=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[16])), 1, true, false);
     }
 
     i64 id = static_cast<i64>(g_task_count);
     ++g_task_count;
     g_sched_lock.release();
 
-    log::info("Task created: %s (id=%llu)",
-              t.name.c_str(), static_cast<unsigned long long>(id));
+    log::info() << "Task created: " << t.name.c_str() << " (id=" << static_cast<unsigned long long>(id) << ")";
 
     return id;
 }
@@ -457,9 +446,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     /* Unmask IRQ0 and enable interrupts (BSP only) */
     pic_unmask_irq0();
 
-    log::info("Scheduler starting with task %llu (%s)...",
-              static_cast<unsigned long long>(g_tasks[first].id),
-              g_tasks[first].name.c_str());
+    log::info() << "Scheduler starting with task " << static_cast<unsigned long long>(g_tasks[first].id) << " (" << g_tasks[first].name.c_str() << ")...";
 
     /* Jump into the first task — naked asm, no compiler interference */
     sched_switch_to(g_tasks[first].rsp);
@@ -491,8 +478,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     cpu_set_current_task(SCHED_NO_TASK);
     g_sched_lock.release();
 
-    log::debug("AP APIC %u: parked with scheduler disabled",
-               smp::current_cpu_apic_id());
+    log::debug() << "AP APIC " << smp::current_cpu_apic_id() << ": parked with scheduler disabled";
 
     while (true) {
         arch::cpu_halt();
@@ -591,7 +577,7 @@ void sched::wait_for_task(u64 task_id) {
     usize cur = cpu_current_task();
     g_tasks[cur].state = task_state::terminated;
     g_tasks[cur].user_data = null;
-    log::debug("Task terminated: %s", g_tasks[cur].name.c_str());
+    log::debug() << "Task terminated: " << g_tasks[cur].name.c_str();
     g_sched_lock.release();
     /* Yield to let scheduler pick another task */
     while (true) { sched::yield(); arch::cpu_halt(); }
@@ -612,15 +598,15 @@ auto sched::detach_current_task() -> void* {
 }
 
 void sched::dump_tasks() {
-    log::info("Task list:");
+    log::info() << "Task list:";
     for (usize i = 0; i < g_task_count; ++i) {
-        log::info("  [%llu] %s - %s",
-                  static_cast<unsigned long long>(g_tasks[i].id),
-                  g_tasks[i].name.c_str(),
-                  (g_tasks[i].state == task_state::ready) ? "ready" :
-                  (g_tasks[i].state == task_state::running) ? "running" :
-                  (g_tasks[i].state == task_state::blocked) ? "blocked" :
-                  (g_tasks[i].state == task_state::terminated) ? "terminated" : "unknown");
+        const char* state =
+            (g_tasks[i].state == task_state::ready) ? "ready" :
+            (g_tasks[i].state == task_state::running) ? "running" :
+            (g_tasks[i].state == task_state::blocked) ? "blocked" :
+            (g_tasks[i].state == task_state::terminated) ? "terminated" : "unknown";
+        log::info() << "  [" << static_cast<unsigned long long>(g_tasks[i].id)
+                    << "] " << g_tasks[i].name.c_str() << " - " << state;
     }
 }
 

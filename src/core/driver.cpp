@@ -61,7 +61,7 @@ static bool name_match(string_view query, string_view driver_name) {
 void register_driver(const driver_descriptor* desc) {
     if (!s_initialised) init();
     if (s_driver_count >= MAX_DRIVERS) {
-        log::warn("driver: registry full, cannot register %s", desc->name);
+        log::warn() << "driver: registry full, cannot register " << desc->name;
         return;
     }
     s_drivers[s_driver_count].desc = desc;
@@ -86,11 +86,11 @@ auto load(string_view name) -> i32 {
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc && name_match(name, s_drivers[i].desc->name)) {
             if (s_drivers[i].loaded) {
-                log::info("driver: %s already loaded", s_drivers[i].desc->name);
+                log::info() << "driver: " << s_drivers[i].desc->name << " already loaded";
                 return 0;
             }
 
-            log::info("driver: loading %s...", s_drivers[i].desc->name);
+            log::info() << "driver: loading " << s_drivers[i].desc->name << "...";
 
             /* Activate based on type */
             switch (s_drivers[i].desc->type) {
@@ -98,7 +98,7 @@ auto load(string_view name) -> i32 {
                     if (s_drivers[i].desc->sound) {
                         sound::register_driver(s_drivers[i].desc->sound);
                         if (!sound::init_active()) {
-                            log::error("driver: sound init failed for %s", s_drivers[i].desc->name);
+                            log::error() << "driver: sound init failed for " << s_drivers[i].desc->name;
                             return -1;
                         }
                     }
@@ -107,24 +107,24 @@ auto load(string_view name) -> i32 {
                     if (s_drivers[i].desc->block) {
                         block::init();
                         if (!s_drivers[i].desc->block->init()) {
-                            log::error("driver: block init failed for %s", s_drivers[i].desc->name);
+                            log::error() << "driver: block init failed for " << s_drivers[i].desc->name;
                             return -1;
                         }
                     }
                     break;
                 default:
-                    log::error("driver: unknown type for %s", s_drivers[i].desc->name);
+                    log::error() << "driver: unknown type for " << s_drivers[i].desc->name;
                     return -1;
             }
 
             s_drivers[i].loaded = true;
-            log::info("driver: %s loaded successfully", s_drivers[i].desc->name);
+            log::info() << "driver: " << s_drivers[i].desc->name << " loaded successfully";
             return 0;
         }
     }
 
     static_string<64> name_buf(name);
-    log::warn("driver: not found: %s", name_buf.c_str());
+    log::warn() << "driver: not found: " << name_buf.c_str();
     return -1;
 }
 
@@ -136,7 +136,7 @@ auto unload(string_view name) -> i32 {
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc && name_match(name, s_drivers[i].desc->name)) {
             if (!s_drivers[i].loaded) {
-                log::warn("driver: %s not loaded", s_drivers[i].desc->name);
+                log::warn() << "driver: " << s_drivers[i].desc->name << " not loaded";
                 return -1;
             }
 
@@ -154,13 +154,13 @@ auto unload(string_view name) -> i32 {
             }
 
             s_drivers[i].loaded = false;
-            log::info("driver: %s unloaded", s_drivers[i].desc->name);
+            log::info() << "driver: " << s_drivers[i].desc->name << " unloaded";
             return 0;
         }
     }
 
     static_string<64> name_buf(name);
-    log::warn("driver: not found: %s", name_buf.c_str());
+    log::warn() << "driver: not found: " << name_buf.c_str();
     return -1;
 }
 
@@ -172,32 +172,32 @@ void list_loaded() {
     bool any = false;
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].loaded && s_drivers[i].desc) {
-            log::info("driver: found loaded driver %s", s_drivers[i].desc->name);
+            log::info() << "driver: found loaded driver " << s_drivers[i].desc->name;
             switch (s_drivers[i].desc->type) {
-                case driver_type::sound: log::info(" (sound)"); break;
-                case driver_type::block: log::info(" (block)"); break;
-                default: log::info(" (unknown)"); break;
+                case driver_type::sound: log::info() << " (sound)"; break;
+                case driver_type::block: log::info() << " (block)"; break;
+                default: log::info() << " (unknown)"; break;
             }
             any = true;
         }
     }
     if (!any) {
-        log::info("  (no drivers loaded)");
+        log::info() << "  (no drivers loaded)";
     }
 }
 
 void list_available() {
     if (s_driver_count == 0) {
-        log::info("  (no drivers registered)");
+        log::info() << "  (no drivers registered)";
         return;
     }
     for (usize i = 0; i < s_driver_count; ++i) {
         if (s_drivers[i].desc) {
-            log::info("driver: found available driver %s", s_drivers[i].desc->name);
+            log::info() << "driver: found available driver " << s_drivers[i].desc->name;
             switch (s_drivers[i].desc->type) {
-                case driver_type::sound: log::info(" (sound)"); break;
-                case driver_type::block: log::info(" (block)"); break;
-                default: log::info(" (unknown)"); break;
+                case driver_type::sound: log::info() << " (sound)"; break;
+                case driver_type::block: log::info() << " (block)"; break;
+                default: log::info() << " (unknown)"; break;
             }
         }
     }

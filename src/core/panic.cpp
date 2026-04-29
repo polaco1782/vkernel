@@ -52,8 +52,7 @@ static void broadcast_nmi_halt() {
      * scribbling more error output on top of the panic message. */
     broadcast_nmi_halt();
 
-    log::crash("\n*** KERNEL PANIC ***\nFile: %s\nLine: %u\nCondition: %s\n\nSystem halted.\n",
-               file, line, condition);
+    log::crash() << "\n*** KERNEL PANIC ***\nFile: " << file << "\nLine: " << line << "\nCondition: " << condition << "\n\nSystem halted.\n";
 
     arch::disable_interrupts();
     while (true) {

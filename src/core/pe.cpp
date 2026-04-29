@@ -185,10 +185,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
         }
     }
 
-    log::debug("pe: loaded base=%p size=%u entry=%#llx",
-               image.get(),
-               size_of_image,
-               static_cast<unsigned long long>(reinterpret_cast<u64>(image.get()) + entry_rva));
+    log::debug() << "pe: loaded base=" << reinterpret_cast<const void*>(image.get()) << " size=" << size_of_image << " entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(reinterpret_cast<u64>(image.get()) + entry_rva)), 1, true, false);
 
     result.entry      = reinterpret_cast<u64>(image.get()) + entry_rva;
     result.image_base = image.release();

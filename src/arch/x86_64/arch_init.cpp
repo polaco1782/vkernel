@@ -128,13 +128,13 @@ static void init_gdt_for_cpu(u32 cpu) {
 }
 
 void init_gdt() {
-    log::info("Preparing per-CPU GDTs...");
+    log::info() << "Preparing per-CPU GDTs...";
 
     for (u32 cpu = 0; cpu < smp::MAX_CPUS; ++cpu) {
         init_gdt_for_cpu(cpu);
     }
 
-    log::info("GDT prepared");
+    log::info() << "GDT prepared";
 }
 
 /* Load the GDT descriptor table register only.
@@ -208,8 +208,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
             if (s_exception_lock.held_by_self()) {
                 s_exception_lock.release();
             }
-            log::crash("\n*** NESTED EXCEPTION on CPU %u (vec %llu) \u2014 halting CPU ***",
-                       self_apic, static_cast<unsigned long long>(vec));
+            log::crash() << "\n*** NESTED EXCEPTION on CPU " << self_apic << " (vec " << static_cast<unsigned long long>(vec) << ") — halting CPU ***";
             disable_interrupts();
             while (true) { cpu_halt(); }
         }
@@ -225,53 +224,33 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
         s_exception_lock.acquire();
 
         /* CPU exception \u2014 dump diagnostics */
-        log::crash("\n*** EXCEPTION on CPU %u: %s (vector %llu) ***",
-                   self_apic,
-                   s_exception_names[vec],
-                   static_cast<unsigned long long>(vec));
+        log::crash() << "\n*** EXCEPTION on CPU " << self_apic << ": " << s_exception_names[vec] << " (vector " << static_cast<unsigned long long>(vec) << ") ***";
 
-        log::crash("  Error code: %#llx",
-                   static_cast<unsigned long long>(regs->error_code));
+        log::crash() << "  Error code: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->error_code)), 1, true, false);
 
-        log::crash("  RIP:    %#llx", static_cast<unsigned long long>(regs->frame.rip));
-        log::crash("  CS:     %#llx", static_cast<unsigned long long>(regs->frame.cs));
-        log::crash("  RFLAGS: %#llx", static_cast<unsigned long long>(regs->frame.rflags));
-        log::crash("  RSP:    %#llx", static_cast<unsigned long long>(regs->frame.rsp));
-        log::crash("  SS:     %#llx", static_cast<unsigned long long>(regs->frame.ss));
+        log::crash() << "  RIP:    " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->frame.rip)), 1, true, false);
+        log::crash() << "  CS:     " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->frame.cs)), 1, true, false);
+        log::crash() << "  RFLAGS: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->frame.rflags)), 1, true, false);
+        log::crash() << "  RSP:    " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->frame.rsp)), 1, true, false);
+        log::crash() << "  SS:     " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->frame.ss)), 1, true, false);
 
-        log::crash("\n  General purpose registers:");
-        log::crash("  RAX: %#llx  RBX: %#llx",
-                   static_cast<unsigned long long>(regs->rax),
-                   static_cast<unsigned long long>(regs->rbx));
-        log::crash("  RCX: %#llx  RDX: %#llx",
-                   static_cast<unsigned long long>(regs->rcx),
-                   static_cast<unsigned long long>(regs->rdx));
-        log::crash("  RSI: %#llx  RDI: %#llx",
-                   static_cast<unsigned long long>(regs->rsi),
-                   static_cast<unsigned long long>(regs->rdi));
-        log::crash("  RBP: %#llx  R8:  %#llx",
-                   static_cast<unsigned long long>(regs->rbp),
-                   static_cast<unsigned long long>(regs->r8));
-        log::crash("  R9:  %#llx  R10: %#llx",
-                   static_cast<unsigned long long>(regs->r9),
-                   static_cast<unsigned long long>(regs->r10));
-        log::crash("  R11: %#llx  R12: %#llx",
-                   static_cast<unsigned long long>(regs->r11),
-                   static_cast<unsigned long long>(regs->r12));
-        log::crash("  R13: %#llx  R14: %#llx",
-                   static_cast<unsigned long long>(regs->r13),
-                   static_cast<unsigned long long>(regs->r14));
-        log::crash("  R15: %#llx", static_cast<unsigned long long>(regs->r15));
+        log::crash() << "\n  General purpose registers:";
+        log::crash() << "  RAX: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->rax)), 1, true, false) << "  RBX: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->rbx)), 1, true, false);
+        log::crash() << "  RCX: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->rcx)), 1, true, false) << "  RDX: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->rdx)), 1, true, false);
+        log::crash() << "  RSI: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->rsi)), 1, true, false) << "  RDI: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->rdi)), 1, true, false);
+        log::crash() << "  RBP: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->rbp)), 1, true, false) << "  R8:  " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->r8)), 1, true, false);
+        log::crash() << "  R9:  " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->r9)), 1, true, false) << "  R10: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->r10)), 1, true, false);
+        log::crash() << "  R11: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->r11)), 1, true, false) << "  R12: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->r12)), 1, true, false);
+        log::crash() << "  R13: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->r13)), 1, true, false) << "  R14: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->r14)), 1, true, false);
+        log::crash() << "  R15: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->r15)), 1, true, false);
 
         if (vec == 14) {
-            log::crash("  CR2 (fault addr): %#llx",
-                       static_cast<unsigned long long>(read_cr2()));
+            log::crash() << "  CR2 (fault addr): " << log::hex(static_cast<u64>(static_cast<unsigned long long>(read_cr2())), 1, true, false);
         }
 
         if(vec == 13) {
             u64 fault_va = regs->frame.rip + 0x85673 + 8; // RIP-relative: RIP + offset + insn_size
-            log::crash("  VMOVDQA source VA: %#llx (alignment mod 32 = %llu)",
-                    fault_va, fault_va % 32);
+            log::crash() << "  VMOVDQA source VA: " << log::hex(static_cast<u64>(fault_va), 1, true, false) << " (alignment mod 32 = " << fault_va % 32 << ")";
         }
 
         /* Print instruction bytes at RIP for diagnosis */
@@ -279,7 +258,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
             char bytes_buf[16 * 3 + 1];
             log::hex_bytes(bytes_buf, sizeof(bytes_buf),
                            reinterpret_cast<const u8*>(regs->frame.rip), 16);
-            log::crash("  Bytes @ RIP:  %s", bytes_buf);
+            log::crash() << "  Bytes @ RIP:  " << bytes_buf;
         }
 
         /*
@@ -295,10 +274,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
         auto* ctx = static_cast<process::process_task_context*>(
             sched::detach_current_task());
         if (ctx != null) {
-            log::warn("Terminating process '%s' (task %llu) due to %s",
-                      sched::current_task_name(),
-                      static_cast<unsigned long long>(sched::current_task_id()),
-                      s_exception_names[vec]);
+            log::warn() << "Terminating process '" << sched::current_task_name() << "' (task " << static_cast<unsigned long long>(sched::current_task_id()) << ") due to " << s_exception_names[vec];
 
             process::cleanup_process_context(ctx, -static_cast<int>(vec));
 
@@ -326,8 +302,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
 
     /* Vectors 33-255: other IRQs / software interrupts — not yet wired */
     if (vec >= 32) {
-    log::debug("IRQ: unhandled vector %llu",
-           static_cast<unsigned long long>(vec));
+    log::debug() << "IRQ: unhandled vector " << static_cast<unsigned long long>(vec);
         /* Send EOI for any other IRQ */
         if (vec >= 40) arch::outb(0xA0, 0x20); /* PIC2 EOI */
         arch::outb(0x20, 0x20); /* PIC1 EOI */
@@ -355,7 +330,7 @@ static inline auto get_isr_stub_base() -> u64 {
 }
 
 void init_idt() {
-    log::info("Preparing IDT...");
+    log::info() << "Preparing IDT...";
 
     g_idt_ptr.limit = sizeof(g_idt) - 1;
     g_idt_ptr.base  = reinterpret_cast<u64>(&g_idt);
@@ -363,8 +338,7 @@ void init_idt() {
     /* Compute runtime base address of the first ISR stub */
     u64 base = get_isr_stub_base();
 
-    log::debug("IDT: isr_stub_0=%#llx, stride=%zu",
-               static_cast<unsigned long long>(base), ISR_STUB_STRIDE);
+    log::debug() << "IDT: isr_stub_0=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(base)), 1, true, false) << ", stride=" << ISR_STUB_STRIDE;
 
     /* Wire all 256 vectors to their assembly stub */
     for (u32 i = 0; i < 256; ++i) {
@@ -372,7 +346,7 @@ void init_idt() {
         idt_set_gate(i, base + i * ISR_STUB_STRIDE, 0, type_attr);
     }
 
-    log::info("IDT prepared (256 vectors)");
+    log::info() << "IDT prepared (256 vectors)";
 }
 
 /* Load the IDT. Called after ExitBootServices. */
@@ -397,7 +371,7 @@ static u32 fpu_avx_check_support() {
     u32 eax, ebx, ecx_out, edx_out;
     asm_cpuid(1, &eax, &ebx, &ecx_out, &edx_out);
 
-    log::debug("FPU: CPUID ECX = %#x  EDX = %#x", ecx_out, edx_out);
+    log::debug() << "FPU: CPUID ECX = " << log::hex(static_cast<u64>(ecx_out), 1, true, false) << "  EDX = " << log::hex(static_cast<u64>(edx_out), 1, true, false);
 
     if (!(edx_out & (1u << 25))) return 1; /* no SSE   */
     if (!(ecx_out & (1u << 26))) return 2; /* no XSAVE */
@@ -418,12 +392,12 @@ static bool fpu_osxsave_active() {
  */
 static void activate_fpu_state() {
     /* ── CPUID check ──────────────────────────────────────────── */
-    log::info("FPU: checking CPUID...");
+    log::info() << "FPU: checking CPUID...";
     u32 err = fpu_avx_check_support();
 
-    log::debug("FPU: CPUID check result = %u (0=OK, 1=no SSE, 2=no XSAVE, 3=no AVX)", err);
+    log::debug() << "FPU: CPUID check result = " << err << " (0=OK, 1=no SSE, 2=no XSAVE, 3=no AVX)";
 
-    log::debug("FPU: writing CR0...");
+    log::debug() << "FPU: writing CR0...";
     u64 cr0 = read_cr0();
     cr0 &= ~(u64)(1u << 2);   /* clear EM */
     cr0 &= ~(u64)(1u << 3);   /* clear TS */
@@ -431,27 +405,26 @@ static void activate_fpu_state() {
     cr0 |=  (u64)(1u << 5);   /* set   NE */
     write_cr0(cr0);
 
-    log::debug("FPU: fninit...");
+    log::debug() << "FPU: fninit...";
     asm_fninit();
-    log::debug("FPU: fldcw...");
+    log::debug() << "FPU: fldcw...";
     asm_fldcw(0x037F);
 
     if (err != 0) {
-        log::info("FPU: initialized (x87 only)");
+        log::info() << "FPU: initialized (x87 only)";
         //return;
     }
 
-    log::debug("FPU: writing CR4 OSFXSR+OSXMMEXCPT...");
+    log::debug() << "FPU: writing CR4 OSFXSR+OSXMMEXCPT...";
     write_cr4(read_cr4() | (u64)(1u << 9) | (u64)(1u << 10));
 
-    log::debug("FPU: ldmxcsr...");
+    log::debug() << "FPU: ldmxcsr...";
     asm_ldmxcsr(0x1F80u);
 
-    log::debug("FPU: writing CR4 OSXSAVE...");
+    log::debug() << "FPU: writing CR4 OSXSAVE...";
     {
         u64 cr4 = read_cr4();
-        log::debug("FPU: CR4 before OSXSAVE = %#llx",
-               static_cast<unsigned long long>(cr4));
+        log::debug() << "FPU: CR4 before OSXSAVE = " << log::hex(static_cast<u64>(static_cast<unsigned long long>(cr4)), 1, true, false);
 
         if (!(cr4 & (u64)(1u << 18))) {
             write_cr4(cr4 | (u64)(1u << 18));
@@ -460,24 +433,23 @@ static void activate_fpu_state() {
         /* Verify via CPUID bit 27 — more reliable than reading CR4 back,
         * as a hypervisor may shadow CR4 reads but not CPUID              */
         if (!fpu_osxsave_active()) {
-            log::warn("FPU: OSXSAVE did not become active after CR4 write — "
-                    "skipping AVX init");
+            log::warn() << "FPU: OSXSAVE did not become active after CR4 write — skipping AVX init";
             return;
         }
-        log::debug("FPU: CR4.OSXSAVE active (confirmed via CPUID)");
+        log::debug() << "FPU: CR4.OSXSAVE active (confirmed via CPUID)";
     }
 
-    log::debug("FPU: xgetbv...");
+    log::debug() << "FPU: xgetbv...";
     u64 xcr0 = asm_xgetbv(0);
-    log::debug("FPU: XCR0 before = 0x%llx", xcr0);
+    log::debug() << "FPU: XCR0 before = 0x" << log::hex(static_cast<u64>(xcr0), 1, false, false);
     xcr0 |= (u64)(0x7);
-    log::debug("FPU: xsetbv...");
+    log::debug() << "FPU: xsetbv...";
     asm_xsetbv(0, static_cast<u32>(xcr0), static_cast<u32>(xcr0 >> 32));
 
-    log::debug("FPU: vzeroall...");
+    log::debug() << "FPU: vzeroall...";
     asm_vzeroall();
 
-    log::info("FPU/SSE/AVX initialized");
+    log::info() << "FPU/SSE/AVX initialized";
 }
 
 /* ============================================================
@@ -485,7 +457,7 @@ static void activate_fpu_state() {
  * ============================================================ */
 
 void init_paging() {
-    log::info("Initializing paging...");
+    log::info() << "Initializing paging...";
 
     /*
      * UEFI has already set up identity-mapped page tables in long mode
@@ -500,7 +472,7 @@ void init_paging() {
     u64 cr0 = read_cr0();
     if (!(cr0 & CR0_WRITE_PROTECT)) {
         write_cr0(cr0 | CR0_WRITE_PROTECT);
-        log::debug("  CR0.WP enabled");
+        log::debug() << "  CR0.WP enabled";
     }
 
     /* EFER: enable NX (No-Execute) */
@@ -508,10 +480,10 @@ void init_paging() {
     u64 efer = rdmsr(EFER_MSR);
     if (!(efer & EFER_NXE)) {
         wrmsr(EFER_MSR, efer | EFER_NXE);
-        log::debug("  EFER.NXE enabled");
+        log::debug() << "  EFER.NXE enabled";
     }
 
-    log::debug("Paging hardened (WP + NXE)");
+    log::debug() << "Paging hardened (WP + NXE)";
 }
 
 /* ============================================================
@@ -550,10 +522,8 @@ auto reboot() -> void {
  * ============================================================ */
 
 void dump_idt() {
-    log::info("Dumping IDT...");
-    log::info("IDT base = %#llx  limit = %#x",
-               static_cast<unsigned long long>(g_idt_ptr.base),
-               static_cast<unsigned int>(g_idt_ptr.limit));
+    log::info() << "Dumping IDT...";
+    log::info() << "IDT base = " << log::hex(static_cast<u64>(static_cast<unsigned long long>(g_idt_ptr.base)), 1, true, false) << "  limit = " << log::hex(static_cast<u64>(static_cast<unsigned int>(g_idt_ptr.limit)), 1, true, false);
 
     for (u32 i = 0; i < 256; ++i) {
         const auto& e = g_idt[i];
@@ -563,11 +533,10 @@ void dump_idt() {
         /* Skip null (uninstalled) entries */
         if (handler == 0 && e.selector == 0) continue;
 
-        log::info("Vector %3u: handler=%#llx selector=%#x ist=%u type_attr=%#x",
-                   i, static_cast<unsigned long long>(handler), e.selector, e.ist, e.type_attr);
+        log::info() << "Vector " << i << ": handler=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(handler)), 1, true, false) << " selector=" << log::hex(static_cast<u64>(e.selector), 1, true, false) << " ist=" << e.ist << " type_attr=" << log::hex(static_cast<u64>(e.type_attr), 1, true, false);
     }
 
-    log::info("IDT dump complete.");
+    log::info() << "IDT dump complete.";
 }
 
 /* ============================================================
@@ -575,45 +544,45 @@ void dump_idt() {
  * ============================================================ */
 
 void init() {
-    log::info("Initializing x86_64 architecture...");
+    log::info() << "Initializing x86_64 architecture...";
 
     /* Prepare descriptor tables (safe while UEFI boot services are active) */
     init_gdt();
     init_idt();
 
-    log::info("x86_64 tables prepared (not yet loaded)");
+    log::info() << "x86_64 tables prepared (not yet loaded)";
 }
 
 void activate() {
-    log::info("Activating x86_64 descriptor tables...");
+    log::info() << "Activating x86_64 descriptor tables...";
 
     /* Load our own GDT first so selector 0x08 in the IDT points at
      * our kernel code segment. */
     load_gdt();
-    log::info("GDT loaded");
+    log::info() << "GDT loaded";
 
     /* Load our IDT before reloading CS/SS/TSS so faults during the
      * transition are handled by our exception path instead of dying
      * silently under whatever firmware state remained after EBS. */
     activate_idt();
-    log::info("IDT loaded");
+    log::info() << "IDT loaded";
 
     /* Reload all visible segment selectors to our own descriptors. */
     reload_kernel_segments();
-    log::info("Kernel code/data segments reloaded");
+    log::info() << "Kernel code/data segments reloaded";
 
     /* Finally load the task register once GDT + IDT are already live. */
     activate_tss();
-    log::info("TSS active");
+    log::info() << "TSS active";
 
     /* Initialize FPU/SSE/AVX state, if supported. Must be done after loading our own GDT/TSS. */
     activate_fpu_state();
-    log::info("FPU/SSE/AVX state initialized");
+    log::info() << "FPU/SSE/AVX state initialized";
 
     /* Harden paging (WP + NXE) */
     init_paging();
 
-    log::info("x86_64 architecture fully active");
+    log::info() << "x86_64 architecture fully active";
 }
 
 /*

@@ -44,11 +44,8 @@ static auto current_console_interface() -> console_interface {
 }
 
 void cleanup_process_context(process_task_context* ctx, int exit_code) {
-    log::printk("Process exited with code %d\n", exit_code);
-    log::debug("Cleaning up process context: entry=%#llx, image_base=%p, image_size=%#llx",
-               static_cast<unsigned long long>(ctx->entry),
-               ctx->image_base,
-               static_cast<unsigned long long>(ctx->image_size));
+    log::printk() << "Process exited with code " << exit_code << "\n";
+    log::debug() << "Cleaning up process context: entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(ctx->entry)), 1, true, false) << ", image_base=" << reinterpret_cast<const void*>(ctx->image_base) << ", image_size=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(ctx->image_size)), 1, true, false);
 
     if (ctx->image_from_phys) {
         u32 page_count = static_cast<u32>(
@@ -86,11 +83,11 @@ auto run(string_view filename, console_interface interface) -> i64 {
     const file_entry* f = ramfs::find(filename);
     if (f == null) {
         static_string<128> filename_buf(filename);
-        log::warn("process: file not found: %s", filename_buf.c_str());
+        log::warn() << "process: file not found: " << filename_buf.c_str();
         return -1;
     }
 
-    log::info("Loading binary: %s (%zu bytes)", f->name.c_str(), f->size);
+    log::info() << "Loading binary: " << f->name.c_str() << " (" << f->size << " bytes)";
 
     const u8*  data = f->data;
     const usize sz  = f->size;
@@ -112,7 +109,7 @@ auto run(string_view filename, console_interface interface) -> i64 {
     if (is_elf) {
         auto result = elf::load(data, sz);
         if (result.error != elf::elf_error::ok) {
-            log::error("process: ELF load failed: %s", elf::error_string(result.error));
+            log::error() << "process: ELF load failed: " << elf::error_string(result.error);
             return -1;
         }
         entry_addr      = result.entry;
@@ -122,14 +119,14 @@ auto run(string_view filename, console_interface interface) -> i64 {
     } else if (is_pe) {
         auto result = pe::load(data, sz);
         if (result.error != pe::pe_error::ok) {
-            log::error("process: PE load failed: %s", pe::error_string(result.error));
+            log::error() << "process: PE load failed: " << pe::error_string(result.error);
             return -1;
         }
         entry_addr = result.entry;
         image_base_raw = result.image_base;
         image_size = result.image_size;
     } else {
-        log::error("process: unknown binary format (not ELF or PE)");
+        log::error() << "process: unknown binary format (not ELF or PE)";
         return -1;
     }
 
@@ -140,7 +137,7 @@ auto run(string_view filename, console_interface interface) -> i64 {
             .from_phys = image_from_phys,
         });
 
-    log::info("Executing at %#llx", static_cast<unsigned long long>(entry_addr));
+    log::info() << "Executing at " << log::hex(static_cast<u64>(static_cast<unsigned long long>(entry_addr)), 1, true, false);
 
     /* Ensure the API table is ready */
     kernel_api::init();
@@ -148,7 +145,7 @@ auto run(string_view filename, console_interface interface) -> i64 {
     process_context_ptr ctx(
         static_cast<process_task_context*>(g_kernel_heap.allocate(sizeof(process_task_context))));
     if (!ctx) {
-        log::error("process: out of memory while creating task context");
+        log::error() << "process: out of memory while creating task context";
         return -1;
     }
 
@@ -161,15 +158,14 @@ auto run(string_view filename, console_interface interface) -> i64 {
 	// create a new task and pass the context as user data
     i64 task_id = sched::create_task(filename, process_task_main, ctx.get());
     if (task_id < 0) {
-        log::error("process: failed to create task");
+        log::error() << "process: failed to create task";
         return -1;
     }
 
     (void)ctx.release();
     (void)image_base.release();
 
-    log::info("Spawned task id %llu for %s",
-              static_cast<unsigned long long>(task_id), f->name.c_str());
+    log::info() << "Spawned task id " << static_cast<unsigned long long>(task_id) << " for " << f->name.c_str();
 
     return task_id;
 }

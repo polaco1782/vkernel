@@ -74,7 +74,7 @@ static void stub_exit(int code) {
     if (ctx != null) {
         process::cleanup_process_context(ctx, code);
     } else {
-        log::printk("Process exited with code %d\n", code);
+        log::printk() << "Process exited with code " << code << "\n";
     }
 
     sched::exit_task();
@@ -97,11 +97,7 @@ static vk_u64 stub_tick_count() {
 }
 
 static void stub_dump_memory() {
-    log::info("Physical allocator: total=%zu pages, free=%zu pages, used=%zu pages, total RAM=%zu MB",
-              g_phys_alloc.total_pages(),
-              g_phys_alloc.free_pages(),
-              g_phys_alloc.used_pages(),
-              (g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024));
+    log::info() << "Physical allocator: total=" << g_phys_alloc.total_pages() << " pages, free=" << g_phys_alloc.free_pages() << " pages, used=" << g_phys_alloc.used_pages() << " pages, total RAM=" << (g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024) << " MB";
 
     memory::dump_heap();
 }

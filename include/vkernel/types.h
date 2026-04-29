@@ -73,7 +73,16 @@ template<typename T>
 using remove_const_t = typename remove_const<T>::type;
 
 template<typename T>
-struct is_integral;
+struct is_integral { static constexpr bool value = false; };
+
+template<typename T>
+struct is_integral<const T> { static constexpr bool value = is_integral<T>::value; };
+
+template<typename T>
+struct is_integral<volatile T> { static constexpr bool value = is_integral<T>::value; };
+
+template<typename T>
+struct is_integral<const volatile T> { static constexpr bool value = is_integral<T>::value; };
 
 template<> struct is_integral<bool>               { static constexpr bool value = true; };
 template<> struct is_integral<char>               { static constexpr bool value = true; };

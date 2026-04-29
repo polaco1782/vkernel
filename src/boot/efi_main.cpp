@@ -104,29 +104,28 @@ auto efi_main(
     }
   
     /* Print welcome message */
-    log::printk("vkernel %s - UEFI Microkernel\n", config::version_string);
-    log::printk("Booting on %s using %s\n\n",
-                config::arch_name, config::compiler_name);
+    log::printk() << "vkernel " << config::version_string << " - UEFI Microkernel\n";
+    log::printk() << "Booting on " << config::arch_name << " using "
+                  << config::compiler_name << "\n\n";
 
-    log::debug("UEFI entry point reached: image_handle=%p, system_table=%p",
-               image_handle, system_table);
-    log::debug(".text start=%p", 0x1000+asm_get_image_base());
-    log::debug(".data start=%p, end=%p", asm_get_data_start(), asm_get_data_end());
-    log::debug("_end=%p", asm_get_end());
+    log::debug() << "UEFI entry point reached: image_handle=" << reinterpret_cast<const void*>(image_handle) << ", system_table=" << reinterpret_cast<const void*>(system_table);
+    log::debug() << ".text start=" << reinterpret_cast<const void*>(0x1000+asm_get_image_base());
+    log::debug() << ".data start=" << reinterpret_cast<const void*>(asm_get_data_start()) << ", end=" << reinterpret_cast<const void*>(asm_get_data_end());
+    log::debug() << "_end=" << reinterpret_cast<const void*>(asm_get_end());
 
     /* Prepare architecture tables (GDT/IDT in memory, not yet loaded) */
     arch::init();
-    log::debug("arch tables prepared (GDT/IDT built, not yet loaded)");
+    log::debug() << "arch tables prepared (GDT/IDT built, not yet loaded)";
 
     /* ============================================================
      * Phase 1 — while UEFI boot services are still available
      * ============================================================ */
 
     /* Query the UEFI memory map */
-    log::info("Querying UEFI memory map...");
+    log::info() << "Querying UEFI memory map...";
     auto raw = uefi::query_memory_map();
     if (raw.count == 0) {
-        log::error("Failed to query UEFI memory map");
+        log::error() << "Failed to query UEFI memory map";
         vk_panic(__FILE__, __LINE__, "Failed to query UEFI memory map");
     }
 
@@ -150,7 +149,7 @@ auto efi_main(
         entry.attribute = d->attribute;
     }
 
-    log::info("Found %u memory map entries", map_count);
+    log::info() << "Found " << map_count << " memory map entries";
 
     /* Print summary before we lose console access */
     u64 total_conventional_pages = 0;
@@ -159,22 +158,18 @@ auto efi_main(
             total_conventional_pages += s_map[i].number_of_pages;
         }
     }
-    log::info("Conventional memory: %llu MB",
-              (total_conventional_pages * 0x1000ULL) / (1024 * 1024));
+    log::info() << "Conventional memory: " << (total_conventional_pages * 0x1000ULL) / (1024 * 1024) << " MB";
 
-    log::debug("memory map: %u entries, %llu conventional pages",
-               map_count, total_conventional_pages);
+    log::debug() << "memory map: " << map_count << " entries, " << total_conventional_pages << " conventional pages";
 
     /* Query the GOP framebuffer (must happen before ExitBootServices) */
-    log::info("Querying framebuffer...");
+    log::info() << "Querying framebuffer...";
     auto fb_info = uefi::query_gop();
     if (fb_info.valid) {
-        log::info("Framebuffer: %ux%u @ %#llx",
-                  fb_info.width, fb_info.height,
-                  static_cast<unsigned long long>(fb_info.base));
+        log::info() << "Framebuffer: " << fb_info.width << "x" << fb_info.height << " @ " << log::hex(static_cast<u64>(static_cast<unsigned long long>(fb_info.base)), 1, true, false);
         console::init_framebuffer(fb_info);
     } else {
-        log::warn("No framebuffer available");
+        log::warn() << "No framebuffer available";
     }
 
     /* Load files from ESP into ramfs (must happen before ExitBootServices) */
@@ -183,14 +178,14 @@ auto efi_main(
     /* Locate ACPI tables via UEFI configuration table while boot services
      * are still active.  The RSDP and all referenced SDTs reside in
      * ACPI-reclaimable memory and remain valid after ExitBootServices.  */
-    log::info("Initializing ACPI...");
+    log::info() << "Initializing ACPI...";
     acpi::init(uefi::g_system_table);
 
     /* ============================================================
      * Phase 2 — Exit Boot Services
      * ============================================================ */
 
-    log::info("Exiting UEFI boot services...");
+    log::info() << "Exiting UEFI boot services...";
 
     /* Disable interrupts: prevents UEFI timer callbacks from modifying
      * the memory map between GetMemoryMap and ExitBootServices, which
@@ -211,7 +206,7 @@ auto efi_main(
             if (ebs_status != uefi::status::success) {
                 /* Boot services still active here — safe to print via ConOut */
                 arch::enable_interrupts();
-                log::error("ExitBootServices failed after 2 attempts");
+                log::error() << "ExitBootServices failed after 2 attempts";
 
                 vk_panic(__FILE__, __LINE__, "Failed to exit UEFI boot services");
             }
@@ -226,7 +221,7 @@ auto efi_main(
         console::switch_to_framebuffer();
 		//console::clear();
     }
-    log::printk("Boot services exited. Serial + framebuffer console active.\n");
+    log::printk() << "Boot services exited. Serial + framebuffer console active.\n";
 
     /* ============================================================
      * Phase 3 — we own the machine
@@ -243,7 +238,7 @@ auto efi_main(
         vk_panic(__FILE__, __LINE__, "Memory subsystem initialization failed");
     }
 
-    log::info("Kernel initialization complete");
+    log::info() << "Kernel initialization complete";
 
     /* ============================================================
      * Phase 4 — Driver framework + Scheduler + Userspace Shell
@@ -258,7 +253,7 @@ auto efi_main(
     ata_pio_driver::register_builtin();
     sb16_driver::register_builtin();
     ac97_driver::register_builtin();
-    log::info("Driver framework initialised (3 built-in drivers registered)");
+    log::info() << "Driver framework initialised (3 built-in drivers registered)";
 
     /* Bring up the first block backend while keeping the RAMFS boot path
      * active.  FAT32/VFS will start consuming block devices in the next
@@ -271,7 +266,7 @@ auto efi_main(
     }
 
     /* Bring up Application Processors */
-    log::info("Initializing SMP...");
+    log::info() << "Initializing SMP...";
     smp::init();
     smp::dump_cpus();
 
@@ -281,23 +276,23 @@ auto efi_main(
     });
 
     /* Launch the serial shell first so scheduler startup is visible on COM1. */
-    log::info("Launching serial shell...");
+    log::info() << "Launching serial shell...";
     if (process::run("shell.vbin", process::console_interface::serial) < 0) {
         vk_panic(__FILE__, __LINE__, "Failed to launch serial shell!");
     }
 
     /* Launch the graphical shell when framebuffer output is available. */
     if (fb_info.valid) {
-        log::info("Launching graphical shell...");
+        log::info() << "Launching graphical shell...";
         if (process::run("shell.vbin", process::console_interface::graphical) < 0) {
             vk_panic(__FILE__, __LINE__, "Failed to launch graphical shell!");
         }
     } else {
-        log::warn("Framebuffer unavailable; graphical shell not launched");
+        log::warn() << "Framebuffer unavailable; graphical shell not launched";
     }
 
     /* Start the scheduler — does not return */
-    log::debug("Transferring control to scheduler...");
+    log::debug() << "Transferring control to scheduler...";
     sched::start();
 
     return uefi::status::success;
