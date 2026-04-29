@@ -310,8 +310,8 @@ static bool sb16_play(const u8* samples, u32 length, sound_format fmt) {
 
         u32 word_count   = (transfer / 2) - 1;
         u32 frame_count  = transfer / 4;  /* stereo: 2 × 2 bytes per frame */
-        u64 dur_ticks    = ((u64)frame_count * 100u + s_sample_rate - 1u)
-                           / s_sample_rate;  /* ceil, SCHED_HZ=100 */
+        u64 dur_ticks    = ((u64)frame_count * SCHED_TICK_HZ + s_sample_rate - 1u)
+                           / s_sample_rate;
         s_play_end_tick  = sched::tick_count() + (dur_ticks < 1u ? 1u : dur_ticks);
 
         /* DSP command: 16-bit single-cycle stereo output */
@@ -327,7 +327,7 @@ static bool sb16_play(const u8* samples, u32 length, sound_format fmt) {
         setup_dma_8bit(s_dma_phys_addr, transfer);
 
         u32 sample_count = transfer - 1;
-        u64 dur_ticks    = ((u64)transfer * 100u + s_sample_rate - 1u)
+        u64 dur_ticks    = ((u64)transfer * SCHED_TICK_HZ + s_sample_rate - 1u)
                            / s_sample_rate;
         s_play_end_tick  = sched::tick_count() + (dur_ticks < 1u ? 1u : dur_ticks);
 

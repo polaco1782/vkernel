@@ -59,7 +59,7 @@ static u8 g_bsp_apic_id = 0;
 static constexpr u16 PIT_CH0_DATA = 0x40;
 static constexpr u16 PIT_CMD      = 0x43;
 static constexpr u32 PIT_FREQ     = 1193182;  /* Hz */
-static constexpr u32 SCHED_HZ     = 100;      /* 100 Hz → 10 ms tick */
+static constexpr u32 SCHED_HZ     = SCHED_TICK_HZ;  /* shared scheduler tick rate */
 
 /* PIC (8259A) ports */
 static constexpr u16 PIC1_CMD  = 0x20;

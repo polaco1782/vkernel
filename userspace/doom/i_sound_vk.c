@@ -23,14 +23,15 @@
 #include "../include/vk.h"
 
 #define MUSIC_CHANNEL (VK_SND_MIX_CHANNELS - 1)
-#define MUSIC_SLICE_MAX_FRAMES 4096
+#define MUSIC_SLICE_MIN_FRAMES 4096
+#define MUSIC_SLICE_MAX_FRAMES 8192
 
 void OPL_VK_Render(int16_t *buffer, unsigned int nsamples);
 
 /* ---- config variables (referenced from m_config.c) ---- */
 int snd_samplerate = 44100;
 int snd_cachesize = 64 * 1024 * 1024;
-int snd_maxslicetime_ms = 28;
+int snd_maxslicetime_ms = 90;
 char *snd_musiccmd = "";
 int snd_pitchshift = -1;
 int snd_musicdevice = SNDDEVICE_SB;
@@ -87,6 +88,7 @@ static void vk_snd_shutdown(void)
     /* Stop all mixer channels then the hardware. */
     for (int i = 0; i < MAX_CHANNELS; ++i)
         VK_CALL(snd_mix_stop, i);
+    VK_CALL(snd_mix_stop, MUSIC_CHANNEL);
     VK_CALL(snd_stop);
 }
 
@@ -194,9 +196,9 @@ static unsigned int vk_music_slice_frames(void)
 
     frames = (unsigned int) (((uint64_t) snd_samplerate * (uint64_t) snd_maxslicetime_ms) / 1000u);
 
-    if (frames < 256)
+    if (frames < MUSIC_SLICE_MIN_FRAMES)
     {
-        frames = 256;
+        frames = MUSIC_SLICE_MIN_FRAMES;
     }
     else if (frames > MUSIC_SLICE_MAX_FRAMES)
     {
@@ -204,6 +206,11 @@ static unsigned int vk_music_slice_frames(void)
     }
 
     return frames;
+}
+
+static void vk_music_stop_channels(void)
+{
+    VK_CALL(snd_mix_stop, MUSIC_CHANNEL);
 }
 
 static void vk_music_poll(void)
@@ -217,7 +224,7 @@ static void vk_music_poll(void)
 
     if (!active_music->MusicIsPlaying())
     {
-        VK_CALL(snd_mix_stop, MUSIC_CHANNEL);
+        vk_music_stop_channels();
         return;
     }
 
@@ -342,6 +349,7 @@ void I_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
 void I_InitMusic(void) {}
 void I_ShutdownMusic(void)
 {
+    vk_music_stop_channels();
     if (active_music) {
         active_music->Shutdown();
         active_music = NULL;
@@ -355,10 +363,14 @@ void I_SetMusicVolume(int vol)
 void I_PauseSong(void)
 {
     if (active_music) active_music->PauseMusic();
+    vk_music_stop_channels();
 }
 void I_ResumeSong(void)
 {
-    if (active_music) active_music->ResumeMusic();
+    if (active_music) {
+        active_music->ResumeMusic();
+        vk_music_poll();
+    }
 }
 void *I_RegisterSong(void *data, int len)
 {
@@ -372,6 +384,7 @@ void I_UnRegisterSong(void *handle)
 void I_PlaySong(void *handle, boolean looping)
 {
     if (active_music) {
+        vk_music_stop_channels();
         active_music->PlaySong(handle, looping);
         vk_music_poll();
     }
@@ -379,7 +392,7 @@ void I_PlaySong(void *handle, boolean looping)
 void I_StopSong(void)
 {
     if (active_music) active_music->StopSong();
-    VK_CALL(snd_mix_stop, MUSIC_CHANNEL);
+    vk_music_stop_channels();
 }
 boolean I_MusicIsPlaying(void)
 {

@@ -16,9 +16,22 @@
 
 /* ---- tunables ---- */
 #define DEFAULT_SAMPLE_RATE  44100
-#define BUFFER_SAMPLES       1024
+/* Render small chunks for responsive tracker/UI updates, then submit
+ * larger chunks to hardware to reduce underrun crackle. */
+#define RENDER_SAMPLES       512
+#define PLAY_SAMPLES         3072
+#define QUEUE_SAMPLES        8192
+#define QUEUE_TARGET_SAMPLES 6144
+#define VIS_UPDATE_DIV       3
+#define VIS_MIN_QUEUE        PLAY_SAMPLES
 
-static int16_t audio_buf[BUFFER_SAMPLES * 2];
+static int16_t render_buf[RENDER_SAMPLES * 2];
+static int16_t play_buf[PLAY_SAMPLES * 2];
+static int16_t queue_buf[QUEUE_SAMPLES * 2];
+static vk_u32 queue_rd = 0;
+static vk_u32 queue_wr = 0;
+static vk_u32 queue_count = 0;
+static vk_u32 vis_div_ctr = 0;
 vk_u32 *pixbuf;
 
 /* ================================================================
@@ -272,6 +285,50 @@ static void draw_visualizer(vk_u32 *pixels, ModPlayerStatus_t *mp_st,
 
 /* ================================================================ */
 
+static int queue_push_render_block(void)
+{
+    if (queue_count + RENDER_SAMPLES > QUEUE_SAMPLES)
+        return 0;
+
+    RenderMOD(render_buf, RENDER_SAMPLES);
+
+    for (int i = 0; i < RENDER_SAMPLES; ++i) {
+        vk_u32 dst = (queue_wr + (vk_u32)i) % QUEUE_SAMPLES;
+        queue_buf[dst * 2u] = render_buf[i * 2];
+        queue_buf[dst * 2u + 1u] = render_buf[i * 2 + 1];
+    }
+
+    queue_wr = (queue_wr + RENDER_SAMPLES) % QUEUE_SAMPLES;
+    queue_count += RENDER_SAMPLES;
+    return 1;
+}
+
+static int queue_pop_play_block(void)
+{
+    if (queue_count < PLAY_SAMPLES)
+        return 0;
+
+    for (int i = 0; i < PLAY_SAMPLES; ++i) {
+        vk_u32 src = (queue_rd + (vk_u32)i) % QUEUE_SAMPLES;
+        play_buf[i * 2] = queue_buf[src * 2u];
+        play_buf[i * 2 + 1] = queue_buf[src * 2u + 1u];
+    }
+
+    queue_rd = (queue_rd + PLAY_SAMPLES) % QUEUE_SAMPLES;
+    queue_count -= PLAY_SAMPLES;
+    return 1;
+}
+
+static void update_visualizer(ModPlayerStatus_t *mp_ptr)
+{
+    compute_vu_levels(mp_ptr);
+    draw_visualizer(pixbuf, mp_ptr, render_buf, RENDER_SAMPLES);
+
+    // swap buffers
+    memcpy((void *)(unsigned long long)g_fb.base, pixbuf,
+           (size_t)g_fb.width * g_fb.height * sizeof(vk_u32));
+}
+
 static void play_live(ModPlayerStatus_t *mp_ptr, const char *filename,
                       int sample_rate)
 {
@@ -297,27 +354,51 @@ static void play_live(ModPlayerStatus_t *mp_ptr, const char *filename,
 
     VK_CALL(snd_set_sample_rate, (vk_u32)sample_rate);
     VK_CALL(snd_set_volume, 255, 255);
+    queue_rd = queue_wr = queue_count = 0;
+    vis_div_ctr = 0;
+
+    while (queue_count < QUEUE_TARGET_SAMPLES) {
+        if (!queue_push_render_block())
+            break;
+    }
+    if (queue_pop_play_block()) {
+        VK_CALL(snd_play, play_buf,
+                (vk_u32)(PLAY_SAMPLES * 2 * sizeof(int16_t)),
+                VK_SND_FORMAT_SIGNED_16);
+    }
 
     for (;;) {
         vk_key_event_t key;
         if (VK_CALL(poll_key, &key) && key.pressed) break;
 
-        if (!VK_CALL(snd_is_playing)) {
-            RenderMOD(audio_buf, BUFFER_SAMPLES);
-            VK_CALL(snd_play, audio_buf,
-                    (vk_u32)(BUFFER_SAMPLES * 2 * sizeof(int16_t)),
+        if (!VK_CALL(snd_is_playing) && queue_pop_play_block()) {
+            VK_CALL(snd_play, play_buf,
+                    (vk_u32)(PLAY_SAMPLES * 2 * sizeof(int16_t)),
                     VK_SND_FORMAT_SIGNED_16);
-
-            compute_vu_levels(mp_ptr);
-            draw_visualizer(pixbuf, mp_ptr, audio_buf, BUFFER_SAMPLES);
-
-            // swap buffers
-            memcpy((void *)(unsigned long long)g_fb.base, pixbuf,
-                   (size_t)g_fb.width * g_fb.height * sizeof(vk_u32));
-
-        } else {
-            VK_CALL(yield);
         }
+
+        /* Keep queue depth healthy, but cap work per loop so we don't
+         * miss audio handoff windows. */
+        for (int i = 0; i < 2 && queue_count < QUEUE_TARGET_SAMPLES; ++i) {
+            if (!queue_push_render_block()) {
+                break;
+            }
+        }
+
+        if (!VK_CALL(snd_is_playing) && queue_count >= PLAY_SAMPLES) {
+            if (queue_pop_play_block()) {
+                VK_CALL(snd_play, play_buf,
+                        (vk_u32)(PLAY_SAMPLES * 2 * sizeof(int16_t)),
+                        VK_SND_FORMAT_SIGNED_16);
+            }
+        }
+
+        /* Visuals are best-effort: skip them when audio needs the slack. */
+        if (queue_count >= VIS_MIN_QUEUE && (vis_div_ctr++ % VIS_UPDATE_DIV) == 0) {
+            update_visualizer(mp_ptr);
+        }
+
+        VK_CALL(yield);
     }
 
     VK_CALL(snd_stop);

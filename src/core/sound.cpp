@@ -97,7 +97,7 @@ constexpr u32 MIX_OUTPUT_RATE   = 48000;
 /* Max frames per hardware submission — sized to fit the AC'97 DMA buffer
  * (64 KB / 4 bytes-per-stereo-i16-frame = 16384 frames ≈ 341 ms). */
 constexpr u32 MIX_WINDOW_FRAMES = 16384;
-constexpr u32 SCHED_HZ          = 100; /* PIT / LAPIC timer rate */
+constexpr u32 SCHED_HZ          = SCHED_TICK_HZ;
 
 struct mix_ch_t {
     const u8*    data;
@@ -145,7 +145,10 @@ static void mix_do_submit() {
         if (ch_frames > out_frames) out_frames = ch_frames;
     }
 
-    if (out_frames == 0) return;
+    if (out_frames == 0) {
+        s_active->stop();
+        return;
+    }
     if (out_frames > MIX_WINDOW_FRAMES) out_frames = MIX_WINDOW_FRAMES;
 
     /* Zero the accumulation buffer for this window */

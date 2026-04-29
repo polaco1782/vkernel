@@ -332,7 +332,7 @@ static bool ac97_play(const u8* samples, u32 length, sound_format fmt) {
      * sample_count is always total 16-bit words; frames = sample_count / 2
      * because AC97 is always stereo (2 words per frame). */
     u32 frames = sample_count / 2;
-    u64 dur_ticks = ((u64)frames * 100u + s_sample_rate - 1u) / s_sample_rate;
+    u64 dur_ticks = ((u64)frames * SCHED_TICK_HZ + s_sample_rate - 1u) / s_sample_rate;
     s_play_end_tick = sched::tick_count() + (dur_ticks < 1u ? 1u : dur_ticks);
     s_current_length = transfer;
 
@@ -353,9 +353,12 @@ static void ac97_stop() {
 static bool ac97_is_playing() {
     if (!s_playing) return false;
 
-    /* Check hardware status: DCH (DMA Controller Halted) or CELV (current==last) */
+    /* Check hardware status.  Do not treat CELV as completion: with a
+     * single valid descriptor, "current equals last valid" is expected
+     * for most of the buffer lifetime and can become true long before
+     * playback has actually drained. */
     u16 sr = nabm_read16(PO_SR);
-    if (sr & (SR_DCH | SR_CELV | SR_LVBCI)) {
+    if (sr & (SR_DCH | SR_LVBCI | SR_BCIS | SR_FIFOE)) {
         /* Clear status bits */
         nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
         s_playing = false;

@@ -32,6 +32,7 @@ enum class task_state : u8 {
 
 inline constexpr usize TASK_STACK_SIZE = 262144;  /* 256 KB per task (enough for Doom) */
 inline constexpr usize MAX_TASKS = 64;
+inline constexpr u32 SCHED_TICK_HZ = 100;        /* 10 ms scheduler tick */
 
 /* Sentinel: CPU is idle and not currently executing any task.
  * Used as the initial g_per_cpu_task value for APs so that their first

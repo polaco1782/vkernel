@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include "i_timer.h"
+#include "i_sound.h"
 #include "../include/vk.h"
 
 static uint32_t basetime = 0;
@@ -50,7 +51,11 @@ void I_Sleep(int ms)
     uint32_t tps = VK_CALL(ticks_per_sec);
     uint64_t sleep_ticks = ((uint64_t)ms * tps) / 1000;
     if (sleep_ticks == 0) sleep_ticks = 1;
-    VK_CALL(sleep, sleep_ticks);
+
+    while (sleep_ticks-- > 0) {
+        I_UpdateSound();
+        VK_CALL(sleep, 1);
+    }
 }
 
 /* Implement SDL_Delay declared in our SDL shim */

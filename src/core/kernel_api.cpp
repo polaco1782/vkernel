@@ -221,7 +221,7 @@ static int stub_poll_mouse(vk_mouse_event_t* out) {
 }
 
 static vk_u32 stub_ticks_per_sec() {
-    return 100;  /* SCHED_HZ = 100 */
+    return SCHED_TICK_HZ;
 }
 
 static auto current_console_interface() -> process::console_interface {
