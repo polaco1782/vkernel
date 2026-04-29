@@ -64,5 +64,6 @@ tests/output/
 tests/coverage/
 
 # Shareware doom wad files (not redistributable, must be provided by user)
+doom1.wad
 doom2.wad
 doom.wad
