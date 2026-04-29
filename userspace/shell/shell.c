@@ -34,6 +34,17 @@ static int vk_strcmp(const char* a, const char* b)
     return (unsigned char)*a - (unsigned char)*b;
 }
 
+static int vk_has_suffix(const char* s, const char* suffix)
+{
+    vk_usize s_len = vk_strlen(s);
+    vk_usize suffix_len = vk_strlen(suffix);
+
+    if (suffix_len > s_len)
+        return 0;
+
+    return vk_strcmp(s + (s_len - suffix_len), suffix) == 0;
+}
+
 /* Returns 1 if `s` starts with `prefix`, 0 otherwise. */
 static int vk_has_prefix(const char* s, const char* prefix)
 {
@@ -414,25 +425,81 @@ static void cmd_alloc(const char* arg)
     VK_CALL(puts, "Freed.\n");
 }
 
-static void cmd_run(const char* arg)
+static int shell_launch_program(const char* path, int verbose)
 {
-    const char* path = vk_skip_spaces(arg);
     if (*path == '\0') {
-        VK_CALL(puts, "Usage: run <filename>\n");
-        return;
+        if (verbose)
+            VK_CALL(puts, "Usage: run <filename>\n");
+        return -1;
     }
 
     vk_i64 task_id = VK_CALL(run, path);
     if (task_id < 0) {
-        VK_CALL(puts, "run: failed to launch ");
-        VK_CALL(puts, path);
-        VK_CALL(puts, "\n");
-    } else {
+        if (verbose) {
+            VK_CALL(puts, "run: failed to launch ");
+            VK_CALL(puts, path);
+            VK_CALL(puts, "\n");
+        }
+        return -1;
+    }
+
+    if (verbose) {
         VK_CALL(puts, "run: spawned task ");
         VK_CALL(put_dec, (vk_u64)task_id);
         VK_CALL(puts, "\n");
-        VK_CALL(wait_task, task_id);
     }
+
+    VK_CALL(wait_task, task_id);
+    return 0;
+}
+
+static void cmd_run(const char* arg)
+{
+    const char* path = vk_skip_spaces(arg);
+    (void)shell_launch_program(path, 1);
+}
+
+static int try_run_vbin_command(const char* cmdline)
+{
+    char path[256];
+    vk_usize name_len = 0;
+
+    while (cmdline[name_len] != '\0' &&
+           cmdline[name_len] != ' ' &&
+           cmdline[name_len] != '\t') {
+        if (name_len + 1 >= sizeof(path))
+            return 0;
+        path[name_len] = cmdline[name_len];
+        ++name_len;
+    }
+
+    if (cmdline[name_len] != '\0')
+        return 0;
+
+    path[name_len] = '\0';
+    if (name_len == 0)
+        return 0;
+
+    if (vk_has_suffix(path, ".vbin")) {
+        if (!VK_CALL(file_exists, path))
+            return 0;
+        return shell_launch_program(path, 0) == 0;
+    }
+
+    if (name_len + 5 >= sizeof(path))
+        return 0;
+
+    path[name_len + 0] = '.';
+    path[name_len + 1] = 'v';
+    path[name_len + 2] = 'b';
+    path[name_len + 3] = 'i';
+    path[name_len + 4] = 'n';
+    path[name_len + 5] = '\0';
+
+    if (!VK_CALL(file_exists, path))
+        return 0;
+
+    return shell_launch_program(path, 0) == 0;
 }
 
 static void cmd_drvload(const char* arg)
@@ -547,6 +614,9 @@ static int parse_cmdline(const char* cmdline)
             return 0;
         }
     }
+
+    if (try_run_vbin_command(cmdline))
+        return 0;
 
     VK_CALL(puts, "Unknown command: ");
     VK_CALL(puts, cmdline);
