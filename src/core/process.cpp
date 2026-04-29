@@ -23,9 +23,16 @@
 #include "process.h"
 #include "vk.h"
 #include "process_internal.h"
+#include "resource_ptr.h"
 
 namespace vk {
 namespace process {
+
+namespace {
+using process_image_ptr = kernel_allocation_ptr<u8>;
+using process_context_ptr = kernel_heap_ptr<process_task_context>;
+
+} // namespace
 
 static auto current_console_interface() -> console_interface {
     auto* ctx = static_cast<process_task_context*>(sched::current_task_user_data());
@@ -89,9 +96,9 @@ auto run(string_view filename, console_interface interface) -> i64 {
     const u8*  data = f->data;
     const usize sz  = f->size;
 
-    u64   entry_addr    = 0;
-    u8*   image_base    = null;
-    u64   image_size    = 0;
+    u64   entry_addr      = 0;
+    u8*   image_base_raw  = null;
+    u64   image_size      = 0;
     bool  image_from_phys = false;
 
     /* Detect format by magic bytes:
@@ -110,7 +117,7 @@ auto run(string_view filename, console_interface interface) -> i64 {
             return -1;
         }
         entry_addr      = result.entry;
-        image_base      = result.image_base;
+        image_base_raw  = result.image_base;
         image_size      = result.image_size;
         image_from_phys = result.image_from_phys;
     } else if (is_pe) {
@@ -120,53 +127,47 @@ auto run(string_view filename, console_interface interface) -> i64 {
             return -1;
         }
         entry_addr = result.entry;
-        image_base = result.image_base;
+        image_base_raw = result.image_base;
         image_size = result.image_size;
     } else {
         log::error("process: unknown binary format (not ELF or PE)");
         return -1;
     }
 
+    process_image_ptr image_base(
+        image_base_raw,
+        kernel_allocation_deleter {
+            .size = static_cast<usize>(image_size),
+            .from_phys = image_from_phys,
+        });
+
     log::info("Executing at %#llx", static_cast<unsigned long long>(entry_addr));
 
     /* Ensure the API table is ready */
     kernel_api::init();
 
-    auto* ctx = static_cast<process_task_context*>(g_kernel_heap.allocate(sizeof(process_task_context)));
-    if (ctx == null) {
+    process_context_ptr ctx(
+        static_cast<process_task_context*>(g_kernel_heap.allocate(sizeof(process_task_context))));
+    if (!ctx) {
         log::error("process: out of memory while creating task context");
-        if (image_from_phys) {
-            u32 pc = static_cast<u32>(
-                (image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
-            g_phys_alloc.free_pages(
-                reinterpret_cast<phys_addr>(image_base), pc);
-        } else {
-            g_kernel_heap.free(image_base);
-        }
         return -1;
     }
 
     ctx->entry           = entry_addr;
-    ctx->image_base      = image_base;
+    ctx->image_base      = image_base.get();
     ctx->image_size      = image_size;
     ctx->image_from_phys = image_from_phys;
     ctx->interface       = interface;
 
 	// create a new task and pass the context as user data
-    i64 task_id = sched::create_task(filename, process_task_main, ctx);
+    i64 task_id = sched::create_task(filename, process_task_main, ctx.get());
     if (task_id < 0) {
         log::error("process: failed to create task");
-        g_kernel_heap.free(ctx);
-        if (image_from_phys) {
-            u32 pc = static_cast<u32>(
-                (image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
-            g_phys_alloc.free_pages(
-                reinterpret_cast<phys_addr>(image_base), pc);
-        } else {
-            g_kernel_heap.free(image_base);
-        }
         return -1;
     }
+
+    (void)ctx.release();
+    (void)image_base.release();
 
     log::info("Spawned task id %llu for %s",
               static_cast<unsigned long long>(task_id), f->name.c_str());

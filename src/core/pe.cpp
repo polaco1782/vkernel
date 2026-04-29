@@ -17,6 +17,7 @@
 #include "console.h"
 #include "log.h"
 #include "pe.h"
+#include "resource_ptr.h"
 
 namespace vk {
 namespace pe {
@@ -94,14 +95,15 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     }
 
     /* ---- 3. Allocate zeroed image buffer ---- */
-    auto* image = static_cast<u8*>(g_kernel_heap.allocate_zero(size_of_image));
+    kernel_heap_ptr<u8> image(
+        static_cast<u8*>(g_kernel_heap.allocate_zero(size_of_image)));
     if (!image) {
         result.error = pe_error::no_memory;
         return result;
     }
 
     /* ---- 4. Copy mapped headers ---- */
-    memory::memory_copy(image, file_data, size_of_headers);
+    memory::memory_copy(image.get(), file_data, size_of_headers);
 
     /* ---- 5. Copy sections ---- */
     const auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(
@@ -114,17 +116,15 @@ auto load(const u8* file_data, usize file_size) -> load_result {
         if (sec.SizeOfRawData == 0) continue;
 
         if (sec.VirtualAddress + sec.SizeOfRawData > size_of_image) {
-            g_kernel_heap.free(image);
             result.error = pe_error::bad_reloc;
             return result;
         }
         if (!range_ok(file_size, sec.PointerToRawData, sec.SizeOfRawData)) {
-            g_kernel_heap.free(image);
             result.error = pe_error::too_small;
             return result;
         }
 
-        memory::memory_copy(image + sec.VirtualAddress,
+        memory::memory_copy(image.get() + sec.VirtualAddress,
                             file_data + sec.PointerToRawData,
                             sec.SizeOfRawData);
     }
@@ -135,18 +135,17 @@ auto load(const u8* file_data, usize file_size) -> load_result {
 
     if (reloc_dir.Size > 0 && reloc_dir.VirtualAddress != 0) {
         const i64 delta =
-            static_cast<i64>(reinterpret_cast<u64>(image)) -
+            static_cast<i64>(reinterpret_cast<u64>(image.get())) -
             static_cast<i64>(image_base_link);
 
         if (delta != 0) {
             if (!range_ok(size_of_image,
                           reloc_dir.VirtualAddress, reloc_dir.Size)) {
-                g_kernel_heap.free(image);
                 result.error = pe_error::bad_reloc;
                 return result;
             }
 
-            const u8* blk     = image + reloc_dir.VirtualAddress;
+            const u8* blk     = image.get() + reloc_dir.VirtualAddress;
             const u8* blk_end = blk + reloc_dir.Size;
 
             while (blk + sizeof(IMAGE_BASE_RELOCATION) <= blk_end) {
@@ -172,11 +171,10 @@ auto load(const u8* file_data, usize file_size) -> load_result {
                     if (type == IMAGE_REL_BASED_DIR64) {
                         const u32 rva = hdr->VirtualAddress + offset;
                         if (rva + sizeof(u64) > size_of_image) {
-                            g_kernel_heap.free(image);
                             result.error = pe_error::bad_reloc;
                             return result;
                         }
-                        auto* ptr = reinterpret_cast<u64*>(image + rva);
+                        auto* ptr = reinterpret_cast<u64*>(image.get() + rva);
                         *ptr = static_cast<u64>(
                             static_cast<i64>(*ptr) + delta);
                     }
@@ -188,12 +186,12 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     }
 
     log::debug("pe: loaded base=%p size=%u entry=%#llx",
-               image,
+               image.get(),
                size_of_image,
-               static_cast<unsigned long long>(reinterpret_cast<u64>(image) + entry_rva));
+               static_cast<unsigned long long>(reinterpret_cast<u64>(image.get()) + entry_rva));
 
-    result.entry      = reinterpret_cast<u64>(image) + entry_rva;
-    result.image_base = image;
+    result.entry      = reinterpret_cast<u64>(image.get()) + entry_rva;
+    result.image_base = image.release();
     result.image_size = size_of_image;
     return result;
 }

@@ -17,6 +17,7 @@
 #include "memory.h"
 #include "sound.h"
 #include "driver.h"
+#include "resource_ptr.h"
 #include "scheduler.h"
 #include "arch/x86_64/arch.h"
 
@@ -229,17 +230,21 @@ static bool sb16_init() {
      * below the 16 MB ISA DMA ceiling.  Request exactly 16 pages (64 KB)
      * with 0x10000 alignment and a 16 MB upper bound. */
     constexpr u32 ISA_DMA_CEILING = 0x1000000u; /* 16 MB */
-    auto dma_phys = g_phys_alloc.allocate_pages(
-        DMA_BUFFER_SIZE / PAGE_SIZE_4K,   /* 16 pages = 64 KB */
-        0x10000u,                          /* 64 KB alignment  */
-        ISA_DMA_CEILING                    /* must be < 16 MB  */
-    );
-    if (dma_phys == 0) {
+    constexpr u32 DMA_PAGE_COUNT = DMA_BUFFER_SIZE / PAGE_SIZE_4K;
+    physical_pages_ptr<u8> dma_buf(
+        reinterpret_cast<u8*>(g_phys_alloc.allocate_pages(
+            DMA_PAGE_COUNT,                 /* 16 pages = 64 KB */
+            0x10000u,                       /* 64 KB alignment  */
+            ISA_DMA_CEILING                 /* must be < 16 MB  */
+        )),
+        physical_pages_deleter { .page_count = DMA_PAGE_COUNT });
+    if (!dma_buf) {
         log::error("sb16: failed to allocate DMA buffer below 16 MB");
         return false;
     }
-    s_dma_phys_addr = static_cast<u32>(dma_phys);
-    s_dma_buffer    = reinterpret_cast<u8*>(dma_phys); /* identity-mapped */
+    s_dma_phys_addr = static_cast<u32>(reinterpret_cast<phys_addr>(dma_buf.get()));
+    s_dma_buffer    = dma_buf.get(); /* identity-mapped */
+    (void)dma_buf.release();
 
     log::debug("sb16: DMA buffer at physical %#x (%u bytes)",
                s_dma_phys_addr, DMA_BUFFER_SIZE);
@@ -263,6 +268,12 @@ static void sb16_shutdown() {
     (void)dsp_write(DSP_CMD_STOP_8BIT);
     (void)dsp_write(DSP_CMD_STOP_16BIT);
     (void)dsp_write(DSP_CMD_SPEAKER_OFF);
+    if (s_dma_buffer != null) {
+        g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(s_dma_buffer),
+                                DMA_BUFFER_SIZE / PAGE_SIZE_4K);
+        s_dma_buffer = null;
+        s_dma_phys_addr = 0;
+    }
     s_playing = false;
     log::info("sb16: shutdown");
 }

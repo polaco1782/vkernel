@@ -12,6 +12,7 @@
 #include "console.h"
 #include "log.h"
 #include "fs.h"
+#include "resource_ptr.h"
 
 namespace vk {
 
@@ -36,16 +37,16 @@ auto ramfs::add_file(string_view name, const u8* data, usize size) -> status_cod
     if (!f.name.assign(name)) return status_code::invalid_param;
     
     /* Allocate a copy in kernel heap */
-    auto* buf = static_cast<u8*>(g_kernel_heap.allocate(size));
-    if (buf == null) return status_code::no_memory;
-    memory::memory_copy(buf, data, size);
+    kernel_heap_ptr<u8> buf(static_cast<u8*>(g_kernel_heap.allocate(size)));
+    if (!buf) return status_code::no_memory;
+    memory::memory_copy(buf.get(), data, size);
 
-    f.data  = buf;
+    f.data  = buf.release();
     f.size  = size;
     f.valid = true;
     ++g_file_count;
 
-    log::debug("ramfs: added '%s' at heap=%p (%zu bytes)", f.name.c_str(), buf, size);
+    log::debug("ramfs: added '%s' at heap=%p (%zu bytes)", f.name.c_str(), f.data, size);
 
     return status_code::success;
 }
@@ -143,6 +144,14 @@ struct efi_file_protocol {
     /* ... more we don't need */
 };
 
+struct efi_file_handle_deleter {
+    void operator()(efi_file_protocol* file) const noexcept {
+        if (file != null && file->close != null) {
+            file->close(file);
+        }
+    }
+};
+
 /* EFI_SIMPLE_FILE_SYSTEM_PROTOCOL */
 struct efi_sfs_protocol;
 
@@ -224,6 +233,19 @@ static bool is_dot_entry(const char* name) {
     return name[0] == '.'
         && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
 }
+
+struct efi_pool_deleter {
+    uefi::boot_services_table* boot_services = null;
+
+    void operator()(u8* ptr) const noexcept {
+        if (ptr != null && boot_services != null) {
+            boot_services->free_pool(ptr);
+        }
+    }
+};
+
+using efi_file_ptr = unique_ptr<efi_file_protocol, efi_file_handle_deleter>;
+using efi_pool_ptr = unique_ptr<u8, efi_pool_deleter>;
 
 static auto open_esp_root() -> efi_file_protocol* {
     if (uefi::g_system_table == null || uefi::g_system_table->boot_services == null)
@@ -319,29 +341,27 @@ static auto build_esp_path(
 } // anonymous namespace
 
 auto loader::load_file_from_esp(const char* path) -> loaded_file {
-    auto* root = open_esp_root();
-    if (root == null)
+    efi_file_ptr root(open_esp_root());
+    if (!root)
         return { null, 0 };
 
     auto* bs = uefi::g_system_table->boot_services;
 
     /* Open the requested file */
     efi_file_protocol* file = null;
-    auto st = root->open(root, &file, to_ucs2(path), EFI_FILE_MODE_READ, 0);
+    auto st = root->open(root.get(), &file, to_ucs2(path), EFI_FILE_MODE_READ, 0);
     if (st != uefi::status::success || file == null) {
         log::warn("ESP file not found: %s", path);
-        root->close(root);
         return { null, 0 };
     }
+    efi_file_ptr file_handle(file);
 
     /* Query file size via GetInfo */
     u8 info_buf[256];
     usize info_size = sizeof(info_buf);
-    st = file->get_info(file, &uefi::FILE_INFO_GUID, &info_size, info_buf);
+    st = file_handle->get_info(file_handle.get(), &uefi::FILE_INFO_GUID, &info_size, info_buf);
     if (st != uefi::status::success) {
         log::warn("GetInfo failed for %s", path);
-        file->close(file);
-        root->close(root);
         return { null, 0 };
     }
     auto* fi = reinterpret_cast<efi_file_info*>(info_buf);
@@ -350,8 +370,6 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     log::debug("ESP file '%s': %zu bytes", path, file_size);
 
     if (file_size == 0) {
-        file->close(file);
-        root->close(root);
         return { null, 0 };
     }
 
@@ -360,26 +378,24 @@ auto loader::load_file_from_esp(const char* path) -> loaded_file {
     st = bs->allocate_pool(2 /* EfiLoaderData */, file_size, &buf);
     if (st != uefi::status::success || buf == null) {
         log::warn("AllocatePool failed for %s", path);
-        file->close(file);
-        root->close(root);
         return { null, 0 };
     }
+    efi_pool_ptr pool_buf(
+        static_cast<u8*>(buf),
+        efi_pool_deleter { .boot_services = bs });
 
     /* Read the file */
     usize read_size = file_size;
-    st = file->read(file, &read_size, buf);
-    file->close(file);
-    root->close(root);
+    st = file_handle->read(file_handle.get(), &read_size, pool_buf.get());
 
     if (st != uefi::status::success || read_size != file_size) {
         log::warn("Read failed for %s", path);
-        bs->free_pool(buf);
         return { null, 0 };
     }
 
-    log::debug("ESP read OK: %s -> %p", path, buf);
+    log::debug("ESP read OK: %s -> %p", path, pool_buf.get());
 
-    return { static_cast<u8*>(buf), file_size };
+    return { pool_buf.release(), file_size };
 }
 
 /* Load all regular files from the vkernel ESP directory into the ramfs. */
@@ -388,20 +404,20 @@ auto loader::load_initrd() -> status_code {
 
     ramfs::init();
 
-    auto* root = open_esp_root();
-    if (root == null) return status_code::error;
+    efi_file_ptr root(open_esp_root());
+    if (!root) return status_code::error;
 
     constexpr const char* initrd_dir = "\\EFI\\vkernel";
     efi_file_protocol* dir = null;
-    auto st = root->open(root, &dir, to_ucs2(initrd_dir), EFI_FILE_MODE_READ, 0);
+    auto st = root->open(root.get(), &dir, to_ucs2(initrd_dir), EFI_FILE_MODE_READ, 0);
     if (st != uefi::status::success || dir == null) {
         log::error("Failed to open ESP directory: %s", initrd_dir);
-        root->close(root);
         return status_code::error;
     }
+    efi_file_ptr dir_handle(dir);
 
     usize loaded = 0;
-    auto rc = for_each_directory_entry(dir, [&](const efi_file_info& fi, const char* name) {
+    auto rc = for_each_directory_entry(dir_handle.get(), [&](const efi_file_info& fi, const char* name) {
         if ((fi.attribute & EFI_FILE_DIRECTORY) != 0) {
             log::debug("Skipping directory: %s", name);
             return status_code::success;
@@ -415,18 +431,21 @@ auto loader::load_initrd() -> status_code {
 
         auto result = load_file_from_esp(path);
         if (result.data != null && result.size > 0) {
-            if (ramfs::add_file_nocopy(name, result.data, result.size) == status_code::success) {
+            efi_pool_ptr file_data(
+                result.data,
+                efi_pool_deleter { .boot_services = uefi::g_system_table->boot_services });
+            if (ramfs::add_file_nocopy(name, file_data.get(), result.size) == status_code::success) {
+                (void)file_data.release();
                 log::info("Loaded: %s (%zu bytes)", name, result.size);
                 ++loaded;
+            } else {
+                log::warn("Failed to add to RAMFS: %s", name);
             }
         } else {
             log::warn("Failed to load: %s", path);
         }
         return status_code::success;
     });
-
-    dir->close(dir);
-    root->close(root);
 
     log::info("%zu file(s) loaded from ESP", loaded);
 

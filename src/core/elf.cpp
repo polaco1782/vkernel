@@ -15,6 +15,7 @@
 #include "console.h"
 #include "log.h"
 #include "elf.h"
+#include "resource_ptr.h"
 
 namespace vk {
 namespace elf {
@@ -141,14 +142,19 @@ auto load(const u8* file_data, usize file_size) -> load_result {
      * would map these at their requested virtual addresses via paging.
      */
     u64 image_size = align_up(vaddr_max - vaddr_min, 4096ULL);
-    auto* image_base = static_cast<u8*>(g_kernel_heap.allocate_zero_aligned(image_size, max_align));
+    kernel_allocation_ptr<u8> image_base(
+        static_cast<u8*>(g_kernel_heap.allocate_zero_aligned(image_size, max_align)),
+        kernel_allocation_deleter {
+            .size = static_cast<usize>(image_size),
+            .from_phys = false,
+        });
 
     log::debug("elf: vaddr range %#llx - %#llx (size %llu bytes)",
                static_cast<unsigned long long>(vaddr_min),
                static_cast<unsigned long long>(vaddr_max),
                static_cast<unsigned long long>(image_size));
 
-    if (image_base == null) {
+    if (!image_base) {
         /* Heap too small — fall back to the physical allocator.  The
          * physical allocator works in pages; cast the phys_addr to a
          * pointer (valid because the kernel runs identity-mapped). */
@@ -168,15 +174,21 @@ auto load(const u8* file_data, usize file_size) -> load_result {
             result.error = elf_error::no_memory;
             return result;
         }
-        image_base = reinterpret_cast<u8*>(phys);
+        image_base.reset(reinterpret_cast<u8*>(phys));
+        image_base = kernel_allocation_ptr<u8>(
+            image_base.release(),
+            kernel_allocation_deleter {
+                .size = static_cast<usize>(image_size),
+                .from_phys = true,
+            });
         /* Physical pages are not guaranteed to be zeroed — clear them now. */
-        memory::memory_set(image_base, 0, image_size);
+        memory::memory_set(image_base.get(), 0, image_size);
         result.image_from_phys = true;
     }
 
     /* load_bias: value to add to a vaddr to get the host pointer */
     i64 load_bias = static_cast<i64>(
-        reinterpret_cast<u64>(image_base)) - static_cast<i64>(vaddr_min);
+        reinterpret_cast<u64>(image_base.get())) - static_cast<i64>(vaddr_min);
 
     /* ---- 8. Copy PT_LOAD segments ---- */
     for (u16 i = 0; i < ehdr->e_phnum; ++i) {
@@ -241,12 +253,12 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     /* ---- 10. Resolve entry point ---- */
     result.entry = static_cast<u64>(
         static_cast<i64>(ehdr->e_entry) + load_bias);
-    result.image_base = image_base;
+    result.image_base = image_base.release();
     result.image_size = image_size;
     result.error      = elf_error::ok;
 
     log::debug("elf: loaded image_base=%p size=%llu entry=%#llx",
-               image_base,
+               result.image_base,
                static_cast<unsigned long long>(image_size),
                static_cast<unsigned long long>(result.entry));
 

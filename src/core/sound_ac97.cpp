@@ -20,6 +20,7 @@
 #include "sound.h"
 #include "driver.h"
 #include "pci.h"
+#include "resource_ptr.h"
 #include "scheduler.h"
 #include "arch/x86_64/arch.h"
 
@@ -207,30 +208,38 @@ static bool ac97_init() {
 
     /* ---- Allocate BDL and DMA buffer ---- */
     /* BDL: 32 entries × 8 bytes = 256 bytes, needs to be below 4 GB for 32-bit addresses */
-    auto bdl_phys = g_phys_alloc.allocate_pages(1, PAGE_SIZE_4K, 0);
-    if (bdl_phys == 0) {
+    physical_pages_ptr<ac97_bd> bdl(
+        reinterpret_cast<ac97_bd*>(g_phys_alloc.allocate_pages(1, PAGE_SIZE_4K, 0)),
+        physical_pages_deleter { .page_count = 1 });
+    if (!bdl) {
         log::error("ac97: failed to allocate BDL page");
         return false;
     }
-    s_bdl_phys = static_cast<u32>(bdl_phys);
-    s_bdl      = reinterpret_cast<ac97_bd*>(bdl_phys);
+    s_bdl_phys = static_cast<u32>(reinterpret_cast<phys_addr>(bdl.get()));
+    s_bdl      = bdl.get();
     memory::memory_set(s_bdl, 0, PAGE_SIZE_4K);
 
     /* DMA buffer — 64 KB, 4K aligned */
-    auto dma_phys = g_phys_alloc.allocate_pages(
-        DMA_BUFFER_SIZE / PAGE_SIZE_4K, PAGE_SIZE_4K, 0);
-    if (dma_phys == 0) {
+    constexpr u32 DMA_PAGE_COUNT = DMA_BUFFER_SIZE / PAGE_SIZE_4K;
+    physical_pages_ptr<u8> dma_buf(
+        reinterpret_cast<u8*>(g_phys_alloc.allocate_pages(
+            DMA_PAGE_COUNT, PAGE_SIZE_4K, 0)),
+        physical_pages_deleter { .page_count = DMA_PAGE_COUNT });
+    if (!dma_buf) {
         log::error("ac97: failed to allocate DMA buffer");
         return false;
     }
-    s_dma_phys = static_cast<u32>(dma_phys);
-    s_dma_buf  = reinterpret_cast<u8*>(dma_phys);
+    s_dma_phys = static_cast<u32>(reinterpret_cast<phys_addr>(dma_buf.get()));
+    s_dma_buf  = dma_buf.get();
     memory::memory_set(s_dma_buf, 0, DMA_BUFFER_SIZE);
 
     log::debug("ac97: DMA buffer at %#x, BDL at %#x", s_dma_phys, s_bdl_phys);
 
     /* Point the hardware at our BDL */
     nabm_write32(PO_BDBAR, s_bdl_phys);
+
+    (void)bdl.release();
+    (void)dma_buf.release();
 
     s_playing = false;
     log::info("ac97: initialised");
@@ -242,6 +251,17 @@ static void ac97_shutdown() {
     nabm_write8(PO_CR, 0);
     /* Clear status */
     nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
+    if (s_dma_buf != null) {
+        g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(s_dma_buf),
+                                DMA_BUFFER_SIZE / PAGE_SIZE_4K);
+        s_dma_buf = null;
+        s_dma_phys = 0;
+    }
+    if (s_bdl != null) {
+        g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(s_bdl), 1);
+        s_bdl = null;
+        s_bdl_phys = 0;
+    }
     s_playing = false;
     log::info("ac97: shutdown");
 }
