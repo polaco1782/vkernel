@@ -49,7 +49,8 @@ LIBS   := -Wl,--start-group -lvksys -lc -lm -lgcc -Wl,--end-group
 
 TARGET := modplay.vbin
 
-SRCS   := main_vk.c modplay.c
+LIBMODPLAY_SRCS := $(wildcard libmodplay/*.c)
+SRCS   := main_vk.c $(LIBMODPLAY_SRCS)
 OBJS   := $(SRCS:.c=.o)
 
 .PHONY: all clean distclean

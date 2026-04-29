@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 #include "../include/vk.h"
-#include "modplay.h"
+#include "libmodplay/modplay.h"
 
 /* ---- tunables ---- */
 #define DEFAULT_SAMPLE_RATE  44100
@@ -99,13 +99,31 @@ static vk_u32 dim_color(vk_u32 col, int brightness) {
     return pack_pixel(r, g, b);
 }
 
-static void compute_vu_levels(ModPlayerStatus_t *mp_st) {
-    for (int ch = 0; ch < mp_st->channels && ch < VIS_MAX_CH; ch++) {
-        PaulaChannel_t *pch = &mp_st->ch[ch].samplegen;
+static const char *module_format_name(int filetype)
+{
+    switch (filetype) {
+    case MODULE_MOD:
+        return "MOD";
+    case MODULE_S3M:
+        return "S3M";
+    case MODULE_XM:
+        return "XM";
+    default:
+        return "Unknown";
+    }
+}
+
+static void compute_vu_levels(MODFILE *mod) {
+    for (int ch = 0; ch < mod->nChannels && ch < VIS_MAX_CH; ch++) {
+        MOD_Channel *channel = &mod->channels[ch];
         int level = 0;
 
-        if (pch->sample && pch->period && pch->volume > 0 && pch->age < 0x7FFFFFFF) {
-            level = pch->volume * 3;
+        if (channel->voiceInfo.enabled &&
+            channel->voiceInfo.playing &&
+            channel->sample != NULL &&
+            channel->sample->sampleInfo.sampledata != NULL) {
+            int fade = (int)(channel->volumeFade >> 9);
+            level = (channel->voiceInfo.volume * fade * 3) / 64;
             if (level > 192) level = 192;
         }
 
@@ -123,7 +141,7 @@ static void compute_vu_levels(ModPlayerStatus_t *mp_st) {
             vu_hold[ch] -= 1;
         }
 
-        if (pch->age < 3)
+        if ((mod->notebeats & (1u << ch)) != 0)
             blink_state[ch] = 255;
         else if (blink_state[ch] > 8)
             blink_state[ch] -= 8;
@@ -132,9 +150,9 @@ static void compute_vu_levels(ModPlayerStatus_t *mp_st) {
     }
 }
 
-static void draw_visualizer(vk_u32 *pixels, ModPlayerStatus_t *mp_st,
+static void draw_visualizer(vk_u32 *pixels, MODFILE *mod,
                             const int16_t *buf, int buf_len) {
-    int nch = mp_st->channels;
+    int nch = mod->nChannels;
     if (nch > VIS_MAX_CH) nch = VIS_MAX_CH;
     int fb_w = (int)g_fb.width;
     int fb_h = (int)g_fb.height;
@@ -285,12 +303,19 @@ static void draw_visualizer(vk_u32 *pixels, ModPlayerStatus_t *mp_st,
 
 /* ================================================================ */
 
-static int queue_push_render_block(void)
+static void render_module_block(MODFILE *mod, int16_t *buf, int samples)
+{
+    mod->mixingbuf = (u16 *)buf;
+    mod->mixingbuflen = samples * 2 * (int)sizeof(int16_t);
+    MODFILE_Player(mod);
+}
+
+static int queue_push_render_block(MODFILE *mod)
 {
     if (queue_count + RENDER_SAMPLES > QUEUE_SAMPLES)
         return 0;
 
-    RenderMOD(render_buf, RENDER_SAMPLES);
+    render_module_block(mod, render_buf, RENDER_SAMPLES);
 
     for (int i = 0; i < RENDER_SAMPLES; ++i) {
         vk_u32 dst = (queue_wr + (vk_u32)i) % QUEUE_SAMPLES;
@@ -319,17 +344,17 @@ static int queue_pop_play_block(void)
     return 1;
 }
 
-static void update_visualizer(ModPlayerStatus_t *mp_ptr)
+static void update_visualizer(MODFILE *mod)
 {
-    compute_vu_levels(mp_ptr);
-    draw_visualizer(pixbuf, mp_ptr, render_buf, RENDER_SAMPLES);
+    compute_vu_levels(mod);
+    draw_visualizer(pixbuf, mod, render_buf, RENDER_SAMPLES);
 
     // swap buffers
     memcpy((void *)(unsigned long long)g_fb.base, pixbuf,
            (size_t)g_fb.width * g_fb.height * sizeof(vk_u32));
 }
 
-static void play_live(ModPlayerStatus_t *mp_ptr, const char *filename,
+static void play_live(MODFILE *mod, const char *filename,
                       int sample_rate)
 {
     VK_CALL(framebuffer_info, &g_fb);
@@ -348,8 +373,8 @@ static void play_live(ModPlayerStatus_t *mp_ptr, const char *filename,
     memset(vu_hold_timer, 0, sizeof(vu_hold_timer));
     memset(blink_state, 0, sizeof(blink_state));
 
-    printf("Playing '%s'  (%d ch, %d Hz)\n",
-           filename, mp_ptr->channels, sample_rate);
+    printf("Playing '%s'  (%s, %d ch, %d Hz)\n",
+           filename, module_format_name(mod->filetype), mod->nChannels, sample_rate);
     printf("Press any key to stop.\n\n");
 
     VK_CALL(snd_set_sample_rate, (vk_u32)sample_rate);
@@ -358,7 +383,7 @@ static void play_live(ModPlayerStatus_t *mp_ptr, const char *filename,
     vis_div_ctr = 0;
 
     while (queue_count < QUEUE_TARGET_SAMPLES) {
-        if (!queue_push_render_block())
+        if (!queue_push_render_block(mod))
             break;
     }
     if (queue_pop_play_block()) {
@@ -380,7 +405,7 @@ static void play_live(ModPlayerStatus_t *mp_ptr, const char *filename,
         /* Keep queue depth healthy, but cap work per loop so we don't
          * miss audio handoff windows. */
         for (int i = 0; i < 2 && queue_count < QUEUE_TARGET_SAMPLES; ++i) {
-            if (!queue_push_render_block()) {
+            if (!queue_push_render_block(mod)) {
                 break;
             }
         }
@@ -395,13 +420,15 @@ static void play_live(ModPlayerStatus_t *mp_ptr, const char *filename,
 
         /* Visuals are best-effort: skip them when audio needs the slack. */
         if (queue_count >= VIS_MIN_QUEUE && (vis_div_ctr++ % VIS_UPDATE_DIV) == 0) {
-            update_visualizer(mp_ptr);
+            update_visualizer(mod);
         }
 
         VK_CALL(yield);
     }
 
     VK_CALL(snd_stop);
+    free(pixbuf);
+    pixbuf = NULL;
     printf("\nStopped.\n");
 }
 
@@ -413,8 +440,9 @@ int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
 
-    const char *filename = "makemove.mod";
+    const char *filename = (argc > 1) ? argv[1] : "2nd_reality.s3m";
     int sample_rate = DEFAULT_SAMPLE_RATE;
+    MODFILE mod;
 
     FILE *f = fopen(filename, "rb");
     if (!f) {
@@ -442,15 +470,21 @@ int main(int argc, char *argv[])
     fread(tune, 1, (size_t)tune_len, f);
     fclose(f);
 
-    ModPlayerStatus_t *mp_ptr = InitMOD(tune, (uint32_t)sample_rate);
+    MODFILE_Init(&mod);
 
-    if (!mp_ptr) {
-        printf("Error: '%s' is not a valid MOD file\n", filename);
+    if (MODFILE_Set(tune, (int)tune_len, &mod) < 0) {
+        printf("Error: '%s' is not a supported module file\n", filename);
         free(tune);
         return 1;
     }
 
-    play_live(mp_ptr, filename, sample_rate);
+    mod.musicvolume = 64;
+    mod.sfxvolume = 64;
+    MODFILE_SetFormat(&mod, sample_rate, 2, 16, TRUE);
+    MODFILE_Start(&mod);
+    play_live(&mod, filename, sample_rate);
+    MODFILE_Stop(&mod);
+    MODFILE_Free(&mod);
 
     free(tune);
     return 0;
