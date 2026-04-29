@@ -247,6 +247,15 @@ static void build_sin_table(void)
 static inline float lsin(int deg) { return sin_t[((deg % 360) + 360) % 360]; }
 static inline float lcos(int deg) { return sin_t[((deg + 90) % 360 + 360) % 360]; }
 
+static vk_u64 frame_ticks_for_fps(vk_u32 ticks_per_sec, vk_u32 fps)
+{
+    if (fps == 0)
+        return 1;
+
+    vk_u64 ticks = ((vk_u64)ticks_per_sec + (vk_u64)fps - 1) / (vk_u64)fps;
+    return ticks ? ticks : 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Entry point                                                         */
 /* ------------------------------------------------------------------ */
@@ -256,7 +265,7 @@ int main(int argc, char **argv)
     (void)argc; (void)argv;
 
     vk_framebuffer_info_t fb;
-    vk_get_api()->vk_framebuffer_info(&fb);
+    VK_CALL(framebuffer_info, &fb);
 
     if (!fb.valid) {
         fprintf(stderr, "rotozoomer: no framebuffer available\n");
@@ -266,7 +275,13 @@ int main(int argc, char **argv)
     const vk_u32 FB_W   = fb.width;
     const vk_u32 FB_H   = fb.height;
     const vk_u32 stride = fb.stride;          /* FB row pitch in pixels */
+    const vk_u32 tps    = VK_CALL(ticks_per_sec);
     uint32_t    *fb_ptr = (uint32_t *)(uintptr_t)fb.base;
+
+    /* Pace rendering so the effect doesn't consume a full CPU or spin
+     * much faster than the display can show. */
+    const vk_u32 target_fps = 60;
+    const vk_u64 frame_ticks = frame_ticks_for_fps(tps, target_fps);
 
     /* Render at half resolution — 4x fewer pixels to compute */
     const vk_u32 RW = FB_W / 2;
@@ -297,11 +312,20 @@ int main(int argc, char **argv)
     /* Orbit parameters: angle in degrees and radius in texture pixels */
     float orbit_angle = 0.0f;
     float orbit_radius = (RW < RH ? (float)RW : (float)RH) * 0.55f;
+    vk_u64 next_frame_tick = VK_CALL(tick_count);
 
     while (1) {
+        vk_u64 now = VK_CALL(tick_count);
+        if (now < next_frame_tick) {
+            VK_CALL(sleep, next_frame_tick - now);
+        } else if (now > next_frame_tick + frame_ticks) {
+            /* If rendering falls behind, resync instead of accumulating lag. */
+            next_frame_tick = now;
+        }
+
         /* ESC or Q to quit */
         vk_key_event_t ke;
-        if (vk_get_api()->vk_poll_key(&ke) && ke.pressed) {
+        if (VK_CALL(poll_key, &ke) && ke.pressed) {
             if (ke.ascii == 27 || ke.ascii == 'q' || ke.ascii == 'Q')
                 break;
         }
@@ -352,6 +376,7 @@ int main(int argc, char **argv)
         zoom_d = fmodf(zoom_d + zoom_step, 360.0f);
         /* Advance orbit angle for circular motion */
         orbit_angle = fmodf(orbit_angle + 1.5f, 360.0f);
+        next_frame_tick += frame_ticks;
     }
 
     free(backbuf);

@@ -24,7 +24,7 @@ CFLAGS  += -m64
 ifdef DEBUG
 CFLAGS  += -Og -g3 -fno-omit-frame-pointer -DDEBUG
 else
-CFLAGS  += -O3 -mfma -funroll-loops -ffast-math -march=native -DNDEBUG
+CFLAGS  += -Ofast -mfma -funroll-loops -ffast-math -march=native -DNDEBUG
 endif
 CFLAGS  += -Wall -Wextra
 CFLAGS  += -isystem $(SYSROOT)/include
