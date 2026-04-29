@@ -144,6 +144,143 @@ template<typename T>
 concept Unsigned = is_integral_v<T> && !Signed<T>;
 
 /* ============================================================
+ * Freestanding string helpers (no <string> / <string_view>)
+ * ============================================================ */
+
+namespace vk {
+
+[[nodiscard]] constexpr auto string_length(const char* str) noexcept -> usize {
+    if (str == null) {
+        return 0;
+    }
+
+    usize len = 0;
+    while (str[len] != '\0') {
+        ++len;
+    }
+    return len;
+}
+
+class string_view {
+public:
+    constexpr string_view() noexcept : data_(null), size_(0) {}
+
+    constexpr string_view(const char* str) noexcept
+        : data_(str), size_(string_length(str)) {}
+
+    constexpr string_view(const char* data, usize size) noexcept
+        : data_(data), size_(size) {}
+
+    template<usize N>
+    constexpr string_view(const char (&str)[N]) noexcept
+        : data_(str), size_(N > 0 ? N - 1 : 0) {}
+
+    [[nodiscard]] constexpr auto data() const noexcept -> const char* { return data_; }
+    [[nodiscard]] constexpr auto size() const noexcept -> usize { return size_; }
+    [[nodiscard]] constexpr auto empty() const noexcept -> bool { return size_ == 0; }
+
+    [[nodiscard]] constexpr auto begin() const noexcept -> const char* { return data_; }
+    [[nodiscard]] constexpr auto end() const noexcept -> const char* { return data_ + size_; }
+
+    [[nodiscard]] constexpr auto operator[](usize index) const noexcept -> char {
+        return data_[index];
+    }
+
+    constexpr void remove_prefix(usize count) noexcept {
+        if (count > size_) {
+            count = size_;
+        }
+        data_ += count;
+        size_ -= count;
+    }
+
+    [[nodiscard]] constexpr auto starts_with(string_view prefix) const noexcept -> bool {
+        if (prefix.size_ > size_) {
+            return false;
+        }
+        for (usize i = 0; i < prefix.size_; ++i) {
+            if (data_[i] != prefix.data_[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] constexpr auto equals(string_view other) const noexcept -> bool {
+        if (size_ != other.size_) {
+            return false;
+        }
+        for (usize i = 0; i < size_; ++i) {
+            if (data_[i] != other.data_[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+private:
+    const char* data_;
+    usize size_;
+};
+
+template<usize Capacity>
+class static_string {
+public:
+    static_assert(Capacity > 0, "static_string requires non-zero capacity");
+
+    constexpr static_string() noexcept : data_{'\0'}, size_(0) {}
+
+    constexpr static_string(string_view str) noexcept : data_{'\0'}, size_(0) {
+        assign(str);
+    }
+
+    template<usize N>
+    constexpr static_string(const char (&str)[N]) noexcept : data_{'\0'}, size_(0) {
+        assign(string_view(str));
+    }
+
+    [[nodiscard]] constexpr auto assign(string_view str) noexcept -> bool {
+        if (str.size() >= Capacity) {
+            clear();
+            return false;
+        }
+
+        for (usize i = 0; i < str.size(); ++i) {
+            data_[i] = str[i];
+        }
+        size_ = str.size();
+        data_[size_] = '\0';
+        return true;
+    }
+
+    constexpr void clear() noexcept {
+        size_ = 0;
+        data_[0] = '\0';
+    }
+
+    [[nodiscard]] constexpr auto c_str() const noexcept -> const char* { return data_; }
+    [[nodiscard]] constexpr auto data() noexcept -> char* { return data_; }
+    [[nodiscard]] constexpr auto data() const noexcept -> const char* { return data_; }
+    [[nodiscard]] constexpr auto size() const noexcept -> usize { return size_; }
+    [[nodiscard]] constexpr auto empty() const noexcept -> bool { return size_ == 0; }
+    [[nodiscard]] static constexpr auto capacity() noexcept -> usize { return Capacity - 1; }
+    [[nodiscard]] constexpr auto view() const noexcept -> string_view { return string_view(data_, size_); }
+
+    [[nodiscard]] constexpr auto operator[](usize index) noexcept -> char& { return data_[index]; }
+    [[nodiscard]] constexpr auto operator[](usize index) const noexcept -> const char& { return data_[index]; }
+
+    [[nodiscard]] constexpr operator string_view() const noexcept {
+        return view();
+    }
+
+private:
+    char  data_[Capacity];
+    usize size_;
+};
+
+} // namespace vk
+
+/* ============================================================
  * Status codes
  * ============================================================ */
 

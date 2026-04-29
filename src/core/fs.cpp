@@ -22,33 +22,18 @@ namespace vk {
 static file_entry g_files[RAMFS_MAX_FILES];
 static usize      g_file_count = 0;
 
-/* Simple C-string helpers (no libc) */
-static void str_copy(char* dst, const char* src, usize max) {
-    usize i = 0;
-    while (i + 1 < max && src[i]) { dst[i] = src[i]; ++i; }
-    dst[i] = '\0';
-}
-
-static bool str_equal(const char* a, const char* b) {
-    while (*a && *b) {
-        if (*a != *b) return false;
-        ++a; ++b;
-    }
-    return *a == *b;
-}
-
 auto ramfs::init() -> status_code {
     g_file_count = 0;
     memory::memory_set(g_files, 0, sizeof(g_files));
     return status_code::success;
 }
 
-auto ramfs::add_file(const char* name, const u8* data, usize size) -> status_code {
+auto ramfs::add_file(string_view name, const u8* data, usize size) -> status_code {
     if (g_file_count >= RAMFS_MAX_FILES) return status_code::no_memory;
-    if (name == null || data == null) return status_code::invalid_param;
+    if (name.data() == null || data == null) return status_code::invalid_param;
 
     auto& f = g_files[g_file_count];
-    str_copy(f.name, name, sizeof(f.name));
+    if (!f.name.assign(name)) return status_code::invalid_param;
     
     /* Allocate a copy in kernel heap */
     auto* buf = static_cast<u8*>(g_kernel_heap.allocate(size));
@@ -60,37 +45,49 @@ auto ramfs::add_file(const char* name, const u8* data, usize size) -> status_cod
     f.valid = true;
     ++g_file_count;
 
-    log::debug("ramfs: added '%s' at heap=%p (%zu bytes)", name, buf, size);
+    log::debug("ramfs: added '%s' at heap=%p (%zu bytes)", f.name.c_str(), buf, size);
 
     return status_code::success;
 }
 
-auto ramfs::add_file_nocopy(const char* name, u8* data, usize size) -> status_code {
+auto ramfs::add_file(const char* name, const u8* data, usize size) -> status_code {
+    return add_file(string_view(name), data, size);
+}
+
+auto ramfs::add_file_nocopy(string_view name, u8* data, usize size) -> status_code {
     if (g_file_count >= RAMFS_MAX_FILES) return status_code::no_memory;
-    if (name == null || data == null) return status_code::invalid_param;
+    if (name.data() == null || data == null) return status_code::invalid_param;
 
     auto& f = g_files[g_file_count];
-    str_copy(f.name, name, sizeof(f.name));
+    if (!f.name.assign(name)) return status_code::invalid_param;
     f.data  = data;
     f.size  = size;
     f.valid = true;
     ++g_file_count;
 
-    log::debug("ramfs: registered (nocopy) '%s' at %p (%zu bytes)", name, data, size);
+    log::debug("ramfs: registered (nocopy) '%s' at %p (%zu bytes)", f.name.c_str(), data, size);
 
     return status_code::success;
 }
 
-auto ramfs::find(const char* name) -> const file_entry* {
+auto ramfs::add_file_nocopy(const char* name, u8* data, usize size) -> status_code {
+    return add_file_nocopy(string_view(name), data, size);
+}
+
+auto ramfs::find(string_view name) -> const file_entry* {
     /* Normalize: strip leading "./" so "./doom2.wad" matches "doom2.wad" */
-    if (name != null && name[0] == '.' && name[1] == '/') {
-        name += 2;
+    if (name.starts_with("./")) {
+        name.remove_prefix(2);
     }
     for (usize i = 0; i < g_file_count; ++i) {
-        if (g_files[i].valid && str_equal(g_files[i].name, name))
+        if (g_files[i].valid && g_files[i].name.view().equals(name))
             return &g_files[i];
     }
     return null;
+}
+
+auto ramfs::find(const char* name) -> const file_entry* {
+    return find(string_view(name));
 }
 
 auto ramfs::file_count() -> usize { return g_file_count; }
@@ -104,7 +101,7 @@ void ramfs::dump() {
     log::info("RAMFS: %zu file(s)", g_file_count);
     for (usize i = 0; i < g_file_count; ++i) {
         if (g_files[i].valid) {
-            log::info("  [%zu] '%s' (%zu bytes)", i, g_files[i].name, g_files[i].size);
+            log::info("  [%zu] '%s' (%zu bytes)", i, g_files[i].name.c_str(), g_files[i].size);
         }
     }
 }
