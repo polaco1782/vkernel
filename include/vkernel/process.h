@@ -11,6 +11,7 @@
 #define VKERNEL_PROCESS_H
 
 #include "types.h"
+#include "vk.h"
 
 namespace vk {
 namespace process {
@@ -32,6 +33,8 @@ auto run(string_view filename) -> i64;
 auto run(const char* filename) -> i64;
 auto run(string_view filename, console_interface interface) -> i64;
 auto run(const char* filename, console_interface interface) -> i64;
+auto run(string_view filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64;
+auto run(const char* filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64;
 
 } // namespace process
 } // namespace vk

@@ -111,6 +111,8 @@ typedef struct vk_api {
     void (*vk_exit)(int code);
     void (*vk_yield)(void);
     void (*vk_sleep)(vk_u64 ticks);
+    vk_i64 (*vk_run_with_fb)(const char* path, const vk_framebuffer_info_t* fb);
+    vk_i64 (*vk_run_auto)(const char* path);
 
     /* ---- framebuffer ---- */
     void (*vk_framebuffer_info)(vk_framebuffer_info_t* out);
@@ -138,6 +140,8 @@ typedef struct vk_api {
 
     /* ---- raw keyboard input ---- */
     int    (*vk_poll_key)(vk_key_event_t* out);
+    int    (*vk_send_key)(vk_u64 task_id, const vk_key_event_t* ev);
+    int    (*vk_set_task_framebuffer)(vk_u64 task_id, const vk_framebuffer_info_t* fb);
     vk_u32 (*vk_ticks_per_sec)(void);
 
     /* ---- task synchronisation ---- */
@@ -168,10 +172,14 @@ typedef struct vk_api {
     /* ---- task stats ---- */
     vk_usize (*vk_task_snapshot)(vk_task_info_t* out, vk_usize max_tasks);
 
+    /* ---- compositor control ---- */
+    int (*vk_set_compositor_active)(vk_u32 active);
+    int (*vk_set_compositor_default_fb)(const vk_framebuffer_info_t* fb);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 16ULL
+#define VK_API_VERSION 20ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

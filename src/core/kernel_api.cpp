@@ -23,6 +23,9 @@
 namespace vk {
 namespace kernel_api {
 
+static auto current_console_interface() -> process::console_interface;
+static auto validate_fb(const vk_framebuffer_info_t* fb) -> bool;
+
 /* ============================================================
  * Kernel-side API stub functions
  * These are plain C-linkage functions assigned into vk_api_t.
@@ -90,6 +93,48 @@ static void stub_sleep(vk_u64 ticks) {
 
 static vk_i64 stub_run(const char* path) {
     return process::run(path);
+}
+
+static vk_i64 stub_run_with_fb(const char* path, const vk_framebuffer_info_t* fb) {
+    if (path == null || fb == null) return -1;
+    return process::run(path, current_console_interface(), fb);
+}
+
+static bool s_compositor_active = false;
+static vk_framebuffer_info_t s_compositor_default_fb = {};
+static bool s_compositor_default_fb_valid = false;
+
+static vk_i64 stub_run_auto(const char* path) {
+    if (path == null) return -1;
+    if (s_compositor_active && s_compositor_default_fb_valid) {
+        return process::run(path, current_console_interface(), &s_compositor_default_fb);
+    }
+    return process::run(path);
+}
+
+static int stub_set_compositor_active(vk_u32 active) {
+    s_compositor_active = (active != 0u);
+    return 1;
+}
+
+static auto validate_fb(const vk_framebuffer_info_t* fb) -> bool {
+    return fb != null
+        && fb->valid != 0u
+        && fb->base != 0u
+        && fb->width > 0u
+        && fb->height > 0u
+        && fb->stride >= fb->width;
+}
+
+static int stub_set_compositor_default_fb(const vk_framebuffer_info_t* fb) {
+    if (!validate_fb(fb)) {
+        s_compositor_default_fb = {};
+        s_compositor_default_fb_valid = false;
+        return 0;
+    }
+    s_compositor_default_fb = *fb;
+    s_compositor_default_fb_valid = true;
+    return 1;
 }
 
 static vk_u64 stub_tick_count() {
@@ -300,6 +345,14 @@ static char route_try_getc() {
 
 static int route_poll_key(vk_key_event_t* out) {
     if (out == null || !should_use_framebuffer()) return 0;
+
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx != null && ctx->key_q_head != ctx->key_q_tail) {
+        *out = ctx->key_queue[ctx->key_q_tail];
+        ctx->key_q_tail = (ctx->key_q_tail + 1) % process::process_task_context::KEY_QUEUE_SIZE;
+        return 1;
+    }
+
     vk_key_event_t ev{};
     if (input::poll_key(ev)) {
         *out = ev;
@@ -308,10 +361,38 @@ static int route_poll_key(vk_key_event_t* out) {
     return 0;
 }
 
+static int stub_send_key(vk_u64 task_id, const vk_key_event_t* ev) {
+    if (ev == null) return 0;
+    auto* target = static_cast<process::process_task_context*>(sched::task_user_data(task_id));
+    if (target == null) return 0;
+
+    usize next = (target->key_q_head + 1) % process::process_task_context::KEY_QUEUE_SIZE;
+    if (next == target->key_q_tail) {
+        target->key_q_tail = (target->key_q_tail + 1) % process::process_task_context::KEY_QUEUE_SIZE;
+    }
+    target->key_queue[target->key_q_head] = *ev;
+    target->key_q_head = next;
+    return 1;
+}
+
+static int stub_set_task_framebuffer(vk_u64 task_id, const vk_framebuffer_info_t* fb) {
+    if (fb == null) return 0;
+    auto* target = static_cast<process::process_task_context*>(sched::task_user_data(task_id));
+    if (target == null) return 0;
+    target->fb_override = *fb;
+    target->fb_override_valid = (fb->valid != 0u && fb->base != 0u && fb->width > 0u && fb->height > 0u);
+    return target->fb_override_valid ? 1 : 0;
+}
+
 static void route_framebuffer_info(vk_framebuffer_info_t* out) {
     if (out == null) return;
     if (!should_use_framebuffer()) {
         *out = {};
+        return;
+    }
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx != null && ctx->fb_override_valid) {
+        *out = ctx->fb_override;
         return;
     }
     auto fb = console::framebuffer();
@@ -594,6 +675,8 @@ void init() {
     s_api.vk_exit = stub_exit;
     s_api.vk_yield = stub_yield;
     s_api.vk_sleep = stub_sleep;
+    s_api.vk_run_with_fb = stub_run_with_fb;
+    s_api.vk_run_auto = stub_run_auto;
     s_api.vk_run = stub_run;
     s_api.vk_tick_count = stub_tick_count;
     s_api.vk_dump_memory = stub_dump_memory;
@@ -616,6 +699,8 @@ void init() {
     s_api.vk_file_rename = stub_file_rename;
     /* raw keyboard */
     s_api.vk_poll_key = route_poll_key;
+    s_api.vk_send_key = stub_send_key;
+    s_api.vk_set_task_framebuffer = stub_set_task_framebuffer;
     s_api.vk_ticks_per_sec = stub_ticks_per_sec;
     /* task sync */
     s_api.vk_wait_task = stub_wait_task;
@@ -637,6 +722,9 @@ void init() {
     s_api.vk_poll_mouse = stub_poll_mouse;
     /* task stats */
     s_api.vk_task_snapshot = stub_task_snapshot;
+    /* compositor control */
+    s_api.vk_set_compositor_active = stub_set_compositor_active;
+    s_api.vk_set_compositor_default_fb = stub_set_compositor_default_fb;
 
     s_api_ready = true;
 }

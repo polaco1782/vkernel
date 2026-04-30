@@ -509,6 +509,19 @@ auto sched::current_task_user_data() -> void* {
     return g_tasks[t].user_data;
 }
 
+auto sched::task_user_data(u64 task_id) -> void* {
+    g_sched_lock.acquire();
+    void* user_data = null;
+    for (usize i = 0; i < g_task_count; ++i) {
+        if (g_tasks[i].id == task_id) {
+            user_data = g_tasks[i].user_data;
+            break;
+        }
+    }
+    g_sched_lock.release();
+    return user_data;
+}
+
 auto sched::tick_count() -> u64 {
     return g_tick_count;
 }

@@ -433,7 +433,11 @@ static int shell_launch_program(const char* path, int verbose)
         return -1;
     }
 
-    vk_i64 task_id = VK_CALL(run, path);
+    vk_i64 task_id;
+    if (vk_get_api()->vk_run_auto)
+        task_id = vk_get_api()->vk_run_auto(path);
+    else
+        task_id = VK_CALL(run, path);
     if (task_id < 0) {
         if (verbose) {
             VK_CALL(puts, "run: failed to launch ");

@@ -79,6 +79,10 @@ auto run(const char* filename) -> i64 {
 }
 
 auto run(string_view filename, console_interface interface) -> i64 {
+    return run(filename, interface, null);
+}
+
+auto run(string_view filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64 {
     /* Look up the file in ramfs */
     const file_entry* f = ramfs::find(filename);
     if (f == null) {
@@ -154,6 +158,14 @@ auto run(string_view filename, console_interface interface) -> i64 {
     ctx->image_size      = image_size;
     ctx->image_from_phys = image_from_phys;
     ctx->interface       = interface;
+    ctx->key_q_head      = 0;
+    ctx->key_q_tail      = 0;
+    ctx->fb_override     = fb_override ? *fb_override : vk_framebuffer_info_t{};
+    ctx->fb_override_valid = fb_override != null
+        && fb_override->valid != 0u
+        && fb_override->base != 0u
+        && fb_override->width > 0u
+        && fb_override->height > 0u;
 
 	// create a new task and pass the context as user data
     i64 task_id = sched::create_task(filename, process_task_main, ctx.get());
@@ -172,6 +184,10 @@ auto run(string_view filename, console_interface interface) -> i64 {
 
 auto run(const char* filename, console_interface interface) -> i64 {
     return run(string_view(filename), interface);
+}
+
+auto run(const char* filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64 {
+    return run(string_view(filename), interface, fb_override);
 }
 
 } // namespace process

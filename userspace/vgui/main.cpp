@@ -31,6 +31,29 @@ static bool g_show_settings = false;
 static bool g_show_demo     = false;
 static bool g_show_shell    = true;
 static bool g_open_about    = false;   /* one-shot: triggers OpenPopup */
+static vk_u32 g_default_app_w = 320;
+static vk_u32 g_default_app_h = 200;
+
+struct wm_app_window_t {
+    bool used;
+    bool open;
+    vk_i64 task_id;
+    vk_u32 w;
+    vk_u32 h;
+    vk_u32* pixels;
+    vk_u32* snapshot;
+    int blit_x;
+    int blit_y;
+    int blit_w;
+    int blit_h;
+    char title[64];
+};
+
+static const int WM_MAX_APPS = 6;
+static wm_app_window_t g_apps[WM_MAX_APPS];
+static int g_focused_app = -1;
+
+static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h);
 
 /* --- Counter widget --- */
 static int  g_counter        = 0;
@@ -441,16 +464,12 @@ static void sh_run(const char* arg)
         term_add("Usage: run <filename>");
         return;
     }
-
-    vk_i64 task_id = VK_CALL(run, arg);
+    vk_i64 task_id = launch_windowed_app(arg, g_default_app_w, g_default_app_h);
     if (task_id < 0) {
         term_addf("run: failed to launch %s", arg);
     } else {
-        term_addf("run: spawned task %lld (output on kernel console)",
+        term_addf("run: spawned task %lld (windowed)",
                    (long long)task_id);
-        /* Note: we do NOT call wait_task here because that would
-         * block the entire GUI event loop.  The task runs in the
-         * background. */
     }
 }
 
@@ -696,6 +715,123 @@ static void draw_about_modal()
     }
 }
 
+static bool app_task_running(vk_i64 task_id)
+{
+    if (task_id < 0) return false;
+    vk_task_info_t tasks[64];
+    vk_usize total = VK_CALL(task_snapshot, tasks, 64);
+    vk_usize count = total < 64 ? total : 64;
+    for (vk_usize i = 0; i < count; ++i) {
+        if ((vk_i64)tasks[i].id == task_id)
+            return tasks[i].state != 3u; /* terminated */
+    }
+    return false;
+}
+
+static int find_free_app_slot()
+{
+    for (int i = 0; i < WM_MAX_APPS; ++i)
+        if (!g_apps[i].used) return i;
+    return -1;
+}
+
+static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h)
+{
+    int slot = find_free_app_slot();
+    if (slot < 0) {
+        log_add("No free app window slots.");
+        return -1;
+    }
+
+    if (!vk_get_api()->vk_run_with_fb) {
+        log_add("Kernel API too old: missing run_with_fb.");
+        return -1;
+    }
+
+    wm_app_window_t& app = g_apps[slot];
+    app = {};
+    app.w = w;
+    app.h = h;
+    app.pixels = (vk_u32*)VK_CALL(malloc, (vk_usize)w * h * sizeof(vk_u32));
+    app.snapshot = (vk_u32*)VK_CALL(malloc, (vk_usize)w * h * sizeof(vk_u32));
+    if (!app.pixels || !app.snapshot) {
+        log_add("Failed to allocate app surface.");
+        return -1;
+    }
+    VK_CALL(memset, app.pixels, 0, (vk_usize)w * h * sizeof(vk_u32));
+    VK_CALL(memset, app.snapshot, 0, (vk_usize)w * h * sizeof(vk_u32));
+
+    vk_framebuffer_info_t app_fb = {};
+    app_fb.base = (vk_u64)(vk_usize)app.pixels;
+    app_fb.width = w;
+    app_fb.height = h;
+    app_fb.stride = w;
+    app_fb.format = VK_PIXEL_FORMAT_BGRX_8BPP;
+    app_fb.valid = 1u;
+
+    vk_i64 task = vk_get_api()->vk_run_with_fb(path, &app_fb);
+    if (task < 0) {
+        log_addf("Failed to start app: %s", path);
+        return -1;
+    }
+    app.used = true;
+    app.open = true;
+    app.task_id = task;
+    app.blit_x = app.blit_y = -1;
+    app.blit_w = app.blit_h = 0;
+    snprintf(app.title, sizeof(app.title), "App: %s##%lld", path, (long long)task);
+    g_focused_app = slot;
+
+    if (vk_get_api()->vk_set_compositor_default_fb)
+        (void)vk_get_api()->vk_set_compositor_default_fb(&app_fb);
+
+    log_addf("App started: %s (task %lld).", path, (long long)task);
+    return task;
+}
+
+static void draw_app_windows()
+{
+    for (int i = 0; i < WM_MAX_APPS; ++i) {
+        wm_app_window_t& app = g_apps[i];
+        if (!app.used) continue;
+        if (!app_task_running(app.task_id)) app.open = false;
+        if (!app.open) continue;
+
+        ImGui::SetNextWindowSize(ImVec2((float)app.w + 40.0f, (float)app.h + 80.0f), ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin(app.title, &app.open)) {
+            ImGui::End();
+            continue;
+        }
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+            g_focused_app = i;
+
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        float sx = (float)avail.x / (float)app.w;
+        float sy = (float)avail.y / (float)app.h;
+        float s = sx < sy ? sx : sy;
+        if (s < 1.0f) s = 1.0f;
+        int draw_w = (int)((float)app.w * s);
+        int draw_h = (int)((float)app.h * s);
+        if (draw_w > (int)avail.x) draw_w = (int)avail.x;
+        if (draw_h > (int)avail.y) draw_h = (int)avail.y;
+
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - (float)draw_w) * 0.5f);
+        ImGui::InvisibleButton("##app_canvas", ImVec2((float)draw_w, (float)draw_h));
+        ImVec2 p0 = ImGui::GetItemRectMin();
+        ImVec2 p1 = ImGui::GetItemRectMax();
+        app.blit_x = (int)p0.x;
+        app.blit_y = (int)p0.y;
+        app.blit_w = draw_w;
+        app.blit_h = draw_h;
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, p1, IM_COL32(8, 8, 8, 255));
+        dl->AddRect(p0, p1, IM_COL32(180, 180, 180, 255));
+
+        ImGui::End();
+    }
+}
+
 /* ================================================================
  * main
  * ================================================================ */
@@ -763,6 +899,10 @@ int main(int /*argc*/, char** /*argv*/)
     log_add("Move the mouse to control the cursor.");
     log_add("Alt to open the menu bar.  Tab/Arrows to navigate.");
     log_add("Enter/Space to activate.  Ctrl+Q to quit.");
+    log_add("Press F5 to launch sr_cube in a managed window.");
+
+    if (vk_get_api()->vk_set_compositor_active)
+        (void)vk_get_api()->vk_set_compositor_active(1u);
 
     /* ---- Shell banner ---- */
     term_add("+----------------------------------+");
@@ -775,12 +915,30 @@ int main(int /*argc*/, char** /*argv*/)
      * Main loop
      * ================================================================ */
     while (g_running) {
+        for (int i = 0; i < WM_MAX_APPS; ++i) {
+            g_apps[i].blit_x = -1;
+            g_apps[i].blit_y = -1;
+            g_apps[i].blit_w = 0;
+            g_apps[i].blit_h = 0;
+        }
 
         /* --- 1. Drain keyboard events --- */
         {
             vk_key_event_t evt;
             while (vk_get_api()->vk_poll_key(&evt)) {
                 ImGui_ImplVK_ProcessKey(&evt);
+
+                /* F5 launches the framebuffer app. */
+                if (evt.pressed && evt.scancode == 0x3Fu)
+                    (void)launch_windowed_app("doom.vbin", g_default_app_w, g_default_app_h);
+
+                if (g_focused_app >= 0 && g_focused_app < WM_MAX_APPS &&
+                    g_apps[g_focused_app].used && g_apps[g_focused_app].open &&
+                    app_task_running(g_apps[g_focused_app].task_id) &&
+                    vk_get_api()->vk_send_key)
+                {
+                    (void)vk_get_api()->vk_send_key((vk_u64)g_apps[g_focused_app].task_id, &evt);
+                }
 
                 /* Hard quit: Ctrl+Q (checked in raw events as well) */
                 if (evt.pressed &&
@@ -821,6 +979,7 @@ int main(int /*argc*/, char** /*argv*/)
         draw_info_window(&fb);
         draw_console_window();
         draw_shell_window();
+        draw_app_windows();
         draw_settings_window();
         draw_about_modal();
 
@@ -831,6 +990,27 @@ int main(int /*argc*/, char** /*argv*/)
         ImGui::Render();
         ImGui_ImplVK_RenderDrawData(ImGui::GetDrawData(), &fb);
 
+        vk_u32* screen = (vk_u32*)(vk_usize)fb.base;
+        for (int i = 0; i < WM_MAX_APPS; ++i) {
+            wm_app_window_t& app = g_apps[i];
+            if (!app.used || !app.open || !app.pixels || !app.snapshot) continue;
+            if (app.blit_x < 0 || app.blit_y < 0 || app.blit_w <= 0 || app.blit_h <= 0) continue;
+
+            VK_CALL(memcpy, app.snapshot, app.pixels, (vk_usize)app.w * app.h * sizeof(vk_u32));
+            for (int y = 0; y < app.blit_h; ++y) {
+                int dst_y = app.blit_y + y;
+                if (dst_y < 0 || dst_y >= (int)fb.height) continue;
+                vk_u32 src_y = (vk_u32)((y * (int)app.h) / app.blit_h);
+                for (int x = 0; x < app.blit_w; ++x) {
+                    int dst_x = app.blit_x + x;
+                    if (dst_x < 0 || dst_x >= (int)fb.width) continue;
+                    vk_u32 src_x = (vk_u32)((x * (int)app.w) / app.blit_w);
+                    screen[(vk_usize)dst_y * fb.stride + (vk_usize)dst_x] =
+                        app.snapshot[(vk_usize)src_y * app.w + (vk_usize)src_x];
+                }
+            }
+        }
+
         /* --- 6. Yield CPU slice back to the scheduler --- */
         vk_get_api()->vk_yield();
     }
@@ -838,6 +1018,11 @@ int main(int /*argc*/, char** /*argv*/)
     /* ---- Cleanup ---- */
     ImGui_ImplVK_Shutdown();
     ImGui::DestroyContext();
+
+    if (vk_get_api()->vk_set_compositor_active)
+        (void)vk_get_api()->vk_set_compositor_active(0u);
+    if (vk_get_api()->vk_set_compositor_default_fb)
+        (void)vk_get_api()->vk_set_compositor_default_fb(nullptr);
 
     VK_CALL(puts, "vgui: clean exit.\n");
     return 0;
