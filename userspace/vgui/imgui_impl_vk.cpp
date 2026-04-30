@@ -68,6 +68,16 @@ static bool g_blend_enabled = false;
 void ImGui_ImplVK_SetTransparencyEnabled(bool enabled) { g_blend_enabled = enabled; }
 bool ImGui_ImplVK_GetTransparencyEnabled()             { return g_blend_enabled; }
 
+static void framebuffer_image_callback(const ImDrawList*, const ImDrawCmd*) {}
+
+void ImGui_ImplVK_AddFramebufferImage(ImDrawList* draw_list,
+                                      const ImGui_ImplVK_FramebufferImage* image)
+{
+    if (!draw_list || !image || !image->pixels || image->width == 0 || image->height == 0)
+        return;
+    draw_list->AddCallback(framebuffer_image_callback, (void*)image, sizeof(*image));
+}
+
 /* ================================================================
  * Lifecycle
  * ================================================================ */
@@ -347,6 +357,57 @@ static inline void unpack_px(unsigned int px, vk_pixel_format_t fmt,
         *r = (px >> 16) & 0xFFu;
         *g = (px >>  8) & 0xFFu;
         *b = (px      ) & 0xFFu;
+    }
+}
+
+__attribute__((optimize("O2")))
+static void blit_framebuffer_image(const ImGui_ImplVK_FramebufferImage* image,
+                                   int clip_x0, int clip_y0, int clip_x1, int clip_y1,
+                                   float scale_x, float scale_y,
+                                   unsigned int* fb, int fb_w, int fb_h, int fb_stride,
+                                   vk_pixel_format_t dst_fmt)
+{
+    if (!image || !image->pixels || image->width == 0 || image->height == 0)
+        return;
+
+    int x0 = (int)(image->p_min.x * scale_x);
+    int y0 = (int)(image->p_min.y * scale_y);
+    int x1 = (int)(image->p_max.x * scale_x);
+    int y1 = (int)(image->p_max.y * scale_y);
+
+    if (x0 < clip_x0) x0 = clip_x0;
+    if (y0 < clip_y0) y0 = clip_y0;
+    if (x1 > clip_x1) x1 = clip_x1;
+    if (y1 > clip_y1) y1 = clip_y1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > fb_w) x1 = fb_w;
+    if (y1 > fb_h) y1 = fb_h;
+    if (x0 >= x1 || y0 >= y1)
+        return;
+
+    int dst_w = (int)((image->p_max.x - image->p_min.x) * scale_x);
+    int dst_h = (int)((image->p_max.y - image->p_min.y) * scale_y);
+    if (dst_w <= 0 || dst_h <= 0)
+        return;
+
+    int base_x = (int)(image->p_min.x * scale_x);
+    int base_y = (int)(image->p_min.y * scale_y);
+
+    for (int y = y0; y < y1; ++y) {
+        vk_u32 src_y = (vk_u32)(((y - base_y) * (int)image->height) / dst_h);
+        if (src_y >= image->height) src_y = image->height - 1;
+        const vk_u32* src_row = image->pixels + (vk_usize)src_y * image->stride;
+        unsigned int* dst_row = fb + (vk_usize)y * fb_stride;
+
+        for (int x = x0; x < x1; ++x) {
+            vk_u32 src_x = (vk_u32)(((x - base_x) * (int)image->width) / dst_w);
+            if (src_x >= image->width) src_x = image->width - 1;
+
+            unsigned int sr, sg, sb;
+            unpack_px(src_row[src_x], image->format, &sr, &sg, &sb);
+            dst_row[x] = pack_px(sr, sg, sb, dst_fmt);
+        }
     }
 }
 
@@ -868,7 +929,27 @@ void ImGui_ImplVK_RenderDrawData(ImDrawData* draw_data,
 
             /* User callbacks (e.g. custom rendering). */
             if (cmd.UserCallback) {
-                cmd.UserCallback(dl, &cmd);
+                int clip_x0 = (int)(cmd.ClipRect.x * scale_x);
+                int clip_y0 = (int)(cmd.ClipRect.y * scale_y);
+                int clip_x1 = (int)(cmd.ClipRect.z * scale_x);
+                int clip_y1 = (int)(cmd.ClipRect.w * scale_y);
+                if (clip_x0 < 0)  clip_x0 = 0;
+                if (clip_y0 < 0)  clip_y0 = 0;
+                if (clip_x1 > W)  clip_x1 = W;
+                if (clip_y1 > H)  clip_y1 = H;
+
+                if (cmd.UserCallback == framebuffer_image_callback &&
+                    cmd.UserCallbackData &&
+                    cmd.UserCallbackDataSize == (int)sizeof(ImGui_ImplVK_FramebufferImage) &&
+                    clip_x0 < clip_x1 && clip_y0 < clip_y1)
+                {
+                    const auto* image =
+                        (const ImGui_ImplVK_FramebufferImage*)cmd.UserCallbackData;
+                    blit_framebuffer_image(image, clip_x0, clip_y0, clip_x1, clip_y1,
+                                           scale_x, scale_y, pixels, W, H, S, fmt);
+                } else if (cmd.UserCallback != ImDrawCallback_ResetRenderState) {
+                    cmd.UserCallback(dl, &cmd);
+                }
                 continue;
             }
 

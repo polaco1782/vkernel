@@ -42,6 +42,7 @@ struct wm_app_window_t {
     vk_u32 h;
     vk_u32* pixels;
     vk_u32* snapshot;
+    vk_u32* verify;
     int blit_x;
     int blit_y;
     int blit_w;
@@ -728,6 +729,20 @@ static bool app_task_running(vk_i64 task_id)
     return false;
 }
 
+static void capture_app_snapshot(wm_app_window_t& app)
+{
+    if (!app.pixels || !app.snapshot || !app.verify) return;
+
+    vk_usize app_bytes = (vk_usize)app.w * app.h * sizeof(vk_u32);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        VK_CALL(memcpy, app.verify, app.pixels, app_bytes);
+        if (VK_CALL(memcmp, app.verify, app.pixels, app_bytes) == 0) {
+            VK_CALL(memcpy, app.snapshot, app.verify, app_bytes);
+            return;
+        }
+    }
+}
+
 static int find_free_app_slot()
 {
     for (int i = 0; i < WM_MAX_APPS; ++i)
@@ -754,12 +769,14 @@ static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h)
     app.h = h;
     app.pixels = (vk_u32*)VK_CALL(malloc, (vk_usize)w * h * sizeof(vk_u32));
     app.snapshot = (vk_u32*)VK_CALL(malloc, (vk_usize)w * h * sizeof(vk_u32));
-    if (!app.pixels || !app.snapshot) {
+    app.verify = (vk_u32*)VK_CALL(malloc, (vk_usize)w * h * sizeof(vk_u32));
+    if (!app.pixels || !app.snapshot || !app.verify) {
         log_add("Failed to allocate app surface.");
         return -1;
     }
     VK_CALL(memset, app.pixels, 0, (vk_usize)w * h * sizeof(vk_u32));
     VK_CALL(memset, app.snapshot, 0, (vk_usize)w * h * sizeof(vk_u32));
+    VK_CALL(memset, app.verify, 0, (vk_usize)w * h * sizeof(vk_u32));
 
     vk_framebuffer_info_t app_fb = {};
     app_fb.base = (vk_u64)(vk_usize)app.pixels;
@@ -826,6 +843,16 @@ static void draw_app_windows()
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(p0, p1, IM_COL32(8, 8, 8, 255));
+        capture_app_snapshot(app);
+        ImGui_ImplVK_FramebufferImage image = {};
+        image.pixels = app.snapshot;
+        image.width = app.w;
+        image.height = app.h;
+        image.stride = app.w;
+        image.format = VK_PIXEL_FORMAT_BGRX_8BPP;
+        image.p_min = p0;
+        image.p_max = p1;
+        ImGui_ImplVK_AddFramebufferImage(dl, &image);
         dl->AddRect(p0, p1, IM_COL32(180, 180, 180, 255));
 
         ImGui::End();
@@ -930,7 +957,12 @@ int main(int /*argc*/, char** /*argv*/)
 
                 /* F5 launches the framebuffer app. */
                 if (evt.pressed && evt.scancode == 0x3Fu)
+                    (void)launch_windowed_app("sr_cube.vbin", g_default_app_w, g_default_app_h);
+
+                // f6 launches the legacy blt-only app (tests fallback rendering path).
+                if (evt.pressed && evt.scancode == 0x40u)
                     (void)launch_windowed_app("doom.vbin", g_default_app_w, g_default_app_h);
+
 
                 if (g_focused_app >= 0 && g_focused_app < WM_MAX_APPS &&
                     g_apps[g_focused_app].used && g_apps[g_focused_app].open &&
@@ -989,27 +1021,6 @@ int main(int /*argc*/, char** /*argv*/)
         /* --- 5. Render --- */
         ImGui::Render();
         ImGui_ImplVK_RenderDrawData(ImGui::GetDrawData(), &fb);
-
-        vk_u32* screen = (vk_u32*)(vk_usize)fb.base;
-        for (int i = 0; i < WM_MAX_APPS; ++i) {
-            wm_app_window_t& app = g_apps[i];
-            if (!app.used || !app.open || !app.pixels || !app.snapshot) continue;
-            if (app.blit_x < 0 || app.blit_y < 0 || app.blit_w <= 0 || app.blit_h <= 0) continue;
-
-            VK_CALL(memcpy, app.snapshot, app.pixels, (vk_usize)app.w * app.h * sizeof(vk_u32));
-            for (int y = 0; y < app.blit_h; ++y) {
-                int dst_y = app.blit_y + y;
-                if (dst_y < 0 || dst_y >= (int)fb.height) continue;
-                vk_u32 src_y = (vk_u32)((y * (int)app.h) / app.blit_h);
-                for (int x = 0; x < app.blit_w; ++x) {
-                    int dst_x = app.blit_x + x;
-                    if (dst_x < 0 || dst_x >= (int)fb.width) continue;
-                    vk_u32 src_x = (vk_u32)((x * (int)app.w) / app.blit_w);
-                    screen[(vk_usize)dst_y * fb.stride + (vk_usize)dst_x] =
-                        app.snapshot[(vk_usize)src_y * app.w + (vk_usize)src_x];
-                }
-            }
-        }
 
         /* --- 6. Yield CPU slice back to the scheduler --- */
         vk_get_api()->vk_yield();

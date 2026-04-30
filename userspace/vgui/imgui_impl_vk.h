@@ -59,6 +59,21 @@ void ImGui_ImplVK_ProcessMouse(const vk_mouse_event_t* evt);
 void ImGui_ImplVK_RenderDrawData(ImDrawData* draw_data,
                                   const vk_framebuffer_info_t* fb);
 
+/* ---- External framebuffer image draw ---- */
+
+struct ImGui_ImplVK_FramebufferImage {
+    const vk_u32*       pixels;
+    vk_u32              width;
+    vk_u32              height;
+    vk_u32              stride;
+    vk_pixel_format_t   format;
+    ImVec2              p_min;
+    ImVec2              p_max;
+};
+
+void ImGui_ImplVK_AddFramebufferImage(ImDrawList* draw_list,
+                                      const ImGui_ImplVK_FramebufferImage* image);
+
 /* ---- Renderer options ---- */
 
 /*
