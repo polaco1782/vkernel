@@ -38,6 +38,10 @@ framework with SB16 and AC97 sound drivers, and ports of Doom and Dear ImGui.
 | IPC mechanism | ❌ Not yet implemented |
 | Virtual memory / demand paging | ❌ Not yet implemented |
 
+## but does it runs... DOOM?
+
+![Doom running on vkernel](ezgif-18b381ef53d12ba6.gif)
+
 ## Architecture
 
 ```

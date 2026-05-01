@@ -16,6 +16,7 @@ CFLAGS  += -fno-builtin
 CFLAGS  += -fno-stack-protector
 CFLAGS  += -fpie
 CFLAGS  += -m64
+CFLAGS  += -mno-red-zone
 CFLAGS  += -O2
 CFLAGS  += -Wall -Wextra
 CFLAGS  += -I$(USER_INCLUDE)

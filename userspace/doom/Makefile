@@ -27,6 +27,7 @@ CFLAGS  += -fno-builtin
 CFLAGS  += -fno-stack-protector
 CFLAGS  += -fpie
 CFLAGS  += -m64
+CFLAGS  += -mno-red-zone
 CFLAGS  += -ffunction-sections -fdata-sections
 ifdef DEBUG
 CFLAGS  += -Og -g3 -fno-omit-frame-pointer -DDEBUG

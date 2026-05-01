@@ -339,13 +339,124 @@ auto kernel_heap::allocate_zero(size_phys size) -> void* {
 }
 
 auto kernel_heap::allocate_zero_aligned(size_phys size, size_phys alignment) -> void* {
-    // allocate size + alignment bytes, then round up the returned pointer
-    // and store the original pointer before it for free()
-    void* raw = allocate_zero(size + alignment);
-    usize addr = reinterpret_cast<usize>(raw);
-    usize aligned = (addr + alignment - 1) & ~(alignment - 1);
-    return reinterpret_cast<void*>(aligned);
-    // NOTE: this leaks the prefix bytes — proper impl stores raw ptr before aligned ptr
+    if (size == 0) {
+        return null;
+    }
+
+    if (alignment <= 16) {
+        return allocate_zero(size);
+    }
+
+    if ((alignment & (alignment - 1)) != 0) {
+        return null;
+    }
+
+    lock_.acquire();
+
+    size = align_up(size, static_cast<usize>(16));
+
+    constexpr size_phys MIN_SPLIT_DATA_SIZE = 16;
+    const size_phys header_size = sizeof(heap_block);
+
+    auto block = free_list_;
+    while (block != null) {
+        if (block->used) {
+            block = block->next;
+            continue;
+        }
+
+        auto* old_next = block->next;
+        const usize block_addr = reinterpret_cast<usize>(block);
+        const usize data_start = block_addr + header_size;
+        const usize block_end = data_start + static_cast<usize>(block->size);
+
+        usize aligned_data = align_up(data_start, static_cast<usize>(alignment));
+
+        /*
+         * free() finds metadata immediately before the returned pointer.
+         * If aligning would leave a tiny unusable prefix, move to the next
+         * alignment slot so the prefix remains a valid free heap block.
+         */
+        while (true) {
+            const usize used_header_addr = aligned_data - header_size;
+            if (used_header_addr == block_addr) {
+                break;
+            }
+            if (used_header_addr >= data_start) {
+                const size_phys prefix_data_size =
+                    static_cast<size_phys>(used_header_addr - data_start);
+                if (prefix_data_size >= MIN_SPLIT_DATA_SIZE) {
+                    break;
+                }
+            }
+            if (aligned_data + static_cast<usize>(size) > block_end) {
+                break;
+            }
+            aligned_data += static_cast<usize>(alignment);
+        }
+
+        if (aligned_data < data_start) {
+            block = block->next;
+            continue;
+        }
+
+        const usize used_header_addr = aligned_data - header_size;
+        if (used_header_addr < block_addr || aligned_data + size > block_end) {
+            block = block->next;
+            continue;
+        }
+
+        const size_phys prefix_data_size =
+            static_cast<size_phys>(used_header_addr - data_start);
+        const size_phys suffix_total =
+            static_cast<size_phys>(block_end - (aligned_data + size));
+
+        heap_block* used_block = null;
+        if (prefix_data_size == 0 && used_header_addr == block_addr) {
+            used_block = block;
+        } else {
+            block->size = prefix_data_size;
+            used_block = reinterpret_cast<heap_block*>(used_header_addr);
+            used_block->prev = block;
+            used_block->next = old_next;
+            block->next = used_block;
+            if (old_next != null) {
+                old_next->prev = used_block;
+            }
+        }
+
+        used_block->used = true;
+
+        if (suffix_total > header_size + MIN_SPLIT_DATA_SIZE) {
+            auto* suffix = reinterpret_cast<heap_block*>(aligned_data + size);
+            suffix->size = suffix_total - header_size;
+            suffix->used = false;
+            suffix->prev = used_block;
+            suffix->next = old_next;
+
+            used_block->size = size;
+            used_block->next = suffix;
+            if (old_next != null) {
+                old_next->prev = suffix;
+            }
+        } else {
+            used_block->size =
+                static_cast<size_phys>(block_end - aligned_data);
+            used_block->next = old_next;
+            if (old_next != null) {
+                old_next->prev = used_block;
+            }
+        }
+
+        lock_.release();
+
+        void* ptr = reinterpret_cast<void*>(aligned_data);
+        memory::set(ptr, 0, size);
+        return ptr;
+    }
+
+    lock_.release();
+    return null;
 }
 
 /* Free kernel heap memory */

@@ -18,6 +18,7 @@ CXXFLAGS  += -fno-builtin
 CXXFLAGS  += -fno-stack-protector
 CXXFLAGS  += -fpie
 CXXFLAGS  += -m64
+CXXFLAGS  += -mno-red-zone
 CXXFLAGS  += -fno-exceptions
 CXXFLAGS  += -fno-rtti
 CXXFLAGS  += -nostdinc++

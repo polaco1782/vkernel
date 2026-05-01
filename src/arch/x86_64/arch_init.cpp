@@ -248,11 +248,6 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
             log::crash() << "  CR2 (fault addr): " << log::hex(static_cast<u64>(static_cast<unsigned long long>(read_cr2())), 1, true, false);
         }
 
-        if(vec == 13) {
-            u64 fault_va = regs->frame.rip + 0x85673 + 8; // RIP-relative: RIP + offset + insn_size
-            log::crash() << "  VMOVDQA source VA: " << log::hex(static_cast<u64>(fault_va), 1, true, false) << " (alignment mod 32 = " << fault_va % 32 << ")";
-        }
-
         /* Print instruction bytes at RIP for diagnosis */
         {
             char bytes_buf[16 * 3 + 1];
