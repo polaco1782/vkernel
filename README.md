@@ -38,10 +38,6 @@ framework with SB16 and AC97 sound drivers, and ports of Doom and Dear ImGui.
 | IPC mechanism | ❌ Not yet implemented |
 | Virtual memory / demand paging | ❌ Not yet implemented |
 
-## but does it runs... DOOM?
-
-![Doom running on vkernel](ezgif-18b381ef53d12ba6.gif)
-
 ## Architecture
 
 ```
@@ -398,6 +394,12 @@ Useful breakpoints: `efi_main`, `self_relocate`, `sched::start`,
 `ap_init_secondary`, `vk::panic`.
 
 On Windows: `run_qemu.bat Debug --debug` pauses the VM before boot.
+
+
+## but does it runs... DOOM?
+
+![Doom running on vkernel](ezgif-18b381ef53d12ba6.gif)
+
 
 ## Key Design Notes
 
