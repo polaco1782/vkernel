@@ -398,7 +398,7 @@ On Windows: `run_qemu.bat Debug --debug` pauses the VM before boot.
 
 ## but does it runs... DOOM?
 
-<video src="ezgif-18b381ef53d12ba6.mp4" autoplay muted loop playsinline controls></video>
+![Doom running on vkernel](doom.webp)
 
 
 ## Key Design Notes
