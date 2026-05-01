@@ -42,6 +42,7 @@ Thumbs.db
 # Toolchain (if built locally)
 toolchain/
 cross/
+memory/
 
 # Newlib source, build artifacts, and sysroot
 userspace/newlib/

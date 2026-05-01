@@ -188,7 +188,8 @@ static void draw_menu_bar()
     {
         ImGuiIO& io = ImGui::GetIO();
         char fps_buf[32];
-        snprintf(fps_buf, sizeof(fps_buf), "%.0f FPS", io.Framerate);
+        unsigned fps10 = (unsigned)(io.Framerate * 10.0f + 0.5f);
+        snprintf(fps_buf, sizeof(fps_buf), "%u.%u FPS", fps10 / 10, fps10 % 10);
         float w = ImGui::CalcTextSize(fps_buf).x + ImGui::GetStyle().ItemSpacing.x;
         ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - w);
         ImGui::TextDisabled("%s", fps_buf);
@@ -226,8 +227,10 @@ static void draw_info_window(const vk_framebuffer_info_t* fb)
     /* ---- Timing ---- */
     ImGui::SeparatorText("Timing");
     ImGuiIO& io = ImGui::GetIO();
-    ImGui::Text("Frame time  : %.2f ms",  io.DeltaTime * 1000.0f);
-    ImGui::Text("FPS         : %.1f",     io.Framerate);
+    unsigned frame_ms100 = (unsigned)(io.DeltaTime * 100000.0f + 0.5f); /* ms * 100 */
+    unsigned fps10 = (unsigned)(io.Framerate * 10.0f + 0.5f);
+    ImGui::Text("Frame time  : %u.%02u ms", frame_ms100 / 100, frame_ms100 % 100);
+    ImGui::Text("FPS         : %u.%u",      fps10 / 10, fps10 % 10);
 
     const vk_api_t* api  = vk_get_api();
     vk_u64          tick = api->vk_tick_count();
@@ -356,6 +359,28 @@ static void term_addf(const char* fmt, ...)
     term_add(tmp);
 }
 
+static void term_add_kobj_rpc(const char* req_json)
+{
+    char out[1536];
+    vk_kobj_rpc_json(req_json, out, sizeof(out));
+
+    char line[256];
+    int pos = 0;
+    for (int i = 0; out[i] != '\0'; ++i) {
+        if (out[i] == '\n' || pos >= (int)sizeof(line) - 1) {
+            line[pos] = '\0';
+            term_add(line);
+            pos = 0;
+            continue;
+        }
+        line[pos++] = out[i];
+    }
+    if (pos > 0) {
+        line[pos] = '\0';
+        term_add(line);
+    }
+}
+
 static void term_clear()
 {
     g_term_count = 0;
@@ -389,14 +414,12 @@ static void sh_version(const char*)
 
 static void sh_mem(const char*)
 {
-    term_add("[memory dump sent to kernel console]");
-    VK_CALL(dump_memory);
+    term_add_kobj_rpc("{\"op\":\"mem\"}");
 }
 
 static void sh_tasks(const char*)
 {
-    term_add("[task dump sent to kernel console]");
-    VK_CALL(dump_tasks);
+    term_add_kobj_rpc("{\"op\":\"tasks\"}");
 }
 
 static void sh_cat(const char* arg)
@@ -442,20 +465,12 @@ static void sh_clear(const char*) { term_clear(); }
 
 static void sh_uptime(const char*)
 {
-    vk_u64 ticks = VK_CALL(tick_count);
-    vk_u32 tps   = vk_get_api()->vk_ticks_per_sec();
-    if (tps == 0) tps = 1000;
-    vk_u64 sec   = ticks / tps;
-    term_addf("Uptime: %llus (%llu ticks, %u tps)",
-              (unsigned long long)sec,
-              (unsigned long long)ticks,
-              (unsigned)tps);
+    term_add_kobj_rpc("{\"op\":\"uptime\"}");
 }
 
 static void sh_reboot(const char*)
 {
-    term_add("Rebooting...");
-    VK_CALL(reboot);
+    term_add_kobj_rpc("{\"op\":\"reboot\"}");
 }
 
 static void sh_run(const char* arg)
@@ -481,10 +496,9 @@ static void sh_drvload(const char* arg)
         term_add("Usage: drvload <driver_name>");
         return;
     }
-    if (VK_CALL(drv_load, arg) == 0)
-        term_add("Driver loaded successfully.");
-    else
-        term_addf("Failed to load driver: %s", arg);
+    char req[256];
+    snprintf(req, sizeof(req), "{\"op\":\"drvload\",\"name\":\"%s\"}", arg);
+    term_add_kobj_rpc(req);
 }
 
 static void sh_drvunload(const char* arg)
@@ -494,10 +508,9 @@ static void sh_drvunload(const char* arg)
         term_add("Usage: drvunload <driver_name>");
         return;
     }
-    if (VK_CALL(drv_unload, arg) == 0)
-        term_add("Driver unloaded.");
-    else
-        term_addf("Failed to unload driver: %s", arg);
+    char req[256];
+    snprintf(req, sizeof(req), "{\"op\":\"drvunload\",\"name\":\"%s\"}", arg);
+    term_add_kobj_rpc(req);
 }
 
 static void sh_exit(const char*)

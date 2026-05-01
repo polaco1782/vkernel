@@ -98,14 +98,11 @@ typedef struct vk_api {
     void* (*vk_memset)(void* dest, int c, vk_usize n);
     void* (*vk_memcpy)(void* dest, const void* src, vk_usize n);
     void* (*vk_memmove)(void* dest, const void* src, vk_usize n);
-    void* (*vk_memchr)(const void* ptr, int ch, vk_usize n);
     int   (*vk_memcmp)(const void* lhs, const void* rhs, vk_usize n);
-    void* (*vk_realloc)(void* ptr, vk_usize size);
 
     /* ---- filesystem / ramfs ---- */
     int         (*vk_file_exists)(const char* name);
     vk_usize    (*vk_file_size)(const char* name);
-    vk_usize    (*vk_file_read)(const char* name, void* buf, vk_usize buf_size);
 
     /* ---- process ---- */
     void (*vk_exit)(int code);
@@ -124,19 +121,11 @@ typedef struct vk_api {
     vk_usize         (*vk_file_write_handle)(vk_file_handle_t handle, const void* buf, vk_usize buf_size);
     int              (*vk_file_seek)(vk_file_handle_t handle, vk_i64 offset, int whence);
     vk_i64           (*vk_file_tell)(vk_file_handle_t handle);
-    int              (*vk_file_eof)(vk_file_handle_t handle);
-    int              (*vk_file_error)(vk_file_handle_t handle);
-    int              (*vk_file_flush)(vk_file_handle_t handle);
     int              (*vk_file_remove)(const char* path);
-    int              (*vk_file_rename)(const char* old_path, const char* new_path);
 
     /* ---- process utilities ---- */
     vk_i64 (*vk_run)(const char* path);
     vk_u64 (*vk_tick_count)(void);
-    void (*vk_dump_memory)(void);
-    void (*vk_dump_tasks)(void);
-    void (*vk_dump_idt)(void);
-    void (*vk_reboot)(void);
 
     /* ---- raw keyboard input ---- */
     int    (*vk_poll_key)(vk_key_event_t* out);
@@ -162,10 +151,6 @@ typedef struct vk_api {
     int  (*vk_snd_mix_is_playing)(int channel);
     void (*vk_snd_mix_update)(void);
 
-    /* ---- driver management ---- */
-    int  (*vk_drv_load)(const char* name);
-    int  (*vk_drv_unload)(const char* name);
-
     /* ---- mouse input ---- */
     int  (*vk_poll_mouse)(vk_mouse_event_t* out);
 
@@ -175,11 +160,13 @@ typedef struct vk_api {
     /* ---- compositor control ---- */
     int (*vk_set_compositor_active)(vk_u32 active);
     int (*vk_set_compositor_default_fb)(const vk_framebuffer_info_t* fb);
+    /* ---- kobj ---- */
+    vk_usize (*vk_kobj_rpc)(const char* req_json, char* out, vk_usize out_cap);
 
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 20ULL
+#define VK_API_VERSION 25ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

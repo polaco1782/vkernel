@@ -13,10 +13,9 @@
 #include "fs.h"
 #include "input.h"
 #include "scheduler.h"
-#include "arch/x86_64/arch.h"
 #include "sound.h"
-#include "driver.h"
 #include "process.h"
+#include "kobj.h"
 #include "vk.h"
 #include "process_internal.h"
 
@@ -25,6 +24,8 @@ namespace kernel_api {
 
 static auto current_console_interface() -> process::console_interface;
 static auto validate_fb(const vk_framebuffer_info_t* fb) -> bool;
+static void route_putc(char c);
+static void route_puts(const char* str);
 
 /* ============================================================
  * Kernel-side API stub functions
@@ -60,14 +61,6 @@ static int stub_file_exists(const char* name) {
 static vk_usize stub_file_size(const char* name) {
     const auto* f = ramfs::find(name);
     return f ? f->size : 0;
-}
-
-static vk_usize stub_file_read(const char* name, void* buf, vk_usize buf_size) {
-    const auto* f = ramfs::find(name);
-    if (!f || buf == null) return 0;
-    vk_usize to_copy = f->size < buf_size ? f->size : buf_size;
-    memory::copy(buf, f->data, to_copy);
-    return to_copy;
 }
 
 /* ---- process ---- */
@@ -139,24 +132,6 @@ static int stub_set_compositor_default_fb(const vk_framebuffer_info_t* fb) {
 
 static vk_u64 stub_tick_count() {
     return sched::tick_count();
-}
-
-static void stub_dump_memory() {
-    log::info() << "Physical allocator: total=" << g_phys_alloc.total_pages() << " pages, free=" << g_phys_alloc.free_pages() << " pages, used=" << g_phys_alloc.used_pages() << " pages, total RAM=" << (g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024) << " MB";
-
-    memory::dump_heap();
-}
-
-static void stub_dump_tasks() {
-    sched::dump_tasks();
-}
-
-static void stub_dump_idt() {
-    arch::dump_idt();
-}
-
-static void stub_reboot() {
-    arch::reboot();
 }
 
 static void stub_wait_task(vk_i64 task_id) {
@@ -236,18 +211,6 @@ static void stub_snd_mix_update() {
     sound::mix_update();
 }
 
-/* ---- driver management ---- */
-
-static int stub_drv_load(const char* name) {
-    if (name == null) return -1;
-    return driver::load(name);
-}
-
-static int stub_drv_unload(const char* name) {
-    if (name == null) return -1;
-    return driver::unload(name);
-}
-
 /* ---- mouse ---- */
 
 static auto should_use_framebuffer() -> bool;  /* defined below */
@@ -264,6 +227,14 @@ static int stub_poll_mouse(vk_mouse_event_t* out) {
 
 static vk_u32 stub_ticks_per_sec() {
     return SCHED_TICK_HZ;
+}
+
+static vk_usize stub_kobj_rpc(const char* req_json, char* out, vk_usize out_cap) {
+    if (out == null || out_cap == 0) return 0;
+    kobj::krpc(req_json, out, out_cap);
+    vk_usize len = 0;
+    while (len < out_cap && out[len] != '\0') ++len;
+    return len;
 }
 
 static auto current_console_interface() -> process::console_interface {
@@ -425,19 +396,6 @@ static void* stub_memmove(void* dest, const void* src, vk_usize n) {
     return dest;
 }
 
-static void* stub_memchr(const void* ptr, int ch, vk_usize n) {
-    const auto* p = static_cast<const unsigned char*>(ptr);
-    const unsigned char value = static_cast<unsigned char>(ch);
-
-    for (vk_usize i = 0; i < n; ++i) {
-        if (p[i] == value) {
-            return const_cast<unsigned char*>(p + i);
-        }
-    }
-
-    return null;
-}
-
 static int stub_memcmp(const void* lhs, const void* rhs, vk_usize n) {
     const auto* a = static_cast<const unsigned char*>(lhs);
     const auto* b = static_cast<const unsigned char*>(rhs);
@@ -449,32 +407,6 @@ static int stub_memcmp(const void* lhs, const void* rhs, vk_usize n) {
     }
 
     return 0;
-}
-
-static void* stub_realloc(void* ptr, vk_usize size) {
-    if (ptr == null) {
-        return g_kernel_heap.allocate(size);
-    }
-    if (size == 0) {
-        g_kernel_heap.free(ptr);
-        return null;
-    }
-
-    /* Recover the block size from the heap_block header preceding the data. */
-    auto* blk = reinterpret_cast<heap_block*>(
-        static_cast<u8*>(ptr) - sizeof(heap_block));
-    vk_usize old_size = blk->size;
-
-    if (size <= old_size) {
-        return ptr;           /* fits in current block */
-    }
-
-    void* new_ptr = g_kernel_heap.allocate(size);
-    if (new_ptr == null) return null;
-
-    memory::copy(new_ptr, ptr, old_size);
-    g_kernel_heap.free(ptr);
-    return new_ptr;
 }
 
 struct kernel_file_stream {
@@ -607,32 +539,8 @@ static vk_i64 stub_file_tell(vk_file_handle_t handle) {
     return static_cast<vk_i64>(stream->position);
 }
 
-static int stub_file_eof(vk_file_handle_t handle) {
-    auto* stream = handle_from_id(handle);
-    if (stream == null) return 1;
-    return stream->eof ? 1 : 0;
-}
-
-static int stub_file_error(vk_file_handle_t handle) {
-    auto* stream = handle_from_id(handle);
-    if (stream == null) return 1;
-    return stream->error ? 1 : 0;
-}
-
-static int stub_file_flush(vk_file_handle_t handle) {
-    auto* stream = handle_from_id(handle);
-    if (stream == null) return -1;
-    return 0;
-}
-
 static int stub_file_remove(const char* path) {
     (void)path;
-    return -1;
-}
-
-static int stub_file_rename(const char* old_path, const char* new_path) {
-    (void)old_path;
-    (void)new_path;
     return -1;
 }
 
@@ -664,13 +572,10 @@ void init() {
     s_api.vk_memset = stub_memset;
     s_api.vk_memcpy = stub_memcpy;
     s_api.vk_memmove = stub_memmove;
-    s_api.vk_memchr = stub_memchr;
     s_api.vk_memcmp = stub_memcmp;
-    s_api.vk_realloc = stub_realloc;
     /* filesystem */
     s_api.vk_file_exists = stub_file_exists;
     s_api.vk_file_size = stub_file_size;
-    s_api.vk_file_read = stub_file_read;
     /* process */
     s_api.vk_exit = stub_exit;
     s_api.vk_yield = stub_yield;
@@ -679,10 +584,6 @@ void init() {
     s_api.vk_run_auto = stub_run_auto;
     s_api.vk_run = stub_run;
     s_api.vk_tick_count = stub_tick_count;
-    s_api.vk_dump_memory = stub_dump_memory;
-    s_api.vk_dump_tasks = stub_dump_tasks;
-    s_api.vk_dump_idt = stub_dump_idt;
-    s_api.vk_reboot = stub_reboot;
     /* framebuffer */
     s_api.vk_framebuffer_info = route_framebuffer_info;
     /* file streams */
@@ -692,11 +593,7 @@ void init() {
     s_api.vk_file_write_handle = stub_file_write_handle;
     s_api.vk_file_seek = stub_file_seek;
     s_api.vk_file_tell = stub_file_tell;
-    s_api.vk_file_eof = stub_file_eof;
-    s_api.vk_file_error = stub_file_error;
-    s_api.vk_file_flush = stub_file_flush;
     s_api.vk_file_remove = stub_file_remove;
-    s_api.vk_file_rename = stub_file_rename;
     /* raw keyboard */
     s_api.vk_poll_key = route_poll_key;
     s_api.vk_send_key = stub_send_key;
@@ -715,9 +612,6 @@ void init() {
     s_api.vk_snd_mix_stop       = stub_snd_mix_stop;
     s_api.vk_snd_mix_is_playing = stub_snd_mix_is_playing;
     s_api.vk_snd_mix_update     = stub_snd_mix_update;
-    /* driver management */
-    s_api.vk_drv_load = stub_drv_load;
-    s_api.vk_drv_unload = stub_drv_unload;
     /* mouse */
     s_api.vk_poll_mouse = stub_poll_mouse;
     /* task stats */
@@ -725,6 +619,8 @@ void init() {
     /* compositor control */
     s_api.vk_set_compositor_active = stub_set_compositor_active;
     s_api.vk_set_compositor_default_fb = stub_set_compositor_default_fb;
+    /* kobj */
+    s_api.vk_kobj_rpc = stub_kobj_rpc;
 
     s_api_ready = true;
 }

@@ -16,6 +16,34 @@
 
 /* Freestanding: define what we need ourselves. */
 #define VK_NULL ((void*)0)
+#define SHELL_PROMPT "vk> "
+#define SHELL_HISTORY_MAX 8
+#define SHELL_LINE_MAX 256
+
+static const char* SHELL_COMMANDS[] = {
+    "help",
+    "version",
+    "mem",
+    "tasks",
+    "top",
+    "ls",
+    "get",
+    "set",
+    "watch",
+    "describe",
+    "cat",
+    "clear",
+    "uptime",
+    "reboot",
+    "idt",
+    "alloc",
+    "run",
+    "drvload",
+    "drvunload",
+    "panic",
+    "exit",
+    VK_NULL,
+};
 
 /* -------------------------------------------------------------------------
  * Freestanding string helpers
@@ -62,6 +90,7 @@ static const char* vk_skip_spaces(const char* s)
     return s;
 }
 
+
 static int shell_has_framebuffer(void)
 {
     vk_framebuffer_info_t fb;
@@ -104,6 +133,104 @@ static void shell_put_dec_width(vk_u64 value, vk_usize width)
         VK_CALL(putc, buf[--len]);
 }
 
+static char s_history[SHELL_HISTORY_MAX][SHELL_LINE_MAX];
+static vk_usize s_history_count = 0;
+
+static void shell_copy_line(char* dst, vk_usize dst_cap, const char* src)
+{
+    vk_usize i = 0;
+    if (dst_cap == 0) return;
+    while (src[i] && i < dst_cap - 1) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = '\0';
+}
+
+static void shell_history_add(const char* line)
+{
+    if (line[0] == '\0') return;
+    if (s_history_count > 0 &&
+        vk_strcmp(s_history[s_history_count - 1], line) == 0)
+        return;
+
+    if (s_history_count < SHELL_HISTORY_MAX) {
+        shell_copy_line(s_history[s_history_count++], SHELL_LINE_MAX, line);
+        return;
+    }
+
+    for (vk_usize i = 1; i < SHELL_HISTORY_MAX; ++i)
+        shell_copy_line(s_history[i - 1], SHELL_LINE_MAX, s_history[i]);
+    shell_copy_line(s_history[SHELL_HISTORY_MAX - 1], SHELL_LINE_MAX, line);
+}
+
+static void shell_redraw_line(const char* prompt, const char* buf, vk_usize old_len)
+{
+    VK_CALL(putc, '\r');
+    VK_CALL(puts, prompt);
+    for (vk_usize i = 0; i < old_len; ++i)
+        VK_CALL(putc, ' ');
+    VK_CALL(putc, '\r');
+    VK_CALL(puts, prompt);
+    VK_CALL(puts, buf);
+}
+
+static int shell_command_starts_with(const char* command, const char* prefix)
+{
+    while (*prefix) {
+        if (*command++ != *prefix++)
+            return 0;
+    }
+    return 1;
+}
+
+static void shell_complete_line(char* buf, vk_usize max, vk_usize* pos, const char* prompt)
+{
+    vk_usize token_len = 0;
+    vk_usize match_count = 0;
+    const char* match = VK_NULL;
+
+    while (token_len < *pos && buf[token_len] != ' ' && buf[token_len] != '\t')
+        ++token_len;
+    if (token_len != *pos)
+        return;
+
+    for (vk_usize i = 0; SHELL_COMMANDS[i] != VK_NULL; ++i) {
+        if (shell_command_starts_with(SHELL_COMMANDS[i], buf)) {
+            match = SHELL_COMMANDS[i];
+            ++match_count;
+        }
+    }
+
+    if (match_count == 1 && match != VK_NULL) {
+        vk_usize i = *pos;
+        while (match[i] && *pos < max - 1) {
+            buf[*pos] = match[i++];
+            VK_CALL(putc, buf[*pos]);
+            ++(*pos);
+        }
+        if (*pos < max - 1) {
+            buf[(*pos)++] = ' ';
+            VK_CALL(putc, ' ');
+        }
+        buf[*pos] = '\0';
+        return;
+    }
+
+    if (match_count > 1) {
+        VK_CALL(putc, '\n');
+        for (vk_usize i = 0; SHELL_COMMANDS[i] != VK_NULL; ++i) {
+            if (shell_command_starts_with(SHELL_COMMANDS[i], buf)) {
+                VK_CALL(puts, SHELL_COMMANDS[i]);
+                VK_CALL(puts, "  ");
+            }
+        }
+        VK_CALL(putc, '\n');
+        VK_CALL(puts, prompt);
+        VK_CALL(puts, buf);
+    }
+}
+
 /* -------------------------------------------------------------------------
  * Console I/O
  * ---------------------------------------------------------------------- */
@@ -113,9 +240,11 @@ static void shell_put_dec_width(vk_u64 value, vk_usize width)
  * Handles backspace/DEL and filters non-printable characters.
  * Returns the number of characters stored (not counting NUL).
  */
-static vk_usize console_getline(char* buf, vk_usize max)
+static vk_usize console_getline(char* buf, vk_usize max, const char* prompt)
 {
     vk_usize pos = 0;
+    vk_usize history_index = s_history_count;
+    vk_usize old_len = 0;
 
     while (pos < max - 1) {
         char c = VK_CALL(getc);
@@ -125,19 +254,56 @@ static vk_usize console_getline(char* buf, vk_usize max)
             break;
         }
 
+        if (c == '\t') {
+            shell_complete_line(buf, max, &pos, prompt);
+            old_len = pos;
+            continue;
+        }
+
+        if (c == 27) {
+            char c1 = VK_CALL(try_getc);
+            char c2 = VK_CALL(try_getc);
+            if (c1 == '[' && (c2 == 'A' || c2 == 'B')) {
+                if (c2 == 'A' && history_index > 0) {
+                    --history_index;
+                    shell_copy_line(buf, max, s_history[history_index]);
+                    pos = vk_strlen(buf);
+                    shell_redraw_line(prompt, buf, old_len);
+                    old_len = pos;
+                } else if (c2 == 'B') {
+                    if (history_index + 1 < s_history_count) {
+                        ++history_index;
+                        shell_copy_line(buf, max, s_history[history_index]);
+                    } else {
+                        history_index = s_history_count;
+                        buf[0] = '\0';
+                    }
+                    pos = vk_strlen(buf);
+                    shell_redraw_line(prompt, buf, old_len);
+                    old_len = pos;
+                }
+            }
+            continue;
+        }
+
         if ((c == 0x7F || c == '\b') && pos > 0) {
             --pos;
+            buf[pos] = '\0';
             VK_CALL(puts, "\b \b");
+            old_len = pos;
             continue;
         }
 
         if (c >= ' ' && c < 0x7F) {
             buf[pos++] = c;
+            buf[pos] = '\0';
             VK_CALL(putc, c);
+            old_len = pos;
         }
     }
 
     buf[pos] = '\0';
+    shell_history_add(buf);
     return pos;
 }
 
@@ -155,6 +321,10 @@ static void cmd_help(const char* arg)
     VK_CALL(puts, "  tasks        - Show scheduler tasks\n");
     VK_CALL(puts, "  top          - Show live CPU usage per task\n");
     VK_CALL(puts, "  ls           - Show staged files\n");
+    VK_CALL(puts, "  get <p>      - Read kobj value by path\n");
+    VK_CALL(puts, "  set <p> <v>  - Write kobj value by path\n");
+    VK_CALL(puts, "  watch <p> [ms]- Poll kobj value until keypress\n");
+    VK_CALL(puts, "  describe <p> - Show kobj node schema\n");
     VK_CALL(puts, "  cat <f>      - Print a ramfs file\n");
     VK_CALL(puts, "  clear        - Clear the screen\n");
     VK_CALL(puts, "  uptime       - Show tick count\n");
@@ -178,13 +348,13 @@ static void cmd_version(const char* arg)
 static void cmd_mem(const char* arg)
 {
     (void)arg;
-    VK_CALL(dump_memory);
+    vk_kobj_cmd_json("mem");
 }
 
 static void cmd_tasks(const char* arg)
 {
     (void)arg;
-    VK_CALL(dump_tasks);
+    vk_kobj_cmd_json("tasks");
 }
 
 #define TOP_MAX_TASKS 64
@@ -348,8 +518,102 @@ static void cmd_top(const char* arg)
 
 static void cmd_ls(const char* arg)
 {
-    (void)arg;
-    VK_CALL(puts, "TODO - Implement file listing\n");
+    const char* path = vk_skip_spaces(arg);
+    if (*path == '\0')
+        path = "";
+    vk_kobj_ls_text(path);
+}
+
+static void cmd_kget(const char* arg)
+{
+    const char* path = vk_skip_spaces(arg);
+    if (*path == '\0') {
+        VK_CALL(puts, "Usage: get <path>\n");
+        return;
+    }
+    vk_kobj_get_json(path);
+}
+
+static void cmd_kset(const char* arg)
+{
+    const char* path = vk_skip_spaces(arg);
+    if (*path == '\0') {
+        VK_CALL(puts, "Usage: set <path> <value>\n");
+        return;
+    }
+
+    const char* val = path;
+    while (*val && *val != ' ' && *val != '\t') ++val;
+    if (*val == '\0') {
+        VK_CALL(puts, "Usage: set <path> <value>\n");
+        return;
+    }
+
+    char path_buf[128];
+    vk_usize path_len = (vk_usize)(val - path);
+    vk_usize i;
+    for (i = 0; i < path_len && i < sizeof(path_buf) - 1; ++i)
+        path_buf[i] = path[i];
+    path_buf[i] = '\0';
+
+    val = vk_skip_spaces(val);
+    vk_kobj_set_json(path_buf, val);
+}
+
+static void cmd_kwatch(const char* arg)
+{
+    const char* path = vk_skip_spaces(arg);
+    if (*path == '\0') {
+        VK_CALL(puts, "Usage: watch <path> [interval_ms]\n");
+        return;
+    }
+
+    vk_u32 interval_ms = 1000;
+    const char* space = path;
+    while (*space && *space != ' ' && *space != '\t') ++space;
+    if (*space != '\0') {
+        const char* ms_str = vk_skip_spaces(space);
+        vk_u64 parsed = 0;
+        while (*ms_str >= '0' && *ms_str <= '9') {
+            parsed = parsed * 10ULL + (vk_u64)(*ms_str - '0');
+            ++ms_str;
+        }
+        if (parsed > 0 && parsed < 60000)
+            interval_ms = (vk_u32)parsed;
+    }
+
+    char path_buf[128];
+    vk_usize i;
+    vk_usize path_len = (vk_usize)(space - path);
+    for (i = 0; i < path_len && i < sizeof(path_buf) - 1; ++i)
+        path_buf[i] = path[i];
+    path_buf[i] = '\0';
+
+    VK_CALL(puts, "Watching ");
+    VK_CALL(puts, path_buf);
+    VK_CALL(puts, " (press any key to stop)\n");
+
+    for (;;) {
+        vk_u64 tps = VK_CALL(ticks_per_sec);
+        vk_u64 ticks = ((vk_u64)interval_ms * tps + 999ULL) / 1000ULL;
+        if (ticks == 0) ticks = 1;
+        vk_kobj_get_json(path_buf);
+        VK_CALL(sleep, ticks);
+        {
+            char c = VK_CALL(try_getc);
+            if (c != '\0') break;
+        }
+    }
+}
+
+static void cmd_kdescribe(const char* arg)
+{
+    const char* path = vk_skip_spaces(arg);
+    if (*path == '\0') {
+        VK_CALL(puts, "Usage: describe <path>\n");
+        return;
+    }
+    vk_kobj_describe_json(path);
 }
 
 static void cmd_cat(const char* arg)
@@ -388,25 +652,19 @@ static void cmd_clear(const char* arg)
 static void cmd_uptime(const char* arg)
 {
     (void)arg;
-    vk_u64 ticks = VK_CALL(tick_count);
-    VK_CALL(puts, "Uptime: ~");
-    VK_CALL(put_dec, ticks / 100ULL);
-    VK_CALL(puts, " seconds (");
-    VK_CALL(put_dec, ticks);
-    VK_CALL(puts, " ticks)\n");
+    vk_kobj_cmd_json("uptime");
 }
 
 static void cmd_reboot(const char* arg)
 {
     (void)arg;
-    VK_CALL(puts, "Rebooting...\n");
-    VK_CALL(reboot);
+    vk_kobj_cmd_json("reboot");
 }
 
 static void cmd_idt(const char* arg)
 {
     (void)arg;
-    VK_CALL(dump_idt);
+    vk_kobj_cmd_json("idt");
 }
 
 static void cmd_alloc(const char* arg)
@@ -514,13 +772,7 @@ static void cmd_drvload(const char* arg)
         VK_CALL(puts, "Example: drvload sb16.vko\n");
         return;
     }
-    if (VK_CALL(drv_load, name) == 0)
-        VK_CALL(puts, "Driver loaded successfully.\n");
-    else {
-        VK_CALL(puts, "Failed to load driver: ");
-        VK_CALL(puts, name);
-        VK_CALL(puts, "\n");
-    }
+    vk_kobj_named_cmd_json("drvload", name);
 }
 
 static void cmd_drvunload(const char* arg)
@@ -530,13 +782,7 @@ static void cmd_drvunload(const char* arg)
         VK_CALL(puts, "Usage: drvunload <driver_name>\n");
         return;
     }
-    if (VK_CALL(drv_unload, name) == 0)
-        VK_CALL(puts, "Driver unloaded.\n");
-    else {
-        VK_CALL(puts, "Failed to unload driver: ");
-        VK_CALL(puts, name);
-        VK_CALL(puts, "\n");
-    }
+    vk_kobj_named_cmd_json("drvunload", name);
 }
 
 static void cmd_panic(const char* arg)
@@ -594,6 +840,11 @@ static const exact_cmd_t EXACT_CMDS[] = {
 static const prefix_cmd_t PREFIX_CMDS[] = {
     { "cat ",       4,  cmd_cat       },
     { "top ",       4,  cmd_top       },
+    { "ls ",        3,  cmd_ls        },
+    { "get ",       4,  cmd_kget      },
+    { "set ",       4,  cmd_kset      },
+    { "watch ",     6,  cmd_kwatch    },
+    { "describe ",  9,  cmd_kdescribe },
     { "run ",       4,  cmd_run       },
     { "drvload ",   8,  cmd_drvload   },
     { "drvunload ", 10, cmd_drvunload },
@@ -663,7 +914,7 @@ static void read_startup_script(void)
                 if (*cmd == '#' || *cmd == '\0')
                     continue;
 
-                VK_CALL(puts, "vk> ");
+                VK_CALL(puts, SHELL_PROMPT);
                 VK_CALL(puts, cmd);
                 VK_CALL(puts, "\n");
                 parse_cmdline(cmd);
@@ -681,7 +932,7 @@ static void read_startup_script(void)
         line[line_pos] = '\0';
         const char* cmd = vk_skip_spaces(line);
         if (*cmd != '#' && *cmd != '\0') {
-            VK_CALL(puts, "vk> ");
+            VK_CALL(puts, SHELL_PROMPT);
             VK_CALL(puts, cmd);
             VK_CALL(puts, "\n");
             parse_cmdline(cmd);
@@ -710,8 +961,8 @@ int _start(const vk_api_t* api)
 
     char line[256];
     for (;;) {
-        VK_CALL(puts, "vk> ");
-        vk_usize len = console_getline(line, sizeof(line));
+        VK_CALL(puts, SHELL_PROMPT);
+        vk_usize len = console_getline(line, sizeof(line), SHELL_PROMPT);
         if (len == 0)
             continue;
 

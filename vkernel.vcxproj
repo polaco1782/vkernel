@@ -92,6 +92,7 @@
     <ClCompile Include="src\core\fs.cpp" />
     <ClCompile Include="src\core\elf.cpp" />
     <ClCompile Include="src\core\kernel_api.cpp" />
+    <ClCompile Include="src\core\kobj.cpp" />
     <ClCompile Include="src\core\pe.cpp" />
     <ClCompile Include="src\core\process.cpp" />
     <ClCompile Include="src\core\scheduler.cpp" />
@@ -112,6 +113,7 @@
     <ClInclude Include="include\vkernel\console.h" />
     <ClInclude Include="include\vkernel\memory.h" />
     <ClInclude Include="include\vkernel\vk.h" />
+    <ClInclude Include="include\vkernel\kobj.h" />
     <ClInclude Include="include\vkernel\sound.h" />
     <ClInclude Include="include\vkernel\driver.h" />
     <ClInclude Include="include\vkernel\arch\x86_64\arch.h" />
