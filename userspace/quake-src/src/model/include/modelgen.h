@@ -1,0 +1,139 @@
+/*
+ * Copyright (C) 1996-1997 Id Software, Inc.
+ * Copyright (C) Henrique Barateli, <henriquejb194@gmail.com>, et al.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ */
+//
+// modelgen.h: header file for model generation program
+//
+
+// *********************************************************
+// * This file must be identical in the modelgen directory *
+// * and in the Quake directory, because it's used to      *
+// * pass data from one to the other via model files.      *
+// *********************************************************
+
+#ifndef __MODELGEN__
+#define __MODELGEN__
+
+#ifdef INCLUDELIBS
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+#include <string.h>
+
+#include "cmdlib.h"
+#include "scriplib.h"
+#include "trilib.h"
+#include "lbmlib.h"
+
+#endif
+
+#include "mathlib.h"
+
+#define ALIAS_VERSION 6
+
+#define ALIAS_ONSEAM 0x0020
+
+// must match definition in spritegn.h
+#ifndef SYNCTYPE_T
+#define SYNCTYPE_T
+typedef enum { ST_SYNC = 0, ST_RAND } synctype_t;
+#endif
+
+typedef enum { ALIAS_SINGLE = 0, ALIAS_GROUP } aliasframetype_t;
+
+typedef enum { ALIAS_SKIN_SINGLE = 0, ALIAS_SKIN_GROUP } aliasskintype_t;
+
+typedef struct {
+    i32 ident;
+    i32 version;
+    vec3_t scale;
+    vec3_t scale_origin;
+    float boundingradius;
+    vec3_t eyeposition;
+    i32 numskins;
+    i32 skinwidth;
+    i32 skinheight;
+    i32 numverts;
+    i32 numtris;
+    i32 numframes;
+    synctype_t synctype;
+    i32 flags;
+    float size;
+} mdl_t;
+
+// TODO: could be shorts
+
+typedef struct {
+    i32 onseam;
+    i32 s;
+    i32 t;
+} stvert_t;
+
+typedef struct dtriangle_s {
+    i32 facesfront;
+    i32 vertindex[3];
+} dtriangle_t;
+
+#define DT_FACES_FRONT 0x0010
+
+// This mirrors trivert_t in trilib.h, is present so Quake knows how to
+// load this data
+
+typedef struct {
+    byte v[3];
+    byte lightnormalindex;
+} trivertx_t;
+
+typedef struct {
+    trivertx_t bboxmin; // lightnormal isn't used
+    trivertx_t bboxmax; // lightnormal isn't used
+    char name[16];      // frame name from grabbing
+} daliasframe_t;
+
+typedef struct {
+    i32 numframes;
+    trivertx_t bboxmin; // lightnormal isn't used
+    trivertx_t bboxmax; // lightnormal isn't used
+} daliasgroup_t;
+
+typedef struct {
+    i32 numskins;
+} daliasskingroup_t;
+
+typedef struct {
+    float interval;
+} daliasinterval_t;
+
+typedef struct {
+    float interval;
+} daliasskininterval_t;
+
+typedef struct {
+    aliasframetype_t type;
+} daliasframetype_t;
+
+typedef struct {
+    aliasskintype_t type;
+} daliasskintype_t;
+
+#define IDPOLYHEADER (('O' << 24) + ('P' << 16) + ('D' << 8) + 'I')
+// little-endian "IDPO"
+
+#endif
