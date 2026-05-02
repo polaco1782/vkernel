@@ -25,7 +25,29 @@ qboolean isDedicated;
 
 /* ---------------------------------------------------------------
  * File I/O — thin wrappers around standard fopen/fread/fwrite
+ *
+ * VK has a flat ramfs: files are stored as bare names ("pak0.pak").
+ * Quake builds paths like "./id1/pak0.pak". We resolve by trying
+ * the full path first, then falling back to the basename.
  * --------------------------------------------------------------- */
+
+/* Return a pointer to the bare filename component (after last '/') */
+static const char *vk_basename(const char *path)
+{
+    const char *s = strrchr(path, '/');
+    return s ? s + 1 : path;
+}
+
+/* Try to open 'path'; if that fails, retry with just the basename. */
+static FILE *vk_fopen(const char *path, const char *mode)
+{
+    FILE *f = fopen(path, mode);
+    if (f) return f;
+    const char *base = vk_basename(path);
+    if (base != path)
+        f = fopen(base, mode);
+    return f;
+}
 
 #define MAX_HANDLES 10
 static FILE *sys_handles[MAX_HANDLES];
@@ -51,7 +73,7 @@ static i32 filelength(FILE *f)
 i32 Sys_FileOpenRead(char *path, i32 *hndl)
 {
     i32 i = findhandle();
-    FILE *f = fopen(path, "rb");
+    FILE *f = vk_fopen(path, "rb");
     if (!f) { *hndl = -1; return -1; }
     sys_handles[i] = f;
     *hndl = i;
@@ -61,7 +83,7 @@ i32 Sys_FileOpenRead(char *path, i32 *hndl)
 i32 Sys_FileOpenWrite(char *path)
 {
     i32 i = findhandle();
-    FILE *f = fopen(path, "wb");
+    FILE *f = vk_fopen(path, "wb");
     if (!f)
         Sys_Error("Error opening %s: %s", path, strerror(errno));
     sys_handles[i] = f;
@@ -91,7 +113,7 @@ size_t Sys_FileWrite(i32 handle, void *data, i32 count)
 
 i32 Sys_FileTime(char *path)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = vk_fopen(path, "rb");
     if (f) { fclose(f); return 1; }
     return -1;
 }

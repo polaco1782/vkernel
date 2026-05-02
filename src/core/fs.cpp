@@ -84,6 +84,20 @@ auto ramfs::find(string_view name) -> const file_entry* {
         if (g_files[i].valid && g_files[i].name.view().equals(name))
             return &g_files[i];
     }
+    /* Flat-filesystem fallback: VK has no subdirectories.
+     * "id1/pak0.pak" should find "pak0.pak". Search for the last '/'
+     * and retry with just the basename component. */
+    const char* last_slash = null;
+    for (usize i = 0; i < name.size(); ++i) {
+        if (name[i] == '/') last_slash = name.data() + i;
+    }
+    if (last_slash != null) {
+        string_view base(last_slash + 1, name.size() - static_cast<usize>(last_slash + 1 - name.data()));
+        for (usize i = 0; i < g_file_count; ++i) {
+            if (g_files[i].valid && g_files[i].name.view().equals(base))
+                return &g_files[i];
+        }
+    }
     return null;
 }
 
