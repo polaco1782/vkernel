@@ -187,6 +187,10 @@ public:
 
     auto init(void* base, size_phys size) -> status_code;
 
+    /* Extend the heap with an additional physically-contiguous region.
+     * The region must remain valid for the lifetime of the heap. */
+    auto add_region(void* base, size_phys size) -> status_code;
+
     auto allocate(size_phys size) -> void*;
 
     auto allocate_zero(size_phys size) -> void*;

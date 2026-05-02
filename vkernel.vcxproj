@@ -102,7 +102,6 @@
     <ClCompile Include="src\core\memory.cpp" />
     <ClCompile Include="src\core\driver.cpp" />
     <ClCompile Include="src\core\sound.cpp" />
-    <ClCompile Include="src\core\sound_sb16.cpp" />
     <ClCompile Include="src\arch\x86_64\arch_init.cpp" />
   </ItemGroup>
   <ItemGroup>

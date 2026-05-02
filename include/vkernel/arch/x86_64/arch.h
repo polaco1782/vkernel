@@ -244,6 +244,13 @@ auto disable_interrupts() -> void;
 auto halt() -> void;
 auto reboot() -> void;
 
+/* Walk the UEFI-provided identity-mapped 4-level page tables and ensure
+ * every present entry covering [base, base+size) has PTE_WRITABLE set.
+ * Non-present entries are skipped.  Modified TLB entries are flushed.
+ * Call this before writing to physical regions whose UEFI page-table
+ * attributes are unknown (e.g. EFI_BOOT_SERVICES_CODE mapped R/W=0). */
+void make_region_writable(phys_addr base, size_phys size);
+
 /*
  * Reload the BSP's GDT and IDT on an AP that started from the trampoline.
  * Must be called early in ap_init_secondary() before any C++ code that

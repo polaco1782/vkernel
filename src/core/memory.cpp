@@ -11,6 +11,7 @@
 #include "memory.h"
 #include "console.h"
 #include "log.h"
+#include "arch/x86_64/arch.h"
 
 namespace vk {
 
@@ -41,14 +42,6 @@ static void free_region_node(memory_region* node) {
 /* Physical allocator state */
 phys_allocator g_phys_alloc;
 
-/* Kernel heap - 64 MB initial heap */
-/* Must be 16-byte aligned so SSE/XMM constants in loaded PE images stay aligned */
-#if defined(_MSC_VER)
-__declspec(align(16))
-#else
-__attribute__((aligned(16)))
-#endif
-static u8 g_kernel_heap_memory[64 * 1024 * 1024];
 kernel_heap g_kernel_heap;
 
 /* Convert UEFI memory type to kernel memory type */
@@ -281,6 +274,38 @@ auto kernel_heap::init(void* base, size_phys size) -> status_code {
     return status_code::success;
 }
 
+/* Add a new physically-contiguous region to the heap's free list */
+auto kernel_heap::add_region(void* base, size_phys size) -> status_code {
+    if (base == null || size <= sizeof(heap_block)) {
+        return status_code::invalid_param;
+    }
+
+    auto* block  = reinterpret_cast<heap_block*>(base);
+    block->size  = size - sizeof(heap_block);
+    block->used  = false;
+    block->next  = null;
+    block->prev  = null;
+
+    lock_.acquire();
+
+    if (free_list_ == null) {
+        free_list_ = block;
+    } else {
+        auto* tail = free_list_;
+        while (tail->next != null) {
+            tail = tail->next;
+        }
+        tail->next  = block;
+        block->prev = tail;
+    }
+
+    lock_.release();
+
+    log::debug() << "heap: added region base=" << reinterpret_cast<const void*>(base) << ", +" << static_cast<unsigned long long>(size / (1024 * 1024)) << " MB";
+
+    return status_code::success;
+}
+
 /* Kernel heap allocation */
 auto kernel_heap::allocate(size_phys size) -> void* {
     if (size == 0) {
@@ -475,17 +500,19 @@ void kernel_heap::free(void* ptr) {
     );
     block->used = false;
     
-    /* Coalesce with next block if free */
-    if (block->next != null && !block->next->used) {
+    /* Coalesce with next block if free AND physically adjacent */
+    if (block->next != null && !block->next->used &&
+        block->end() == block->next) {
         block->size += block->next->size + sizeof(heap_block);
         block->next = block->next->next;
         if (block->next != null) {
             block->next->prev = block;
         }
     }
-    
-    /* Coalesce with previous block if free */
-    if (block->prev != null && !block->prev->used) {
+
+    /* Coalesce with previous block if free AND physically adjacent */
+    if (block->prev != null && !block->prev->used &&
+        block->prev->end() == block) {
         block->prev->size += block->size + sizeof(heap_block);
         block->prev->next = block->next;
         if (block->next != null) {
@@ -566,14 +593,64 @@ auto memory::init(span<const memory_map_entry> map) -> status_code {
     if (auto status = g_phys_alloc.init(map); status != status_code::success) {
         return status;
     }
-    
-    /* Initialize the kernel heap */
-    if (auto status = g_kernel_heap.init(g_kernel_heap_memory, sizeof(g_kernel_heap_memory)); 
-        status != status_code::success) {
-        return status;
+
+    /* ---------------------------------------------------------------
+     * Build the kernel heap from all free physical memory.
+     *
+     * Physical addresses are valid as virtual addresses here because
+     * UEFI's identity-mapped page tables are still active.
+     * --------------------------------------------------------------- */
+    bool heap_initialized = false;
+    size_phys heap_bytes  = 0;
+
+    for (u32 i = 0; i < g_memory_map_count; ++i) {
+        const auto& entry = g_memory_map[i];
+
+        const bool is_free =
+            entry.type == memory_type::conventional ||
+            entry.type == memory_type::boot_services_code ||
+            entry.type == memory_type::boot_services_data;
+
+        if (!is_free || entry.number_of_pages == 0) continue;
+
+        const u32 pages = static_cast<u32>(
+            entry.number_of_pages < 0xFFFFFFFFULL ? entry.number_of_pages : 0xFFFFFFFFU);
+
+        const phys_addr addr =
+            g_phys_alloc.allocate_pages(pages, PAGE_SIZE_4K, 0);
+        if (addr == 0) continue;
+
+        void*      base = reinterpret_cast<void*>(static_cast<u64>(addr));
+        size_phys  size = static_cast<size_phys>(pages) * PAGE_SIZE_4K;
+
+        /* Ensure every page in this region is writable in the UEFI page
+         * tables before we write heap_block metadata into them.  UEFI may
+         * map boot_services_code regions as R/W=0; with CR0.WP active that
+         * causes a protection fault on the very first heap header write. */
+        arch::make_region_writable(addr, size);
+
+        if (!heap_initialized) {
+            if (g_kernel_heap.init(base, size) != status_code::success) continue;
+            heap_initialized = true;
+        } else {
+            g_kernel_heap.add_region(base, size);
+        }
+        heap_bytes += size;
     }
-    
-    log::info() << "Memory subsystem initialized (" << static_cast<unsigned long long>(g_phys_alloc.total_pages()) << " pages total, " << static_cast<unsigned long long>((g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024)) << " MB)";
+
+    if (!heap_initialized) {
+        log::error() << "memory: no free physical memory above 16 MB for kernel heap";
+        return status_code::no_memory;
+    }
+
+    log::info() << "Memory subsystem initialized ("
+                << static_cast<unsigned long long>(g_phys_alloc.total_pages())
+                << " pages total, "
+                << static_cast<unsigned long long>(
+                       (g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024))
+                << " MB total, "
+                << static_cast<unsigned long long>(heap_bytes / (1024 * 1024))
+                << " MB heap)";
     
     return status_code::success;
 }

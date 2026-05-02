@@ -37,7 +37,7 @@ static void route_puts(const char* str);
 /* ---- memory ---- */
 
 static void* stub_malloc(vk_usize size) {
-    return g_kernel_heap.allocate(size);
+    return g_kernel_heap.allocate_zero(size);
 }
 
 static void stub_free(void* ptr) {

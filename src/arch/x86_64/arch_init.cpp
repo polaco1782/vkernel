@@ -482,8 +482,109 @@ void init_paging() {
 }
 
 /* ============================================================
- * Interrupt control
+ * make_region_writable — set R/W=1 in the UEFI identity-mapped
+ * 4-level page tables for a physical address range.
+ *
+ * UEFI maps EFI_BOOT_SERVICES_CODE regions as non-writable
+ * (R/W=0) in its page tables.  With CR0.WP active these pages
+ * cause a protection fault on any supervisor write.  This
+ * function walks the PML4→PDPT→PD→PT chain for every page
+ * in [base, base+size) and sets the R/W bit at every level.
+ * Non-present entries are skipped.  TLB entries for modified
+ * pages are flushed with INVLPG.
+ *
+ * Assumes identity mapping (virtual address == physical address).
  * ============================================================ */
+void make_region_writable(phys_addr base, size_phys size) {
+    if (size == 0) return;
+
+    /* Strip flags/XD bit; keep bits [51:12] as physical address. */
+    static constexpr u64 PA_MASK = 0x000FFFFFFFFFF000ULL;
+
+    /* Temporarily clear CR0.WP so we can write to page-table pages that
+     * UEFI itself mapped read-only (e.g. the PML4 / PDPT / PD pages).
+     * Without this, the first store to a PT entry faults because the page
+     * containing that PT entry may itself be non-writable.  We restore CR0
+     * exactly as we found it immediately after the walk. */
+    const u64 saved_cr0 = read_cr0();
+    write_cr0(saved_cr0 & ~CR0_WRITE_PROTECT);
+
+    auto* pml4 = reinterpret_cast<pml4e*>(
+        static_cast<usize>(read_cr3() & PA_MASK));
+
+    /* Align start down to a page boundary. */
+    phys_addr addr = align_down(base, static_cast<usize>(PAGE_SIZE_4K));
+    const phys_addr end = base + size;
+
+    while (addr < end) {
+        const u32 pml4_idx = static_cast<u32>((addr >> 39) & 0x1FF);
+        const u32 pdpt_idx = static_cast<u32>((addr >> 30) & 0x1FF);
+        const u32 pd_idx   = static_cast<u32>((addr >> 21) & 0x1FF);
+        const u32 pt_idx   = static_cast<u32>((addr >> 12) & 0x1FF);
+
+        /* ---- PML4 ---- */
+        if (!(pml4[pml4_idx] & PTE_PRESENT)) {
+            /* No PML4 entry — advance past entire 512 GB slot. */
+            addr = align_down(addr, static_cast<usize>(0x8000000000ULL))
+                   + 0x8000000000ULL;
+            continue;
+        }
+        pml4[pml4_idx] |= PTE_WRITABLE;
+
+        /* ---- PDPT ---- */
+        auto* pdpt = reinterpret_cast<pdpe*>(
+            static_cast<usize>(pml4[pml4_idx] & PA_MASK));
+
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT)) {
+            addr = align_down(addr, static_cast<usize>(PAGE_SIZE_1GB))
+                   + PAGE_SIZE_1GB;
+            continue;
+        }
+        if (pdpt[pdpt_idx] & PTE_HUGE) {
+            /* 1 GB huge page */
+            pdpt[pdpt_idx] |= PTE_WRITABLE;
+            invlpg(addr);
+            addr = align_down(addr, static_cast<usize>(PAGE_SIZE_1GB))
+                   + PAGE_SIZE_1GB;
+            continue;
+        }
+        pdpt[pdpt_idx] |= PTE_WRITABLE;
+
+        /* ---- PD ---- */
+        auto* pd = reinterpret_cast<pde*>(
+            static_cast<usize>(pdpt[pdpt_idx] & PA_MASK));
+
+        if (!(pd[pd_idx] & PTE_PRESENT)) {
+            addr = align_down(addr, static_cast<usize>(PAGE_SIZE_2MB))
+                   + PAGE_SIZE_2MB;
+            continue;
+        }
+        if (pd[pd_idx] & PTE_HUGE) {
+            /* 2 MB huge page (most common in OVMF) */
+            pd[pd_idx] |= PTE_WRITABLE;
+            invlpg(addr);
+            addr = align_down(addr, static_cast<usize>(PAGE_SIZE_2MB))
+                   + PAGE_SIZE_2MB;
+            continue;
+        }
+        pd[pd_idx] |= PTE_WRITABLE;
+
+        /* ---- PT ---- */
+        auto* pt = reinterpret_cast<pte*>(
+            static_cast<usize>(pd[pd_idx] & PA_MASK));
+
+        if (pt[pt_idx] & PTE_PRESENT) {
+            pt[pt_idx] |= PTE_WRITABLE;
+            invlpg(addr);
+        }
+        addr += PAGE_SIZE_4K;
+    }
+
+    /* Restore CR0 (re-enables WP if it was set on entry). */
+    write_cr0(saved_cr0);
+}
+
+
 
 auto enable_interrupts() -> void {
     asm_sti();
