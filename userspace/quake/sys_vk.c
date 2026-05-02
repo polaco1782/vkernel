@@ -83,7 +83,7 @@ i32 Sys_FileOpenRead(char *path, i32 *hndl)
 i32 Sys_FileOpenWrite(char *path)
 {
     i32 i = findhandle();
-    FILE *f = vk_fopen(path, "wb");
+    FILE *f = fopen(path, "wb");
     if (!f)
         Sys_Error("Error opening %s: %s", path, strerror(errno));
     sys_handles[i] = f;
