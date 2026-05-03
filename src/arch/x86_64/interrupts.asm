@@ -154,12 +154,14 @@ isr_common PROC
     pop r14
     pop r15
 
-    ; Restore segment registers without corrupting RAX
+    ; Clear segment selectors without corrupting RAX.
+    ; Long-mode kernel tasks do not use FS/GS selectors for TLS. Reloading
+    ; saved selector slots here can #GP if a task stack or stale frame holds
+    ; a non-present selector, so keep them at the known-safe null selector.
     ; Stack: [FS][GS][int_no][error_code][iretq frame]
     push rax                     ; temporarily save restored RAX
-    mov  rax, [rsp + 8]          ; read FS value
+    xor  rax, rax
     mov  fs, ax
-    mov  rax, [rsp + 16]         ; read GS value
     mov  gs, ax
     pop  rax                     ; restore RAX
 

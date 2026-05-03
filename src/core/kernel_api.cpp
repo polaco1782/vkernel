@@ -36,12 +36,103 @@ static void route_puts(const char* str);
 
 /* ---- memory ---- */
 
+static constexpr usize PROCESS_ALLOC_GUARD_SIZE = PAGE_SIZE_4K;
+
+static void free_process_allocation_pages(void* ptr, usize size) {
+    if (ptr == null || size == 0) {
+        return;
+    }
+
+    u32 page_count = static_cast<u32>((size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
+    g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(ptr), page_count);
+}
+
 static void* stub_malloc(vk_usize size) {
-    return g_kernel_heap.allocate_zero(size);
+    if (size == 0) {
+        return null;
+    }
+
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx == null) {
+        return g_kernel_heap.allocate_zero(size);
+    }
+
+    const usize requested = static_cast<usize>(size);
+    const usize rounded = align_up(requested, static_cast<usize>(16));
+    if (rounded < requested || rounded > ~static_cast<usize>(0) - PROCESS_ALLOC_GUARD_SIZE) {
+        return null;
+    }
+
+    const usize allocated = rounded + PROCESS_ALLOC_GUARD_SIZE;
+    bool from_phys = false;
+    void* raw = g_kernel_heap.allocate_zero(allocated);
+    if (raw == null) {
+        const u32 page_count = static_cast<u32>(
+            (allocated + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
+        phys_addr phys = g_phys_alloc.allocate_pages(page_count, PAGE_SIZE_4K, 0);
+        if (phys == 0) {
+            return null;
+        }
+        raw = reinterpret_cast<void*>(phys);
+        memory::set(raw, 0, static_cast<size_phys>(page_count) * PAGE_SIZE_4K);
+        from_phys = true;
+    }
+
+    auto* rec = static_cast<process::process_allocation*>(
+        g_kernel_heap.allocate_zero(sizeof(process::process_allocation)));
+    if (rec == null) {
+        if (from_phys) {
+            free_process_allocation_pages(raw, allocated);
+        } else {
+            g_kernel_heap.free(raw);
+        }
+        return null;
+    }
+
+    rec->user_ptr = raw;
+    rec->raw_ptr = raw;
+    rec->requested_size = requested;
+    rec->allocated_size = allocated;
+    rec->from_phys = from_phys;
+    rec->next = ctx->allocations;
+    ctx->allocations = rec;
+
+    return rec->user_ptr;
 }
 
 static void stub_free(void* ptr) {
-    g_kernel_heap.free(ptr);
+    if (ptr == null) {
+        return;
+    }
+
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx == null) {
+        g_kernel_heap.free(ptr);
+        return;
+    }
+
+    process::process_allocation* prev = null;
+    auto* rec = ctx->allocations;
+    while (rec != null) {
+        if (rec->user_ptr == ptr) {
+            if (prev != null) {
+                prev->next = rec->next;
+            } else {
+                ctx->allocations = rec->next;
+            }
+            if (rec->from_phys) {
+                free_process_allocation_pages(rec->raw_ptr, rec->allocated_size);
+            } else {
+                g_kernel_heap.free(rec->raw_ptr);
+            }
+            g_kernel_heap.free(rec);
+            return;
+        }
+        prev = rec;
+        rec = rec->next;
+    }
+
+    log::warn() << "process: ignoring free of unowned pointer " << reinterpret_cast<const void*>(ptr);
 }
 
 static void* stub_memset(void* dest, int c, vk_usize n) {
@@ -90,7 +181,7 @@ static vk_i64 stub_run(const char* path) {
 
 static vk_i64 stub_run_with_fb(const char* path, const vk_framebuffer_info_t* fb) {
     if (path == null || fb == null) return -1;
-    return process::run(path, current_console_interface(), fb);
+    return process::run(path, process::console_interface::graphical, fb);
 }
 
 static bool s_compositor_active = false;
@@ -100,7 +191,7 @@ static bool s_compositor_default_fb_valid = false;
 static vk_i64 stub_run_auto(const char* path) {
     if (path == null) return -1;
     if (s_compositor_active && s_compositor_default_fb_valid) {
-        return process::run(path, current_console_interface(), &s_compositor_default_fb);
+        return process::run(path, process::console_interface::graphical, &s_compositor_default_fb);
     }
     return process::run(path);
 }
@@ -217,12 +308,38 @@ static auto should_use_framebuffer() -> bool;  /* defined below */
 
 static int stub_poll_mouse(vk_mouse_event_t* out) {
     if (out == null || !should_use_framebuffer()) return 0;
+
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx != null && ctx->mouse_q_head != ctx->mouse_q_tail) {
+        *out = ctx->mouse_queue[ctx->mouse_q_tail];
+        ctx->mouse_q_tail = (ctx->mouse_q_tail + 1) % process::process_task_context::MOUSE_QUEUE_SIZE;
+        return 1;
+    }
+
+    if (ctx != null && ctx->fb_override_valid) {
+        return 0;
+    }
+
     vk_mouse_event_t ev{};
     if (input::poll_mouse(ev)) {
         *out = ev;
         return 1;
     }
     return 0;
+}
+
+static int stub_send_mouse(vk_u64 task_id, const vk_mouse_event_t* ev) {
+    if (ev == null) return 0;
+    auto* target = static_cast<process::process_task_context*>(sched::task_user_data(task_id));
+    if (target == null) return 0;
+
+    usize next = (target->mouse_q_head + 1) % process::process_task_context::MOUSE_QUEUE_SIZE;
+    if (next == target->mouse_q_tail) {
+        target->mouse_q_tail = (target->mouse_q_tail + 1) % process::process_task_context::MOUSE_QUEUE_SIZE;
+    }
+    target->mouse_queue[target->mouse_q_head] = *ev;
+    target->mouse_q_head = next;
+    return 1;
 }
 
 static vk_u32 stub_ticks_per_sec() {
@@ -322,6 +439,10 @@ static int route_poll_key(vk_key_event_t* out) {
         *out = ctx->key_queue[ctx->key_q_tail];
         ctx->key_q_tail = (ctx->key_q_tail + 1) % process::process_task_context::KEY_QUEUE_SIZE;
         return 1;
+    }
+
+    if (ctx != null && ctx->fb_override_valid) {
+        return 0;
     }
 
     vk_key_event_t ev{};
@@ -621,6 +742,8 @@ void init() {
     s_api.vk_set_compositor_default_fb = stub_set_compositor_default_fb;
     /* kobj */
     s_api.vk_kobj_rpc = stub_kobj_rpc;
+    /* input routing */
+    s_api.vk_send_mouse = stub_send_mouse;
 
     s_api_ready = true;
 }

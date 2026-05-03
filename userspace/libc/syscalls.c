@@ -79,12 +79,12 @@ static int _fd_valid(int fd)
 /* ============================================================
  * Heap — _sbrk
  *
- * We request one large arena from the kernel's malloc, and hand
- * it out linearly.  If the arena is exhausted we try to allocate
- * a second (larger) chunk.
+ * We request one arena from the kernel's malloc and hand it out linearly.
+ * Newlib malloc requires _sbrk to return one monotonic address space, so a
+ * non-contiguous growth allocation must fail instead of switching arenas.
  * ============================================================ */
 
-#define VK_HEAP_INITIAL_SIZE  (4 * 1024 * 1024)   /* 4 MiB */
+#define VK_HEAP_INITIAL_SIZE  (32 * 1024 * 1024)  /* 32 MiB */
 #define VK_HEAP_GROW_SIZE     (4 * 1024 * 1024)   /* 4 MiB increments */
 
 static char* _heap_start = 0;
@@ -93,6 +93,17 @@ static char* _heap_end   = 0;
 
 void* _sbrk(ptrdiff_t incr)
 {
+    if (incr < 0) {
+        if (_heap_start == 0 || _heap_ptr + incr < _heap_start) {
+            errno = EINVAL;
+            return (void*)-1;
+        }
+
+        char* prev = _heap_ptr;
+        _heap_ptr += incr;
+        return prev;
+    }
+
     /* First call — allocate the initial arena. */
     if (_heap_start == 0) {
         _heap_start = (char*)VK_CALL(malloc, VK_HEAP_INITIAL_SIZE);
@@ -130,12 +141,11 @@ void* _sbrk(ptrdiff_t incr)
         return prev;
     }
 
-    /* Non-contiguous — switch to the new block (wastes the tail of
-       the old one, but keeps things simple). */
-    _heap_start = extra;
-    _heap_ptr   = extra + incr;
-    _heap_end   = extra + grow;
-    return extra;
+    /* Newlib malloc assumes sbrk is a single monotonic address space.
+       Returning a non-contiguous arena corrupts malloc's view of the heap. */
+    VK_CALL(free, extra);
+    errno = ENOMEM;
+    return (void*)-1;
 }
 
 /* ============================================================

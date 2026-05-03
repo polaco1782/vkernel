@@ -160,12 +160,14 @@ isr_common:
     popq %r14
     popq %r15
 
-    /* Restore segment registers without corrupting RAX */
+    /* Clear segment selectors without corrupting RAX.
+     * Long-mode kernel tasks do not use FS/GS selectors for TLS.  Reloading
+     * saved selector slots here can #GP if a task stack or stale frame holds
+     * a non-present selector, so keep them at the known-safe null selector. */
     /* Stack: [FS][GS][int_no][error_code][iretq frame] */
     pushq %rax                   /* temporarily save restored RAX */
-    movq  8(%rsp), %rax          /* read FS value */
+    xorq  %rax, %rax
     movw  %ax, %fs
-    movq  16(%rsp), %rax         /* read GS value */
     movw  %ax, %gs
     popq  %rax                   /* restore RAX */
 

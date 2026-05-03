@@ -51,6 +51,23 @@ static volatile bool g_yield_in_progress[MAX_APIC_IDS];
  * they must not increment the global tick or sleep timers will run N× fast. */
 static u8 g_bsp_apic_id = 0;
 
+static constexpr usize FXSAVE_MXCSR_OFFSET      = 24;
+static constexpr usize FXSAVE_MXCSR_MASK_OFFSET = 28;
+static constexpr u32   FXSAVE_MXCSR_DEFAULT_MASK = 0x0000FFBFu;
+
+static void sanitize_fxsave_area(u8* area) {
+    auto* mxcsr = reinterpret_cast<u32*>(area + FXSAVE_MXCSR_OFFSET);
+    auto* mxcsr_mask = reinterpret_cast<u32*>(area + FXSAVE_MXCSR_MASK_OFFSET);
+
+    u32 valid_mask = *mxcsr_mask;
+    if (valid_mask == 0 || (valid_mask & ~FXSAVE_MXCSR_DEFAULT_MASK) != 0) {
+        valid_mask = FXSAVE_MXCSR_DEFAULT_MASK;
+        *mxcsr_mask = valid_mask;
+    }
+
+    *mxcsr &= valid_mask;
+}
+
 /* ============================================================
  * PIT (Programmable Interval Timer) helpers — 8254 chip
  * Channel 0 → IRQ 0 → IDT vector 32
@@ -387,8 +404,12 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         g_tasks[cur].rsp = reinterpret_cast<u64>(regs);
         /* Save x87/SSE state.  Without this, XMM register contents
          * leak across context switches and corrupt user processes
-         * that use SSE (e.g. doom, anything compiled with -msse2). */
-        arch::xsave(g_tasks[cur].xsave_area);
+         * that use SSE (e.g. doom, anything compiled with -msse2).
+         *
+         * FXSAVE/FXRSTOR is enough for the current userspace ABI and avoids
+         * XRSTOR #GPs if the extended-state header is stale or corrupted. */
+        arch::fxsave(g_tasks[cur].xsave_area);
+        sanitize_fxsave_area(g_tasks[cur].xsave_area);
         g_tasks[cur].xsave_valid = true;
         if (g_tasks[cur].state == task_state::running)
             g_tasks[cur].state = task_state::ready;
@@ -403,12 +424,13 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     cpu_set_current_task(next);
     g_tasks[next].state = task_state::running;
 
-    /* Restore the next task's x87/SSE/AVX state.  On the very first
+    /* Restore the next task's x87/SSE state.  On the very first
      * dispatch the task has never run yet, so xsave_valid is false
      * and we leave the FPU in its boot-time state (which the task
      * trampoline / entry point will initialise as needed). */
     if (g_tasks[next].xsave_valid) {
-        arch::xrstor(g_tasks[next].xsave_area);
+        sanitize_fxsave_area(g_tasks[next].xsave_area);
+        arch::fxrstor(g_tasks[next].xsave_area);
     }
 
     g_sched_lock.release();

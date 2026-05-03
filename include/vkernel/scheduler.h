@@ -30,7 +30,7 @@ enum class task_state : u8 {
  * Task Control Block (TCB)
  * ============================================================ */
 
-inline constexpr usize TASK_STACK_SIZE = 262144;  /* 256 KB per task (enough for Doom) */
+inline constexpr usize TASK_STACK_SIZE = 1048576; /* 1 MiB per task (Quake needs more headroom) */
 inline constexpr usize MAX_TASKS = 64;
 inline constexpr u32 SCHED_TICK_HZ = 100;        /* 10 ms scheduler tick */
 

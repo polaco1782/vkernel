@@ -440,7 +440,7 @@ int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
 
-    const char *filename = (argc > 1) ? argv[1] : "2nd_reality.s3m";
+    const char *filename = (argc > 1) ? argv[1] : "UNREALPM.S3M";
     int sample_rate = DEFAULT_SAMPLE_RATE;
     MODFILE mod;
 

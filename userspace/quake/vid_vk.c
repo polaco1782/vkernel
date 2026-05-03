@@ -53,9 +53,9 @@ static int fb_pixel_bytes; /* bytes per pixel in framebuffer */
 static u32 make_pixel(byte r, byte g, byte b)
 {
     if (vk_fb.format == VK_PIXEL_FORMAT_RGBX_8BPP)
-        return ((u32)r << 16) | ((u32)g << 8) | (u32)b;
-    else /* BGRX */
         return ((u32)b << 16) | ((u32)g << 8) | (u32)r;
+    else /* BGRX */
+        return ((u32)r << 16) | ((u32)g << 8) | (u32)b;
 }
 
 void VID_SetPalette(const byte *palette)
@@ -155,7 +155,7 @@ void VID_UpdateTexture(SDL_Texture *texture, vrect_t *rect)
     if (rx0 < 0) { rw1 += rx0; rx0 = 0; }
     if (ry0 < 0) { rh1 += ry0; ry0 = 0; }
     if (rx0 + rw1 > rw) rw1 = rw - rx0;
-    if (ry0 + rh1 > rh) rh1 = ry0 - ry0;
+    if (ry0 + rh1 > rh) rh1 = rh - ry0;
 
     /* Map render rect to framebuffer rect */
     int fx0 = (rx0 << 16) / x_scale;
@@ -166,7 +166,7 @@ void VID_UpdateTexture(SDL_Texture *texture, vrect_t *rect)
     if (fy1 > fh) fy1 = fh;
 
     u32 *fb = (u32 *)vk_fb.base;
-    u32 fb_stride_u32 = vk_fb.stride / 4;
+    u32 fb_stride_u32 = vk_fb.stride;
 
     for (int fy = fy0; fy < fy1; fy++) {
         int sy = ((fy * y_scale) >> 16);

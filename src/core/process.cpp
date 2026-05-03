@@ -18,6 +18,7 @@
 #include "fs.h"
 #include "input.h"
 #include "scheduler.h"
+#include "sound.h"
 #include "elf.h"
 #include "pe.h"
 #include "process.h"
@@ -46,6 +47,27 @@ static auto current_console_interface() -> console_interface {
 void cleanup_process_context(process_task_context* ctx, int exit_code) {
     log::printk() << "Process exited with code " << exit_code << "\n";
     log::debug() << "Cleaning up process context: entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(ctx->entry)), 1, true, false) << ", image_base=" << reinterpret_cast<const void*>(ctx->image_base) << ", image_size=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(ctx->image_size)), 1, true, false);
+
+    sound::mix_stop_range(ctx->image_base, ctx->image_size);
+    for (auto* alloc = ctx->allocations; alloc != null; alloc = alloc->next) {
+        sound::mix_stop_range(alloc->user_ptr, alloc->allocated_size);
+    }
+
+    auto* alloc = ctx->allocations;
+    while (alloc != null) {
+        auto* next = alloc->next;
+        if (alloc->from_phys) {
+            u32 page_count = static_cast<u32>(
+                (alloc->allocated_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
+            g_phys_alloc.free_pages(
+                reinterpret_cast<phys_addr>(alloc->raw_ptr), page_count);
+        } else {
+            g_kernel_heap.free(alloc->raw_ptr);
+        }
+        g_kernel_heap.free(alloc);
+        alloc = next;
+    }
+    ctx->allocations = null;
 
     if (ctx->image_from_phys) {
         u32 page_count = static_cast<u32>(
@@ -160,12 +182,15 @@ auto run(string_view filename, console_interface interface, const vk_framebuffer
     ctx->interface       = interface;
     ctx->key_q_head      = 0;
     ctx->key_q_tail      = 0;
+    ctx->mouse_q_head    = 0;
+    ctx->mouse_q_tail    = 0;
     ctx->fb_override     = fb_override ? *fb_override : vk_framebuffer_info_t{};
     ctx->fb_override_valid = fb_override != null
         && fb_override->valid != 0u
         && fb_override->base != 0u
         && fb_override->width > 0u
         && fb_override->height > 0u;
+    ctx->allocations = null;
 
 	// create a new task and pass the context as user data
     i64 task_id = sched::create_task(filename, process_task_main, ctx.get());

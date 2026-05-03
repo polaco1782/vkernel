@@ -25,7 +25,6 @@
 
 /* Saved state for DMA position tracking */
 static vk_u64 last_submit_tick = 0;
-static vk_u32 last_submit_tps  = 1;
 static int    last_submit_frames = 0;
 static int    last_submit_samplepos = 0;
 
@@ -74,7 +73,6 @@ qboolean SNDDMA_Init(dma_t *dma)
     VK_CALL(snd_set_volume, 255, 255);
 
     last_submit_tick     = 0;
-    last_submit_tps      = 1;
     last_submit_frames   = 0;
     last_submit_samplepos = 0;
 
@@ -92,7 +90,7 @@ int SNDDMA_GetDMAPos(void)
 
     /* How many frames have been consumed since last submit */
     vk_u64 elapsed = now - last_submit_tick;
-    int played_frames = (int)((elapsed * (vk_u64)last_submit_tps) / tps);
+    int played_frames = (int)((elapsed * (vk_u64)shm->speed) / tps);
     if (played_frames > last_submit_frames)
         played_frames = last_submit_frames;
 
@@ -147,7 +145,6 @@ void SNDDMA_Submit(void)
         chunk_frames = 1;
 
     last_submit_tick      = VK_CALL(tick_count);
-    last_submit_tps       = VK_CALL(ticks_per_sec);
     last_submit_frames    = chunk_frames;
     last_submit_samplepos = shm->samplepos;
 

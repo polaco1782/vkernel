@@ -37,6 +37,7 @@ static vk_u32 g_default_app_h = 200;
 struct wm_app_window_t {
     bool used;
     bool open;
+    bool focus_next;
     vk_i64 task_id;
     vk_u32 w;
     vk_u32 h;
@@ -55,6 +56,8 @@ static wm_app_window_t g_apps[WM_MAX_APPS];
 static int g_focused_app = -1;
 
 static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h);
+static int focused_app_index();
+static void clear_app_focus_if_window_focused();
 
 /* --- Counter widget --- */
 static int  g_counter        = 0;
@@ -213,6 +216,7 @@ static void draw_info_window(const vk_framebuffer_info_t* fb)
         ImGui::End();
         return;
     }
+    clear_app_focus_if_window_focused();
 
     /* ---- Framebuffer info ---- */
     ImGui::SeparatorText("Framebuffer");
@@ -294,6 +298,7 @@ static void draw_console_window()
         ImGui::End();
         return;
     }
+    clear_app_focus_if_window_focused();
 
     /* Scrolling text region. */
     float footer_h = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
@@ -596,6 +601,7 @@ static void draw_shell_window()
         ImGui::End();
         return;
     }
+    clear_app_focus_if_window_focused();
 
     /* --- Scrollable output region --- */
     float footer_h = ImGui::GetStyle().ItemSpacing.y
@@ -660,6 +666,7 @@ static void draw_settings_window()
         ImGui::End();
         return;
     }
+    clear_app_focus_if_window_focused();
 
     ImGui::SeparatorText("Appearance");
 
@@ -742,6 +749,26 @@ static bool app_task_running(vk_i64 task_id)
     return false;
 }
 
+static int focused_app_index()
+{
+    if (g_focused_app < 0 || g_focused_app >= WM_MAX_APPS)
+        return -1;
+
+    wm_app_window_t& app = g_apps[g_focused_app];
+    if (!app.used || !app.open || !app_task_running(app.task_id)) {
+        g_focused_app = -1;
+        return -1;
+    }
+
+    return g_focused_app;
+}
+
+static void clear_app_focus_if_window_focused()
+{
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+        g_focused_app = -1;
+}
+
 static void capture_app_snapshot(wm_app_window_t& app)
 {
     if (!app.pixels || !app.snapshot || !app.verify) return;
@@ -806,6 +833,7 @@ static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h)
     }
     app.used = true;
     app.open = true;
+    app.focus_next = true;
     app.task_id = task;
     app.blit_x = app.blit_y = -1;
     app.blit_w = app.blit_h = 0;
@@ -828,6 +856,10 @@ static void draw_app_windows()
         if (!app.open) continue;
 
         ImGui::SetNextWindowSize(ImVec2((float)app.w + 40.0f, (float)app.h + 80.0f), ImGuiCond_FirstUseEver);
+        if (app.focus_next) {
+            ImGui::SetNextWindowFocus();
+            app.focus_next = false;
+        }
         if (!ImGui::Begin(app.title, &app.open)) {
             ImGui::End();
             continue;
@@ -966,23 +998,19 @@ int main(int /*argc*/, char** /*argv*/)
         {
             vk_key_event_t evt;
             while (vk_get_api()->vk_poll_key(&evt)) {
-                ImGui_ImplVK_ProcessKey(&evt);
+                int focused = focused_app_index();
+                if (focused >= 0 && vk_get_api()->vk_send_key) {
+                    (void)vk_get_api()->vk_send_key((vk_u64)g_apps[focused].task_id, &evt);
+                } else {
+                    ImGui_ImplVK_ProcessKey(&evt);
 
-                /* F5 launches the framebuffer app. */
-                if (evt.pressed && evt.scancode == 0x3Fu)
-                    (void)launch_windowed_app("sr_cube.vbin", g_default_app_w, g_default_app_h);
+                    /* F5 launches the framebuffer app. */
+                    if (evt.pressed && evt.scancode == 0x3Fu)
+                        (void)launch_windowed_app("sr_cube.vbin", g_default_app_w, g_default_app_h);
 
-                // f6 launches the legacy blt-only app (tests fallback rendering path).
-                if (evt.pressed && evt.scancode == 0x40u)
-                    (void)launch_windowed_app("doom.vbin", g_default_app_w, g_default_app_h);
-
-
-                if (g_focused_app >= 0 && g_focused_app < WM_MAX_APPS &&
-                    g_apps[g_focused_app].used && g_apps[g_focused_app].open &&
-                    app_task_running(g_apps[g_focused_app].task_id) &&
-                    vk_get_api()->vk_send_key)
-                {
-                    (void)vk_get_api()->vk_send_key((vk_u64)g_apps[g_focused_app].task_id, &evt);
+                    /* F6 launches Doom in a managed window. */
+                    if (evt.pressed && evt.scancode == 0x40u)
+                        (void)launch_windowed_app("doom.vbin", g_default_app_w, g_default_app_h);
                 }
 
                 /* Hard quit: Ctrl+Q (checked in raw events as well) */
@@ -1000,6 +1028,10 @@ int main(int /*argc*/, char** /*argv*/)
             vk_mouse_event_t mev;
             while (vk_get_api()->vk_poll_mouse(&mev)) {
                 ImGui_ImplVK_ProcessMouse(&mev);
+                int focused = focused_app_index();
+                if (focused >= 0 && vk_get_api()->vk_send_mouse) {
+                    (void)vk_get_api()->vk_send_mouse((vk_u64)g_apps[focused].task_id, &mev);
+                }
             }
         }
 

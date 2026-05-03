@@ -279,9 +279,14 @@ auto efi_main(
         vk_panic(__FILE__, __LINE__, "Failed to launch serial shell!");
     }
 
-    /* Launch the graphical shell when framebuffer output is available. */
+    /* Launch the graphical shell when framebuffer output is available.
+     * Prefer vGUI: it owns framebuffer composition and routes input to
+     * managed app windows.  The classic shell remains the serial console
+     * and a graphical fallback for minimal builds. */
     if (fb_info.valid) {
         log::info() << "Launching graphical shell...";
+        //if (process::run("vgui.vbin", process::console_interface::graphical) < 0 &&
+        //    process::run("shell.vbin", process::console_interface::graphical) < 0) {
         if (process::run("shell.vbin", process::console_interface::graphical) < 0) {
             vk_panic(__FILE__, __LINE__, "Failed to launch graphical shell!");
         }

@@ -91,6 +91,7 @@ bool mix_play(int ch, const u8* data, u32 src_samples, sound_format fmt,
 void mix_stop(int ch);
 bool mix_is_playing(int ch);
 void mix_update();
+void mix_stop_range(const void* base, usize size);
 void mix_shutdown();
 
 } // namespace sound

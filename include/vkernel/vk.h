@@ -163,10 +163,13 @@ typedef struct vk_api {
     /* ---- kobj ---- */
     vk_usize (*vk_kobj_rpc)(const char* req_json, char* out, vk_usize out_cap);
 
+    /* ---- input routing ---- */
+    int (*vk_send_mouse)(vk_u64 task_id, const vk_mouse_event_t* ev);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 25ULL
+#define VK_API_VERSION 26ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

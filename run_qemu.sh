@@ -80,8 +80,9 @@ cp -va "userspace/doom/doom1.wad" "${ESP_VKERNEL}/doom1.wad"
 cp -va "userspace/doom/doom2.wad" "${ESP_VKERNEL}/doom2.wad"
 cp -va "userspace/shell/shell_exec.txt" "${ESP_VKERNEL}/shell.txt"
 cp -va "userspace/MODPlay/makemove.mod" "${ESP_VKERNEL}/makemove.mod"
-cp -va "userspace/MODPlay/2nd_reality.s3m" "${ESP_VKERNEL}/2nd_reality.s3m"
+cp -va "userspace/MODPlay/UNREALPM.S3M" "${ESP_VKERNEL}/UNREALPM.S3M"
 cp -va "userspace/rotozoom/head.bmp" "${ESP_VKERNEL}/head.bmp"
+cp -va "userspace/quake/pak0.pak" "${ESP_VKERNEL}/pak0.pak"
 
 touch ${ESP_VKERNEL}/../../ANAL.txt
 
