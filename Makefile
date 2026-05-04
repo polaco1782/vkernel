@@ -18,14 +18,13 @@ HELLO_VBIN      := $(USERSPACE_DIR)/hello/hello.vbin
 FRAMEBUFFER_VBIN := $(USERSPACE_DIR)/framebuffer/framebuffer.vbin
 FRAMEBUFFER_TEXT_VBIN := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.vbin
 RAYTRACER_VBIN := $(USERSPACE_DIR)/raytracer/raytracer.vbin
-RAMFS_READER_VBIN := $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.vbin
 SHELL_VBIN      := $(USERSPACE_DIR)/shell/shell.vbin
 DOOM_VBIN       := $(USERSPACE_DIR)/doom/doom.vbin
 MODPLAY_VBIN    := $(USERSPACE_DIR)/MODPlay/modplay.vbin
 ROTOZOOM_VBIN    := $(USERSPACE_DIR)/rotozoom/rotozoom.vbin
 VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
 SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(RAMFS_READER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN)
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -162,9 +161,6 @@ $(FRAMEBUFFER_TEXT_VBIN): $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.c $
 $(RAYTRACER_VBIN): $(USERSPACE_DIR)/raytracer/raytracer.c $(USERSPACE_DIR)/raytracer/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer $(_DEBUG_FLAG)
 
-$(RAMFS_READER_VBIN): $(USERSPACE_DIR)/ramfs_reader/ramfs_reader.cpp $(USERSPACE_DIR)/ramfs_reader/Makefile
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/ramfs_reader $(_DEBUG_FLAG)
-
 $(SHELL_VBIN): $(USERSPACE_DIR)/shell/shell.c $(USERSPACE_DIR)/shell/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell $(_DEBUG_FLAG)
 
@@ -201,7 +197,6 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer_text clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/ramfs_reader clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay clean

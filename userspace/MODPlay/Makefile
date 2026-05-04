@@ -10,6 +10,7 @@
 #   make clean
 
 CC      ?= gcc
+CXX     ?= g++
 OBJCOPY ?= objcopy
 
 USER_INCLUDE   := ../include
@@ -33,6 +34,26 @@ CFLAGS  += -Wall -Wextra
 CFLAGS  += -isystem $(SYSROOT)/include
 CFLAGS  += -I$(USER_INCLUDE)
 CFLAGS  += -I$(KERNEL_INCLUDE)
+
+CXXFLAGS := -std=c++17
+CXXFLAGS += -ffreestanding
+CXXFLAGS += -fno-builtin
+CXXFLAGS += -fno-stack-protector
+CXXFLAGS += -fpie
+CXXFLAGS += -m64
+CXXFLAGS += -mno-red-zone
+CXXFLAGS += -fno-exceptions
+CXXFLAGS += -fno-rtti
+CXXFLAGS += -nostdinc++
+ifdef DEBUG
+CXXFLAGS += -Og -g3 -fno-omit-frame-pointer -DDEBUG
+else
+CXXFLAGS += -O3 -DNDEBUG
+endif
+CXXFLAGS += -Wall -Wextra
+CXXFLAGS += -isystem $(SYSROOT)/include
+CXXFLAGS += -I$(USER_INCLUDE)
+CXXFLAGS += -I$(KERNEL_INCLUDE)
 # modplay.c uses USE_LINEAR_INTERPOLATION by default (comment out for speed)
 
 LDFLAGS := -nostdlib
@@ -46,17 +67,21 @@ LDFLAGS += -L$(LIBC_DIR)
 
 # Link order: crt0 → objects → --start-group (libc, glue, libgcc) --end-group
 CRT0   := $(LIBC_DIR)/crt0.o
-LIBS   := -Wl,--start-group -lvksys -lc -lm -lgcc -Wl,--end-group
+LIBS   := -Wl,--start-group -lvksys -lc -lstdc++ -lm -lgcc -Wl,--end-group
 
 TARGET := modplay.vbin
 
 LIBMODPLAY_SRCS := $(wildcard libmodplay/*.c)
-SRCS   := main_vk.c $(LIBMODPLAY_SRCS)
-OBJS   := $(SRCS:.c=.o)
+CPP_SRCS := main_vk.cpp
+OBJS   := $(CPP_SRCS:.cpp=.o) $(LIBMODPLAY_SRCS:.c=.o)
 
 .PHONY: all clean distclean
 
 all: $(TARGET)
+
+main_vk.o: main_vk.cpp
+	@echo "  CXX     $<"
+	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
 %.o: %.c
 	@echo "  CC      $<"
