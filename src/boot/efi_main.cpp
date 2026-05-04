@@ -257,6 +257,7 @@ auto efi_main(
      * active.  FAT32/VFS will start consuming block devices in the next
      * layer. */
     (void)driver::load("ata_pio");
+    (void)driver::load("ac97");
 
     /* Initialize the scheduler (sets up PIC + PIT) */
     if (auto status = sched::init(); status != status_code::success) {

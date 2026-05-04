@@ -97,6 +97,12 @@ static int32_t clamp_i16_range(int32_t value) {
     return value;
 }
 
+static int16_t apply_volume_divisor(int16_t sample, vk_u32 divisor) {
+    if (divisor <= 1)
+        return sample;
+    return static_cast<int16_t>(static_cast<int32_t>(sample) / static_cast<int32_t>(divisor));
+}
+
 static vk_u32 pack_pixel(const AppState* app, unsigned char r, unsigned char g, unsigned char b) {
     return (static_cast<vk_u32>(r) << 16) | (static_cast<vk_u32>(g) << 8) | static_cast<vk_u32>(b);
 }
@@ -154,13 +160,14 @@ static void audio_add_sample(AppState* app, vk_u32 frame_index, int32_t left, in
         app->audio.frame_frames = frame_index + 1;
 }
 
-static void audio_mix_chunk(AppState* app, AudioSourceState* source, const int16_t* samples, size_t total_frames, bool mono) {
+static void audio_mix_chunk(AppState* app, AudioSourceState* source, const int16_t* samples, size_t total_frames,
+                            bool mono, vk_u32 volume_divisor) {
     if (samples == nullptr || total_frames == 0 || source->source_rate == 0)
         return;
 
     size_t start_index = 0;
     if (!source->started) {
-        const int16_t first_left = mono ? samples[0] : samples[0];
+        const int16_t first_left = apply_volume_divisor(mono ? samples[0] : samples[0], volume_divisor);
         const int16_t first_right = mono ? first_left : samples[1];
         source->started = true;
         source->prev_left = first_left;
@@ -170,8 +177,8 @@ static void audio_mix_chunk(AppState* app, AudioSourceState* source, const int16
     }
 
     for (size_t frame = start_index; frame < total_frames; ++frame) {
-        const int16_t current_left = mono ? samples[frame] : samples[frame * 2];
-        const int16_t current_right = mono ? current_left : samples[frame * 2 + 1];
+        const int16_t current_left = apply_volume_divisor(mono ? samples[frame] : samples[frame * 2], volume_divisor);
+        const int16_t current_right = mono ? current_left : apply_volume_divisor(samples[frame * 2 + 1], volume_divisor);
 
         source->accumulator += kOutputSampleRate;
         while (source->accumulator >= source->source_rate) {
@@ -342,7 +349,7 @@ static void callback_fm_audio(void* user_data, ClownMDEmu* clownmdemu, size_t to
 
     memset(app->audio.fm_scratch, 0, total_frames * 2u * sizeof(int16_t));
     generate_fm_audio(clownmdemu, app->audio.fm_scratch, total_frames);
-    audio_mix_chunk(app, &app->audio.fm, app->audio.fm_scratch, total_frames, false);
+    audio_mix_chunk(app, &app->audio.fm, app->audio.fm_scratch, total_frames, false, CLOWNMDEMU_FM_VOLUME_DIVISOR);
 }
 
 static void callback_psg_audio(void* user_data, ClownMDEmu* clownmdemu, size_t total_frames,
@@ -355,7 +362,7 @@ static void callback_psg_audio(void* user_data, ClownMDEmu* clownmdemu, size_t t
 
     memset(app->audio.psg_scratch, 0, total_frames * sizeof(int16_t));
     generate_psg_audio(clownmdemu, app->audio.psg_scratch, total_frames);
-    audio_mix_chunk(app, &app->audio.psg, app->audio.psg_scratch, total_frames, true);
+    audio_mix_chunk(app, &app->audio.psg, app->audio.psg_scratch, total_frames, true, CLOWNMDEMU_PSG_VOLUME_DIVISOR);
 }
 
 static void callback_pcm_audio(void* user_data, ClownMDEmu* clownmdemu, size_t total_frames,

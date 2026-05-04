@@ -84,7 +84,9 @@ cp -va "userspace/MODPlay/makemove.mod" "${ESP_VKERNEL}/makemove.mod"
 cp -va "userspace/MODPlay/UNREALPM.S3M" "${ESP_VKERNEL}/UNREALPM.S3M"
 cp -va "userspace/rotozoom/head.bmp" "${ESP_VKERNEL}/head.bmp"
 cp -va "userspace/quake/pak0.pak" "${ESP_VKERNEL}/pak0.pak"
-cp -va "userspace/clownmdemu/sonic1.bin" "${ESP_VKERNEL}/sonic1.bin"
+if [ -f "userspace/clownmdemu/sonic1.bin" ]; then
+    cp -va "userspace/clownmdemu/sonic1.bin" "${ESP_VKERNEL}/sonic1.bin"
+fi
 
 # Writable OVMF_VARS
 cp "${OVMF_VARS}" "${NVRAM_FILE}"
@@ -116,6 +118,7 @@ echo ""
 exec ${QEMU} \
     -machine pc \
     -cpu host \
+    -smp 4 \
     -drive if=pflash,format=${PFLASH_FMT},readonly=on,file="${OVMF_CODE}" \
     -drive if=pflash,format=${PFLASH_FMT},file="${NVRAM_FILE}" \
     -drive if=ide,index=0,media=disk,format=raw,file="fat:rw:${ESP_ROOT}" \
