@@ -36,6 +36,18 @@ auto run(const char* filename, console_interface interface) -> i64;
 auto run(string_view filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64;
 auto run(const char* filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64;
 
+/*
+ * Launch a binary from a command line string.
+ * The first token is treated as the binary path; the full command line is
+ * recorded for userspace argv parsing.
+ */
+auto run_command_line(string_view command_line) -> i64;
+auto run_command_line(const char* command_line) -> i64;
+auto run_command_line(string_view command_line, console_interface interface) -> i64;
+auto run_command_line(const char* command_line, console_interface interface) -> i64;
+auto run_command_line(string_view command_line, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64;
+auto run_command_line(const char* command_line, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64;
+
 } // namespace process
 } // namespace vk
 

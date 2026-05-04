@@ -26,6 +26,7 @@ static auto current_console_interface() -> process::console_interface;
 static auto validate_fb(const vk_framebuffer_info_t* fb) -> bool;
 static void route_putc(char c);
 static void route_puts(const char* str);
+static auto dequeue_ascii_key(process::process_task_context* ctx) -> char;
 
 /* ============================================================
  * Kernel-side API stub functions
@@ -196,6 +197,16 @@ static vk_i64 stub_run_auto(const char* path) {
     return process::run(path);
 }
 
+static vk_i64 stub_run_cmdline(const char* command_line) {
+    if (command_line == null) return -1;
+    if (s_compositor_active && s_compositor_default_fb_valid) {
+        return process::run_command_line(command_line,
+                                         process::console_interface::graphical,
+                                         &s_compositor_default_fb);
+    }
+    return process::run_command_line(command_line, current_console_interface());
+}
+
 static int stub_set_compositor_active(vk_u32 active) {
     s_compositor_active = (active != 0u);
     return 1;
@@ -354,6 +365,29 @@ static vk_usize stub_kobj_rpc(const char* req_json, char* out, vk_usize out_cap)
     return len;
 }
 
+static vk_usize stub_get_cmdline(char* out, vk_usize out_cap) {
+    if (out == null || out_cap == 0) {
+        return 0;
+    }
+
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx == null) {
+        out[0] = '\0';
+        return 0;
+    }
+
+    vk_usize len = static_cast<vk_usize>(ctx->command_line_len);
+    if (len >= out_cap) {
+        len = out_cap - 1;
+    }
+
+    if (len > 0) {
+        memory::copy(out, ctx->command_line, len);
+    }
+    out[len] = '\0';
+    return len;
+}
+
 static auto current_console_interface() -> process::console_interface {
     auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
     if (ctx != null) {
@@ -369,8 +403,33 @@ static auto should_use_framebuffer() -> bool {
     return console::framebuffer().valid;
 }
 
+static auto dequeue_ascii_key(process::process_task_context* ctx) -> char {
+    while (ctx != null && ctx->key_q_head != ctx->key_q_tail) {
+        vk_key_event_t ev = ctx->key_queue[ctx->key_q_tail];
+        ctx->key_q_tail = (ctx->key_q_tail + 1) % process::process_task_context::KEY_QUEUE_SIZE;
+
+        if (ev.pressed == 0u) {
+            continue;
+        }
+        if (ev.ascii != '\0') {
+            return ev.ascii;
+        }
+
+        if (ev.scancode == 0x1Cu) return '\r';
+        if (ev.scancode == 0x0Eu) return '\b';
+        if (ev.scancode == 0x0Fu) return '\t';
+    }
+
+    return '\0';
+}
+
 static void route_putc(char c) {
     if (should_use_framebuffer()) {
+        auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+        if (ctx != null && ctx->fb_override_valid) {
+            console::putc_framebuffer_surface(ctx->fb_override, ctx->fb_text_col, ctx->fb_text_row, c);
+            return;
+        }
         console::putc_framebuffer(c);
     } else {
         console::putc_serial(c);
@@ -411,6 +470,11 @@ static void route_put_dec(vk_u64 value) {
 
 static void route_clear() {
     if (should_use_framebuffer()) {
+        auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+        if (ctx != null && ctx->fb_override_valid) {
+            console::clear_framebuffer_surface(ctx->fb_override, ctx->fb_text_col, ctx->fb_text_row);
+            return;
+        }
         console::clear_framebuffer();
     } else {
         console::clear_serial();
@@ -419,6 +483,16 @@ static void route_clear() {
 
 static char route_getc() {
     if (should_use_framebuffer()) {
+        auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+        if (ctx != null && ctx->fb_override_valid) {
+            while (true) {
+                char c = dequeue_ascii_key(ctx);
+                if (c != '\0') {
+                    return c;
+                }
+                sched::sleep(1);
+            }
+        }
         return input::getc_ps2();
     }
     return input::getc_serial();
@@ -426,6 +500,10 @@ static char route_getc() {
 
 static char route_try_getc() {
     if (should_use_framebuffer()) {
+        auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+        if (ctx != null && ctx->fb_override_valid) {
+            return dequeue_ascii_key(ctx);
+        }
         return input::try_getc_ps2();
     }
     return input::try_getc_serial();
@@ -473,6 +551,8 @@ static int stub_set_task_framebuffer(vk_u64 task_id, const vk_framebuffer_info_t
     if (target == null) return 0;
     target->fb_override = *fb;
     target->fb_override_valid = (fb->valid != 0u && fb->base != 0u && fb->width > 0u && fb->height > 0u);
+    target->fb_text_col = 0;
+    target->fb_text_row = 0;
     return target->fb_override_valid ? 1 : 0;
 }
 
@@ -703,6 +783,7 @@ void init() {
     s_api.vk_sleep = stub_sleep;
     s_api.vk_run_with_fb = stub_run_with_fb;
     s_api.vk_run_auto = stub_run_auto;
+    s_api.vk_run_cmdline = stub_run_cmdline;
     s_api.vk_run = stub_run;
     s_api.vk_tick_count = stub_tick_count;
     /* framebuffer */
@@ -744,6 +825,8 @@ void init() {
     s_api.vk_kobj_rpc = stub_kobj_rpc;
     /* input routing */
     s_api.vk_send_mouse = stub_send_mouse;
+    /* process command line */
+    s_api.vk_get_cmdline = stub_get_cmdline;
 
     s_api_ready = true;
 }

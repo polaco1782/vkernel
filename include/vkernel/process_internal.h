@@ -26,6 +26,7 @@ struct process_allocation {
 struct process_task_context {
     static constexpr usize KEY_QUEUE_SIZE = 64;
     static constexpr usize MOUSE_QUEUE_SIZE = 64;
+    static constexpr usize COMMAND_LINE_CAP = 256;
 
     u64   entry;
     u8*   image_base;
@@ -38,8 +39,12 @@ struct process_task_context {
     vk_mouse_event_t mouse_queue[MOUSE_QUEUE_SIZE];
     usize mouse_q_head;
     usize mouse_q_tail;
+    char command_line[COMMAND_LINE_CAP];
+    usize command_line_len;
     vk_framebuffer_info_t fb_override;
     bool fb_override_valid;
+    vk_u32 fb_text_col;
+    vk_u32 fb_text_row;
     process_allocation* allocations;
 };
 

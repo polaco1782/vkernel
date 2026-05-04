@@ -168,8 +168,8 @@ struct fb_state {
 static fb_state g_fb;
 
 /* Convert an RGB triplet to the framebuffer's native pixel word */
-static auto rgb_to_pixel(u8 r, u8 g, u8 b) -> u32 {
-    if (g_fb.fmt == uefi::pixel_format::rgbx_8bpp) {
+static auto rgb_to_pixel(uefi::pixel_format fmt, u8 r, u8 g, u8 b) -> u32 {
+    if (fmt == uefi::pixel_format::rgbx_8bpp) {
         return (static_cast<u32>(r)) |
                (static_cast<u32>(g) << 8) |
                (static_cast<u32>(b) << 16);
@@ -180,29 +180,39 @@ static auto rgb_to_pixel(u8 r, u8 g, u8 b) -> u32 {
            (static_cast<u32>(r) << 16);
 }
 
+static auto vk_to_uefi_format(vk_pixel_format_t fmt) -> uefi::pixel_format {
+    switch (fmt) {
+        case VK_PIXEL_FORMAT_RGBX_8BPP: return uefi::pixel_format::rgbx_8bpp;
+        case VK_PIXEL_FORMAT_BITMASK:   return uefi::pixel_format::bitmask;
+        case VK_PIXEL_FORMAT_BLT_ONLY:  return uefi::pixel_format::blt_only;
+        case VK_PIXEL_FORMAT_BGRX_8BPP:
+        default:                        return uefi::pixel_format::bgrx_8bpp;
+    }
+}
+
 /* Scroll the framebuffer up one text row */
-static void fb_scroll() {
-    u32 row_pixels = FONT_H * g_fb.stride;
+static void fb_scroll(fb_state& fb) {
+    u32 row_pixels = FONT_H * fb.stride;
     /* Move all rows up by one */
-    for (u32 y = 0; y < (g_fb.rows - 1) * FONT_H; ++y) {
-        u32* dst = g_fb.base + y * g_fb.stride;
-        const u32* src = g_fb.base + (y + FONT_H) * g_fb.stride;
-        for (u32 x = 0; x < g_fb.width; ++x) {
+    for (u32 y = 0; y < (fb.rows - 1) * FONT_H; ++y) {
+        u32* dst = fb.base + y * fb.stride;
+        const u32* src = fb.base + (y + FONT_H) * fb.stride;
+        for (u32 x = 0; x < fb.width; ++x) {
             dst[x] = src[x];
         }
     }
     /* Clear the last row */
-    for (u32 y = (g_fb.rows - 1) * FONT_H; y < g_fb.rows * FONT_H; ++y) {
-        u32* row = g_fb.base + y * g_fb.stride;
-        for (u32 x = 0; x < g_fb.width; ++x) {
-            row[x] = g_fb.bg;
+    for (u32 y = (fb.rows - 1) * FONT_H; y < fb.rows * FONT_H; ++y) {
+        u32* row = fb.base + y * fb.stride;
+        for (u32 x = 0; x < fb.width; ++x) {
+            row[x] = fb.bg;
         }
     }
     (void)row_pixels;
 }
 
 /* Draw one glyph at (col, row) in text-cell coordinates */
-static void fb_draw_char(u32 col, u32 row, char c) {
+static void fb_draw_char(fb_state& fb, u32 col, u32 row, char c) {
     u32 glyph_idx = (static_cast<u8>(c) >= 32 && static_cast<u8>(c) <= 127)
                   ? static_cast<u8>(c) - 32 : 0;
     const u8* glyph = k_font[glyph_idx];
@@ -212,51 +222,66 @@ static void fb_draw_char(u32 col, u32 row, char c) {
 
     for (u32 gy = 0; gy < FONT_H; ++gy) {
         u8 row_bits = glyph[gy];
-        u32* line = g_fb.base + (py + gy) * g_fb.stride + px;
+        u32* line = fb.base + (py + gy) * fb.stride + px;
         for (u32 gx = 0; gx < FONT_W; ++gx) {
-            line[gx] = (row_bits & (0x80 >> gx)) ? g_fb.fg : g_fb.bg;
+            line[gx] = (row_bits & (0x80 >> gx)) ? fb.fg : fb.bg;
         }
     }
 }
 
 /* Advance the cursor, scrolling if necessary */
-static void fb_advance() {
-    ++g_fb.col;
-    if (g_fb.col >= g_fb.cols) {
-        g_fb.col = 0;
-        ++g_fb.row;
-        if (g_fb.row >= g_fb.rows) {
-            fb_scroll();
-            g_fb.row = g_fb.rows - 1;
+static void fb_advance(fb_state& fb) {
+    ++fb.col;
+    if (fb.col >= fb.cols) {
+        fb.col = 0;
+        ++fb.row;
+        if (fb.row >= fb.rows) {
+            fb_scroll(fb);
+            fb.row = fb.rows - 1;
         }
     }
 }
 
-static void fb_putc(char c) {
+static void fb_putc(fb_state& fb, char c) {
     if (c == '\n') {
-        g_fb.col = 0;
-        ++g_fb.row;
-        if (g_fb.row >= g_fb.rows) {
-            fb_scroll();
-            g_fb.row = g_fb.rows - 1;
+        fb.col = 0;
+        ++fb.row;
+        if (fb.row >= fb.rows) {
+            fb_scroll(fb);
+            fb.row = fb.rows - 1;
         }
         return;
     }
     if (c == '\r') {
-        g_fb.col = 0;
+        fb.col = 0;
         return;
     }
     if (c == '\t') {
         /* Tab stop every 8 columns */
-        u32 next = (g_fb.col + 8) & ~7u;
-        while (g_fb.col < next) {
-            fb_draw_char(g_fb.col, g_fb.row, ' ');
-            fb_advance();
+        u32 next = (fb.col + 8) & ~7u;
+        while (fb.col < next) {
+            fb_draw_char(fb, fb.col, fb.row, ' ');
+            fb_advance(fb);
         }
         return;
     }
-    fb_draw_char(g_fb.col, g_fb.row, c);
-    fb_advance();
+    fb_draw_char(fb, fb.col, fb.row, c);
+    fb_advance(fb);
+}
+
+static void fb_clear(fb_state& fb) {
+    if (fb.base == null) {
+        return;
+    }
+
+    for (u32 y = 0; y < fb.height; ++y) {
+        u32* line = fb.base + y * fb.stride;
+        for (u32 x = 0; x < fb.width; ++x) {
+            line[x] = fb.bg;
+        }
+    }
+    fb.col = 0;
+    fb.row = 0;
 }
 
 /* ============================================================
@@ -306,16 +331,11 @@ void console::init_framebuffer(const uefi::framebuffer_info& fb) {
     g_fb.col    = 0;
     g_fb.row    = 0;
     g_fb.fmt    = fb.format;
-    g_fb.fg     = rgb_to_pixel(0xFF, 0xFF, 0xFF); /* white text */
-    g_fb.bg     = rgb_to_pixel(0x00, 0x00, 0x00); /* black background */
+    g_fb.fg     = rgb_to_pixel(g_fb.fmt, 0xFF, 0xFF, 0xFF); /* white text */
+    g_fb.bg     = rgb_to_pixel(g_fb.fmt, 0x00, 0x00, 0x00); /* black background */
 
     /* Clear screen */
-    for (u32 y = 0; y < fb.height; ++y) {
-        u32* line = g_fb.base + y * g_fb.stride;
-        for (u32 x = 0; x < fb.width; ++x) {
-            line[x] = g_fb.bg;
-        }
-    }
+    fb_clear(g_fb);
 }
 
 void console::switch_to_framebuffer() {
@@ -337,7 +357,7 @@ void console::putc_framebuffer(char c) {
     if (!g_use_fb || g_fb.base == null) {
         return;
     }
-    fb_putc(c);
+    fb_putc(g_fb, c);
 }
 
 void console::puts_framebuffer(const char* str) {
@@ -353,14 +373,66 @@ void console::clear_framebuffer() {
     if (!g_use_fb || g_fb.base == null) {
         return;
     }
-    for (u32 y = 0; y < g_fb.height; ++y) {
-        u32* line = g_fb.base + y * g_fb.stride;
-        for (u32 x = 0; x < g_fb.width; ++x) {
-            line[x] = g_fb.bg;
-        }
+    fb_clear(g_fb);
+}
+
+void console::putc_framebuffer_surface(const vk_framebuffer_info_t& fb,
+                                       u32& column,
+                                       u32& row,
+                                       char c) {
+    if (fb.valid == 0u || fb.base == 0u || fb.width == 0u || fb.height == 0u || fb.stride < fb.width) {
+        return;
     }
-    g_fb.col = 0;
-    g_fb.row = 0;
+
+    fb_state surface{};
+    surface.base = reinterpret_cast<u32*>(static_cast<u64>(fb.base));
+    surface.width = fb.width;
+    surface.height = fb.height;
+    surface.stride = fb.stride;
+    surface.cols = surface.width / FONT_W;
+    surface.rows = surface.height / FONT_H;
+    if (surface.cols == 0 || surface.rows == 0) {
+        return;
+    }
+
+    surface.col = column < surface.cols ? column : (surface.cols - 1);
+    surface.row = row < surface.rows ? row : (surface.rows - 1);
+    surface.fmt = vk_to_uefi_format(fb.format);
+    surface.fg = rgb_to_pixel(surface.fmt, 0xFF, 0xFF, 0xFF);
+    surface.bg = rgb_to_pixel(surface.fmt, 0x00, 0x00, 0x00);
+
+    fb_putc(surface, c);
+    column = surface.col;
+    row = surface.row;
+}
+
+void console::clear_framebuffer_surface(const vk_framebuffer_info_t& fb,
+                                        u32& column,
+                                        u32& row) {
+    if (fb.valid == 0u || fb.base == 0u || fb.width == 0u || fb.height == 0u || fb.stride < fb.width) {
+        return;
+    }
+
+    fb_state surface{};
+    surface.base = reinterpret_cast<u32*>(static_cast<u64>(fb.base));
+    surface.width = fb.width;
+    surface.height = fb.height;
+    surface.stride = fb.stride;
+    surface.cols = surface.width / FONT_W;
+    surface.rows = surface.height / FONT_H;
+    if (surface.cols == 0 || surface.rows == 0) {
+        return;
+    }
+
+    surface.col = 0;
+    surface.row = 0;
+    surface.fmt = vk_to_uefi_format(fb.format);
+    surface.fg = rgb_to_pixel(surface.fmt, 0xFF, 0xFF, 0xFF);
+    surface.bg = rgb_to_pixel(surface.fmt, 0x00, 0x00, 0x00);
+
+    fb_clear(surface);
+    column = surface.col;
+    row = surface.row;
 }
 
 /* Initialize the UEFI ConOut subsystem (pre-EBS phase) */
@@ -385,7 +457,7 @@ void console::putc(char c) {
     }
 
     if (g_use_fb) {
-        fb_putc(c);
+        fb_putc(g_fb, c);
         return; /* fb is now the primary visual output */
     }
 
@@ -474,8 +546,8 @@ void console::set_color(console_color foreground, console_color background) {
         u8 br = (palette[bi] >> 16) & 0xFF;
         u8 bg = (palette[bi] >>  8) & 0xFF;
         u8 bb = (palette[bi]      ) & 0xFF;
-        g_fb.fg = rgb_to_pixel(fr, fg, fb);
-        g_fb.bg = rgb_to_pixel(br, bg, bb);
+        g_fb.fg = rgb_to_pixel(g_fb.fmt, fr, fg, fb);
+        g_fb.bg = rgb_to_pixel(g_fb.fmt, br, bg, bb);
         return;
     }
 

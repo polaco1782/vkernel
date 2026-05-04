@@ -34,7 +34,67 @@ namespace {
 using process_image_ptr = kernel_allocation_ptr<u8>;
 using process_context_ptr = kernel_heap_ptr<process_task_context>;
 
+static auto is_ascii_space(char ch) -> bool {
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
+static auto parse_program_path(string_view command_line, static_string<128>& out_path) -> bool {
+    usize i = 0;
+    while (i < command_line.size() && is_ascii_space(command_line[i])) {
+        ++i;
+    }
+    if (i >= command_line.size()) {
+        return false;
+    }
+
+    char quote = '\0';
+    if (command_line[i] == '"' || command_line[i] == '\'') {
+        quote = command_line[i++];
+    }
+
+    usize start = i;
+    while (i < command_line.size()) {
+        char ch = command_line[i];
+        if (quote != '\0') {
+            if (ch == quote) {
+                break;
+            }
+        } else if (is_ascii_space(ch)) {
+            break;
+        }
+        ++i;
+    }
+
+    if (i <= start) {
+        return false;
+    }
+
+    return out_path.assign(string_view(command_line.data() + start, i - start));
+}
+
+static void copy_command_line(process_task_context* ctx,
+                              string_view command_line,
+                              string_view fallback_program) {
+    string_view source = command_line.empty() ? fallback_program : command_line;
+
+    usize len = source.size();
+    if (len >= process_task_context::COMMAND_LINE_CAP) {
+        len = process_task_context::COMMAND_LINE_CAP - 1;
+    }
+
+    if (len > 0) {
+        memory::copy(ctx->command_line, source.data(), len);
+    }
+    ctx->command_line[len] = '\0';
+    ctx->command_line_len = len;
+}
+
 } // namespace
+
+static auto run_impl(string_view filename,
+                     string_view command_line,
+                     console_interface interface,
+                     const vk_framebuffer_info_t* fb_override) -> i64;
 
 static auto current_console_interface() -> console_interface {
     auto* ctx = static_cast<process_task_context*>(sched::current_task_user_data());
@@ -105,6 +165,47 @@ auto run(string_view filename, console_interface interface) -> i64 {
 }
 
 auto run(string_view filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64 {
+    return run_impl(filename, filename, interface, fb_override);
+}
+
+auto run_command_line(string_view command_line) -> i64 {
+    return run_command_line(command_line, current_console_interface());
+}
+
+auto run_command_line(const char* command_line) -> i64 {
+    return run_command_line(string_view(command_line), current_console_interface());
+}
+
+auto run_command_line(string_view command_line, console_interface interface) -> i64 {
+    return run_command_line(command_line, interface, null);
+}
+
+auto run_command_line(const char* command_line, console_interface interface) -> i64 {
+    return run_command_line(string_view(command_line), interface, null);
+}
+
+auto run_command_line(string_view command_line,
+                      console_interface interface,
+                      const vk_framebuffer_info_t* fb_override) -> i64 {
+    static_string<128> program;
+    if (!parse_program_path(command_line, program)) {
+        log::warn() << "process: empty command line";
+        return -1;
+    }
+
+    return run_impl(program.view(), command_line, interface, fb_override);
+}
+
+auto run_command_line(const char* command_line,
+                      console_interface interface,
+                      const vk_framebuffer_info_t* fb_override) -> i64 {
+    return run_command_line(string_view(command_line), interface, fb_override);
+}
+
+static auto run_impl(string_view filename,
+                     string_view command_line,
+                     console_interface interface,
+                     const vk_framebuffer_info_t* fb_override) -> i64 {
     /* Look up the file in ramfs */
     const file_entry* f = ramfs::find(filename);
     if (f == null) {
@@ -184,12 +285,15 @@ auto run(string_view filename, console_interface interface, const vk_framebuffer
     ctx->key_q_tail      = 0;
     ctx->mouse_q_head    = 0;
     ctx->mouse_q_tail    = 0;
+    copy_command_line(ctx.get(), command_line, filename);
     ctx->fb_override     = fb_override ? *fb_override : vk_framebuffer_info_t{};
     ctx->fb_override_valid = fb_override != null
         && fb_override->valid != 0u
         && fb_override->base != 0u
         && fb_override->width > 0u
         && fb_override->height > 0u;
+    ctx->fb_text_col = 0;
+    ctx->fb_text_row = 0;
     ctx->allocations = null;
 
 	// create a new task and pass the context as user data

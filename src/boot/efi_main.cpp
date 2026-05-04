@@ -287,7 +287,7 @@ auto efi_main(
     if (fb_info.valid) {
         log::info() << "Launching graphical shell...";
         if (process::run("vgui.vbin", process::console_interface::graphical) < 0 &&
-            process::run("shell.vbin", process::console_interface::graphical) < 0) {
+            process::run_command_line("shell.vbin --startup", process::console_interface::graphical) < 0) {
             vk_panic(__FILE__, __LINE__, "Failed to launch graphical shell!");
         }
     } else {

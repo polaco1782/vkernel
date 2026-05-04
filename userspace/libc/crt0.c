@@ -34,6 +34,72 @@ extern _func_ptr __init_array_end[]      __attribute__((weak));
 extern _func_ptr __fini_array_start[]    __attribute__((weak));
 extern _func_ptr __fini_array_end[]      __attribute__((weak));
 
+#define VK_CMDLINE_MAX 256
+#define VK_ARGV_MAX    32
+
+static int is_ascii_space(char ch)
+{
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
+static int parse_argv(char* cmdline, char** argv, int max_args)
+{
+    int argc = 0;
+    char* read = cmdline;
+
+    while (*read != '\0' && argc + 1 < max_args) {
+        while (is_ascii_space(*read))
+            ++read;
+        if (*read == '\0')
+            break;
+
+        char* token = read;
+        char* write = read;
+        char quote = '\0';
+
+        while (*read != '\0') {
+            char ch = *read;
+
+            if (quote != '\0') {
+                if (ch == quote) {
+                    quote = '\0';
+                    ++read;
+                    continue;
+                }
+
+                if (ch == '\\' && read[1] == quote) {
+                    *write++ = quote;
+                    read += 2;
+                    continue;
+                }
+
+                *write++ = *read++;
+                continue;
+            }
+
+            if (ch == '"' || ch == '\'') {
+                quote = ch;
+                ++read;
+                continue;
+            }
+
+            if (is_ascii_space(ch))
+                break;
+
+            *write++ = *read++;
+        }
+
+        *write = '\0';
+        argv[argc++] = token;
+
+        while (is_ascii_space(*read))
+            ++read;
+    }
+
+    argv[argc] = (char*)0;
+    return argc;
+}
+
 void __libc_init_array(void)
 {
     if (__preinit_array_start) {
@@ -62,14 +128,23 @@ void __libc_fini_array(void)
  */
 int _start(const vk_api_t* api)
 {
+    char cmdline[VK_CMDLINE_MAX] = {0};
+    char* argv[VK_ARGV_MAX] = {0};
+    int argc = 0;
+
     /* 1. Store the kernel API pointer for all translation units. */
     _vk_api_ptr = api;
 
     /* 2. Run global constructors (C++ static init, newlib internals). */
     __libc_init_array();
 
-    /* 3. Call the user program.  No argc/argv support yet. */
-    int ret = main(0, (char**)0);
+    /* 3. Build argc/argv from the command line provided by the kernel. */
+    if (api != (const vk_api_t*)0 && api->vk_get_cmdline != 0) {
+        api->vk_get_cmdline(cmdline, (vk_usize)sizeof(cmdline));
+        argc = parse_argv(cmdline, argv, VK_ARGV_MAX);
+    }
+
+    int ret = main(argc, argv);
 
     /* 4. Run global destructors. */
     __libc_fini_array();

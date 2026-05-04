@@ -29,7 +29,6 @@ static bool g_show_info     = true;
 static bool g_show_console  = true;
 static bool g_show_settings = false;
 static bool g_show_demo     = false;
-static bool g_show_shell    = true;
 static bool g_show_task_manager = true;
 static bool g_open_about    = false;   /* one-shot: triggers OpenPopup */
 static vk_u32 g_default_app_w = 320;
@@ -91,8 +90,6 @@ static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h);
 static void refresh_launch_apps();
 static int focused_app_index();
 static void clear_app_focus_if_window_focused();
-static void term_add(const char* line);
-static void term_addf(const char* fmt, ...);
 
 /* --- Counter widget --- */
 static int  g_counter        = 0;
@@ -304,31 +301,6 @@ static void task_manager_refresh()
     if (g_task_total_cpu_percent > max_percent)
         g_task_total_cpu_percent = max_percent;
     task_manager_push_history(g_task_total_cpu_percent);
-}
-
-static void term_add_task_list()
-{
-    vk_task_info_t tasks[TASK_MANAGER_MAX_TASKS];
-    vk_usize total = VK_CALL(task_snapshot, tasks, TASK_MANAGER_MAX_TASKS);
-    vk_usize count = total < TASK_MANAGER_MAX_TASKS ? total : TASK_MANAGER_MAX_TASKS;
-
-    term_add("PID  CPU  STATE    CPU TICKS  NAME");
-    for (vk_usize i = 0; i < count; ++i) {
-        char cpu_buf[8];
-        char line[128];
-        format_task_cpu_label(tasks[i].cpu, cpu_buf, sizeof(cpu_buf));
-        snprintf(line, sizeof(line), "%3llu  %3s  %-7s  %8llu  %s",
-                 (unsigned long long)tasks[i].id,
-                 cpu_buf,
-                 task_state_label(tasks[i].state),
-                 (unsigned long long)tasks[i].cpu_ticks,
-                 tasks[i].name);
-        term_add(line);
-    }
-
-    if (total > count)
-        term_addf("... %llu more task(s) not shown.",
-                  (unsigned long long)(total - count));
 }
 
 static bool string_ends_with(const char* text, const char* suffix)
@@ -580,7 +552,6 @@ static void draw_menu_bar()
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Info Panel",   nullptr, &g_show_info);
         ImGui::MenuItem("Console",      nullptr, &g_show_console);
-        ImGui::MenuItem("Shell",        nullptr, &g_show_shell);
         ImGui::MenuItem("Task Manager", nullptr, &g_show_task_manager);
         ImGui::Separator();
         ImGui::MenuItem("ImGui Demo",   nullptr, &g_show_demo);
@@ -731,330 +702,6 @@ static void draw_console_window()
         log_clear();
     ImGui::SameLine();
     ImGui::TextDisabled("%d / %d lines", g_log_count, LOG_CAP);
-
-    ImGui::End();
-}
-
-/* ================================================================
- * Built-in shell terminal
- *
- * A scrollable text buffer with an input line.  Commands are parsed
- * and executed in-process using the kernel API — the output is
- * captured into the text buffer rather than going to the kernel
- * console.  This mirrors the standalone shell applet but renders
- * entirely inside the GUI.
- * ================================================================ */
-
-/* --- Terminal text buffer (ring of lines) --- */
-static const int  TERM_ROWS  = 512;
-static const int  TERM_COLS  = 256;
-static char       g_term_buf[512][256];
-static int        g_term_head  = 0;
-static int        g_term_count = 0;
-
-/* Append one line to the terminal buffer. */
-static void term_add(const char* line)
-{
-    strncpy(g_term_buf[g_term_head], line, TERM_COLS - 1);
-    g_term_buf[g_term_head][TERM_COLS - 1] = '\0';
-    g_term_head = (g_term_head + 1) % TERM_ROWS;
-    if (g_term_count < TERM_ROWS) ++g_term_count;
-}
-
-/* Printf into the terminal buffer. */
-static void term_addf(const char* fmt, ...)
-{
-    char tmp[256];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(tmp, sizeof(tmp), fmt, ap);
-    va_end(ap);
-    term_add(tmp);
-}
-
-static void term_add_kobj_rpc(const char* req_json)
-{
-    char out[1536];
-    vk_kobj_rpc_json(req_json, out, sizeof(out));
-
-    char line[256];
-    int pos = 0;
-    for (int i = 0; out[i] != '\0'; ++i) {
-        if (out[i] == '\n' || pos >= (int)sizeof(line) - 1) {
-            line[pos] = '\0';
-            term_add(line);
-            pos = 0;
-            continue;
-        }
-        line[pos++] = out[i];
-    }
-    if (pos > 0) {
-        line[pos] = '\0';
-        term_add(line);
-    }
-}
-
-static void term_clear()
-{
-    g_term_count = 0;
-    g_term_head  = 0;
-}
-
-/* --- Shell command implementations (output to term buffer) --- */
-
-static void sh_help(const char*)
-{
-    term_add("Available commands:");
-    term_add("  help         - Show this message");
-    term_add("  version      - Show API version");
-    term_add("  mem          - Show memory info");
-    term_add("  tasks        - Show scheduler tasks");
-    term_add("  cat <f>      - Print a ramfs file");
-    term_add("  clear        - Clear the terminal");
-    term_add("  uptime       - Show tick count");
-    term_add("  reboot       - Reboot the machine");
-    term_add("  run <f>      - Launch a userspace program");
-    term_add("  drvload <d>  - Load a driver");
-    term_add("  drvunload <d>- Unload a driver");
-    term_add("  exit         - Close vGUI");
-}
-
-static void sh_version(const char*)
-{
-    term_add("vkernel userspace shell (vGUI embedded)");
-    term_addf("  API version: %llu", (unsigned long long)vk_get_api()->api_version);
-}
-
-static void sh_mem(const char*)
-{
-    term_add_kobj_rpc("{\"op\":\"mem\"}");
-}
-
-static void sh_tasks(const char*)
-{
-    term_add_task_list();
-}
-
-static void sh_cat(const char* arg)
-{
-    while (*arg == ' ' || *arg == '\t') ++arg;
-    if (*arg == '\0') {
-        term_add("Usage: cat <filename>");
-        return;
-    }
-
-    vk_file_handle_t fh = VK_CALL(file_open, arg, "r");
-    if (fh == (vk_file_handle_t)0) {
-        term_addf("cat: file not found: %s", arg);
-        return;
-    }
-
-    /* Read file and split into lines for the terminal buffer. */
-    char chunk[256];
-    char line[256];
-    int  lpos = 0;
-    vk_usize n;
-
-    while ((n = VK_CALL(file_read_handle, fh, chunk, sizeof(chunk))) > 0) {
-        for (vk_usize i = 0; i < n; ++i) {
-            if (chunk[i] == '\n' || lpos >= (int)sizeof(line) - 1) {
-                line[lpos] = '\0';
-                term_add(line);
-                lpos = 0;
-            } else {
-                line[lpos++] = chunk[i];
-            }
-        }
-    }
-    if (lpos > 0) {
-        line[lpos] = '\0';
-        term_add(line);
-    }
-
-    VK_CALL(file_close, fh);
-}
-
-static void sh_clear(const char*) { term_clear(); }
-
-static void sh_uptime(const char*)
-{
-    term_add_kobj_rpc("{\"op\":\"uptime\"}");
-}
-
-static void sh_reboot(const char*)
-{
-    term_add_kobj_rpc("{\"op\":\"reboot\"}");
-}
-
-static void sh_run(const char* arg)
-{
-    while (*arg == ' ' || *arg == '\t') ++arg;
-    if (*arg == '\0') {
-        term_add("Usage: run <filename>");
-        return;
-    }
-    vk_i64 task_id = launch_windowed_app(arg, g_default_app_w, g_default_app_h);
-    if (task_id < 0) {
-        term_addf("run: failed to launch %s", arg);
-    } else {
-        term_addf("run: spawned task %lld (windowed)",
-                   (long long)task_id);
-    }
-}
-
-static void sh_drvload(const char* arg)
-{
-    while (*arg == ' ' || *arg == '\t') ++arg;
-    if (*arg == '\0') {
-        term_add("Usage: drvload <driver_name>");
-        return;
-    }
-    char req[256];
-    snprintf(req, sizeof(req), "{\"op\":\"drvload\",\"name\":\"%s\"}", arg);
-    term_add_kobj_rpc(req);
-}
-
-static void sh_drvunload(const char* arg)
-{
-    while (*arg == ' ' || *arg == '\t') ++arg;
-    if (*arg == '\0') {
-        term_add("Usage: drvunload <driver_name>");
-        return;
-    }
-    char req[256];
-    snprintf(req, sizeof(req), "{\"op\":\"drvunload\",\"name\":\"%s\"}", arg);
-    term_add_kobj_rpc(req);
-}
-
-static void sh_exit(const char*)
-{
-    term_add("Goodbye.");
-    g_running = false;
-}
-
-/* --- Command dispatch --- */
-
-static bool sh_starts_with(const char* s, const char* prefix)
-{
-    while (*prefix)
-        if (*s++ != *prefix++) return false;
-    return true;
-}
-
-static void sh_execute(const char* cmdline)
-{
-    /* Skip leading whitespace. */
-    while (*cmdline == ' ' || *cmdline == '\t') ++cmdline;
-    if (*cmdline == '\0') return;
-
-    /* Echo the command. */
-    term_addf("vk> %s", cmdline);
-
-    /* Prefix commands (have arguments). */
-    struct { const char* pfx; int skip; void (*fn)(const char*); } pfx_cmds[] = {
-        { "cat ",       4,  sh_cat       },
-        { "run ",       4,  sh_run       },
-        { "drvload ",   8,  sh_drvload   },
-        { "drvunload ", 10, sh_drvunload },
-    };
-    for (int i = 0; i < (int)(sizeof(pfx_cmds)/sizeof(pfx_cmds[0])); ++i) {
-        if (sh_starts_with(cmdline, pfx_cmds[i].pfx)) {
-            pfx_cmds[i].fn(cmdline + pfx_cmds[i].skip);
-            return;
-        }
-    }
-
-    /* Exact-match commands. */
-    struct { const char* kw; void (*fn)(const char*); } ex_cmds[] = {
-        { "help",    sh_help    },
-        { "?",       sh_help    },
-        { "version", sh_version },
-        { "mem",     sh_mem     },
-        { "tasks",   sh_tasks   },
-        { "clear",   sh_clear   },
-        { "uptime",  sh_uptime  },
-        { "reboot",  sh_reboot  },
-        { "exit",    sh_exit    },
-    };
-    for (int i = 0; i < (int)(sizeof(ex_cmds)/sizeof(ex_cmds[0])); ++i) {
-        if (strcmp(cmdline, ex_cmds[i].kw) == 0) {
-            ex_cmds[i].fn("");
-            return;
-        }
-    }
-
-    term_addf("Unknown command: %s", cmdline);
-    term_add("Type 'help' for available commands.");
-}
-
-/* --- Input line state --- */
-static char g_shell_input[256] = {};
-static bool g_shell_scroll_bottom = true;
-
-/* --- ImGui callback for Enter key in InputText --- */
-static int shell_input_callback(ImGuiInputTextCallbackData* data)
-{
-    (void)data;
-    return 0;
-}
-
-static void draw_shell_window()
-{
-    if (!g_show_shell) return;
-
-    ImGui::SetNextWindowPos (ImVec2(350.0f, 30.0f),  ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(500.0f, 400.0f), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Shell", &g_show_shell)) {
-        ImGui::End();
-        return;
-    }
-    clear_app_focus_if_window_focused();
-
-    /* --- Scrollable output region --- */
-    float footer_h = ImGui::GetStyle().ItemSpacing.y
-                   + ImGui::GetFrameHeightWithSpacing();
-    ImGui::BeginChild("##term_scroll", ImVec2(0.0f, -footer_h),
-                       false, ImGuiWindowFlags_HorizontalScrollbar);
-
-    int start = (g_term_count >= TERM_ROWS) ? g_term_head : 0;
-    for (int i = 0; i < g_term_count; ++i) {
-        int idx = (start + i) % TERM_ROWS;
-        ImGui::TextUnformatted(g_term_buf[idx]);
-    }
-
-    /* Auto-scroll to bottom when new output appears. */
-    if (g_shell_scroll_bottom ||
-        ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-    {
-        ImGui::SetScrollHereY(1.0f);
-        g_shell_scroll_bottom = false;
-    }
-
-    ImGui::EndChild();
-
-    /* --- Input line --- */
-    ImGui::Separator();
-
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue
-                              | ImGuiInputTextFlags_CallbackAlways;
-
-    bool entered = ImGui::InputText("##shell_input", g_shell_input,
-                                     sizeof(g_shell_input), flags,
-                                     shell_input_callback);
-    if (entered && g_shell_input[0] != '\0') {
-        sh_execute(g_shell_input);
-        g_shell_input[0] = '\0';
-        g_shell_scroll_bottom = true;
-
-        /* Refocus the input widget so the user can keep typing. */
-        ImGui::SetKeyboardFocusHere(-1);
-    }
-
-    /* Auto-focus the input field the first time the window appears. */
-    if (ImGui::IsWindowAppearing())
-        ImGui::SetKeyboardFocusHere(-1);
 
     ImGui::End();
 }
@@ -1295,6 +942,23 @@ static void capture_app_snapshot(wm_app_window_t& app)
     }
 }
 
+static void release_app_slot(wm_app_window_t& app)
+{
+    if (app.pixels) {
+        VK_CALL(free, app.pixels);
+        app.pixels = nullptr;
+    }
+    if (app.snapshot) {
+        VK_CALL(free, app.snapshot);
+        app.snapshot = nullptr;
+    }
+    if (app.verify) {
+        VK_CALL(free, app.verify);
+        app.verify = nullptr;
+    }
+    app = {};
+}
+
 static int find_free_app_slot()
 {
     for (int i = 0; i < WM_MAX_APPS; ++i)
@@ -1323,6 +987,7 @@ static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h)
     app.snapshot = (vk_u32*)VK_CALL(malloc, (vk_usize)w * h * sizeof(vk_u32));
     app.verify = (vk_u32*)VK_CALL(malloc, (vk_usize)w * h * sizeof(vk_u32));
     if (!app.pixels || !app.snapshot || !app.verify) {
+        release_app_slot(app);
         log_add("Failed to allocate app surface.");
         return -1;
     }
@@ -1340,6 +1005,7 @@ static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h)
 
     vk_i64 task = vk_get_api()->vk_run_with_fb(path, &app_fb);
     if (task < 0) {
+        release_app_slot(app);
         log_addf("Failed to start app: %s", path);
         return -1;
     }
@@ -1365,7 +1031,12 @@ static void draw_app_windows()
         wm_app_window_t& app = g_apps[i];
         if (!app.used) continue;
         if (!app_task_running(app.task_id)) app.open = false;
-        if (!app.open) continue;
+        if (!app.open) {
+            if (g_focused_app == i)
+                g_focused_app = -1;
+            release_app_slot(app);
+            continue;
+        }
 
         ImGui::SetNextWindowSize(ImVec2((float)app.w + 40.0f, (float)app.h + 80.0f), ImGuiCond_FirstUseEver);
         if (app.focus_next) {
@@ -1489,13 +1160,6 @@ int main(int /*argc*/, char** /*argv*/)
     if (vk_get_api()->vk_set_compositor_active)
         (void)vk_get_api()->vk_set_compositor_active(1u);
 
-    /* ---- Shell banner ---- */
-    term_add("+----------------------------------+");
-    term_add("|     vkernel userspace shell      |");
-    term_add("+----------------------------------+");
-    term_add("Type 'help' for available commands.");
-    term_add("");
-
     /* ================================================================
      * Main loop
      * ================================================================ */
@@ -1560,7 +1224,6 @@ int main(int /*argc*/, char** /*argv*/)
         draw_menu_bar();
         draw_info_window(&fb);
         draw_console_window();
-        draw_shell_window();
         draw_task_manager_window();
         draw_app_windows();
         draw_settings_window();

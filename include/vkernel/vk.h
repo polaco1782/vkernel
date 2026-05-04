@@ -166,10 +166,14 @@ typedef struct vk_api {
     /* ---- input routing ---- */
     int (*vk_send_mouse)(vk_u64 task_id, const vk_mouse_event_t* ev);
 
+    /* ---- process command line ---- */
+    vk_usize (*vk_get_cmdline)(char* out, vk_usize out_cap);
+    vk_i64   (*vk_run_cmdline)(const char* command_line);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 26ULL
+#define VK_API_VERSION 27ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

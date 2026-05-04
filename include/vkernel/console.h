@@ -11,6 +11,7 @@
 #include "config.h"
 #include "types.h"
 #include "uefi.h"
+#include "vk.h"
 
 namespace vk {
 
@@ -82,6 +83,10 @@ auto framebuffer() -> uefi::framebuffer_info;
 void putc_framebuffer(char c);
 void puts_framebuffer(const char* str);
 void clear_framebuffer();
+
+/* Render text into an arbitrary framebuffer surface with external cursor state. */
+void putc_framebuffer_surface(const vk_framebuffer_info_t& fb, u32& column, u32& row, char c);
+void clear_framebuffer_surface(const vk_framebuffer_info_t& fb, u32& column, u32& row);
 
 void putc(char c);
 void puts(const char* str);

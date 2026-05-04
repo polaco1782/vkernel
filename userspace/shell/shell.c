@@ -98,6 +98,54 @@ static int shell_has_framebuffer(void)
     return fb.valid != 0;
 }
 
+static int shell_cmdline_has_flag(const char* flag)
+{
+    char cmdline[256];
+    const char* p;
+
+    if (!vk_get_api()->vk_get_cmdline)
+        return 0;
+
+    vk_get_api()->vk_get_cmdline(cmdline, sizeof(cmdline));
+    p = cmdline;
+
+    while (*p != '\0') {
+        char token[64];
+        vk_usize len = 0;
+        char quote = 0;
+
+        while (*p == ' ' || *p == '\t')
+            ++p;
+        if (*p == '\0')
+            break;
+
+        if (*p == '"' || *p == '\'')
+            quote = *p++;
+
+        while (*p != '\0') {
+            char ch = *p;
+            if (quote) {
+                if (ch == quote) {
+                    ++p;
+                    break;
+                }
+            } else if (ch == ' ' || ch == '\t') {
+                break;
+            }
+
+            if (len + 1 < sizeof(token))
+                token[len++] = ch;
+            ++p;
+        }
+
+        token[len] = '\0';
+        if (vk_strcmp(token, flag) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
 static void shell_put_spaces(vk_usize count)
 {
     while (count-- > 0)
@@ -331,7 +379,7 @@ static void cmd_help(const char* arg)
     VK_CALL(puts, "  reboot       - Reboot the machine\n");
     VK_CALL(puts, "  idt          - Dump interrupt descriptor table\n");
     VK_CALL(puts, "  alloc        - Allocate and free a test block\n");
-    VK_CALL(puts, "  run <f>      - Launch a userspace program\n");
+    VK_CALL(puts, "  run <cmd>    - Launch a userspace program with args\n");
     VK_CALL(puts, "  drvload <d>  - Load a driver (e.g. drvload sb16.vko)\n");
     VK_CALL(puts, "  drvunload <d>- Unload a driver\n");
     VK_CALL(puts, "  panic        - Trigger a userspace fault\n");
@@ -724,23 +772,88 @@ static void cmd_alloc(const char* arg)
     VK_CALL(puts, "Freed.\n");
 }
 
-static int shell_launch_program(const char* path, int verbose)
+static int shell_extract_program_path(const char* command_line,
+                                      char* out,
+                                      vk_usize out_cap,
+                                      int* has_extra_args)
 {
-    if (*path == '\0') {
+    const char* p = vk_skip_spaces(command_line);
+    vk_usize pos = 0;
+    char quote = 0;
+
+    if (has_extra_args)
+        *has_extra_args = 0;
+
+    if (*p == '\0' || out_cap < 2)
+        return 0;
+
+    if (*p == '"' || *p == '\'')
+        quote = *p++;
+
+    while (*p != '\0') {
+        char ch = *p;
+        if (quote) {
+            if (ch == quote) {
+                ++p;
+                break;
+            }
+        } else if (ch == ' ' || ch == '\t') {
+            break;
+        }
+
+        if (pos + 1 >= out_cap)
+            return 0;
+        out[pos++] = ch;
+        ++p;
+    }
+
+    out[pos] = '\0';
+    if (pos == 0)
+        return 0;
+
+    p = vk_skip_spaces(p);
+    if (has_extra_args && *p != '\0')
+        *has_extra_args = 1;
+
+    return 1;
+}
+
+static int shell_launch_program(const char* command_line, int verbose)
+{
+    const char* cmd = vk_skip_spaces(command_line);
+
+    if (*cmd == '\0') {
         if (verbose)
-            VK_CALL(puts, "Usage: run <filename>\n");
+            VK_CALL(puts, "Usage: run <program> [args...]\n");
         return -1;
     }
 
     vk_i64 task_id;
-    if (vk_get_api()->vk_run_auto)
-        task_id = vk_get_api()->vk_run_auto(path);
-    else
-        task_id = VK_CALL(run, path);
+    if (vk_get_api()->vk_run_cmdline) {
+        task_id = vk_get_api()->vk_run_cmdline(cmd);
+    } else {
+        char path[256];
+        int has_args = 0;
+
+        if (!shell_extract_program_path(cmd, path, sizeof(path), &has_args)) {
+            if (verbose)
+                VK_CALL(puts, "Usage: run <program> [args...]\n");
+            return -1;
+        }
+
+        if (has_args && verbose)
+            VK_CALL(puts, "run: kernel API too old, ignoring arguments.\n");
+
+        if (vk_get_api()->vk_run_auto)
+            task_id = vk_get_api()->vk_run_auto(path);
+        else
+            task_id = VK_CALL(run, path);
+    }
+
     if (task_id < 0) {
         if (verbose) {
             VK_CALL(puts, "run: failed to launch ");
-            VK_CALL(puts, path);
+            VK_CALL(puts, cmd);
             VK_CALL(puts, "\n");
         }
         return -1;
@@ -758,8 +871,7 @@ static int shell_launch_program(const char* path, int verbose)
 
 static void cmd_run(const char* arg)
 {
-    const char* path = vk_skip_spaces(arg);
-    (void)shell_launch_program(path, 1);
+    (void)shell_launch_program(arg, 1);
 }
 
 static int try_run_vbin_command(const char* cmdline)
@@ -991,13 +1103,22 @@ int _start(const vk_api_t* api)
 {
     vk_init(api);
 
+    int run_startup_script = 0;
+
     VK_CALL(puts, "\n\n");
     VK_CALL(puts, "+----------------------------------+\n");
     VK_CALL(puts, "|     vkernel userspace shell      |\n");
     VK_CALL(puts, "+----------------------------------+\n");
     VK_CALL(puts, "Type 'help' for available commands.\n\n");
 
-    if (shell_has_framebuffer())
+    if (vk_get_api()->vk_get_cmdline) {
+        run_startup_script = shell_cmdline_has_flag("--startup") ? 1 : 0;
+    } else {
+        /* Compatibility path for older kernels that do not expose cmdline. */
+        run_startup_script = shell_has_framebuffer();
+    }
+
+    if (run_startup_script && shell_has_framebuffer())
         read_startup_script();
 
     char line[256];
