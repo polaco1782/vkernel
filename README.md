@@ -401,6 +401,10 @@ On Windows: `run_qemu.bat Debug --debug` pauses the VM before boot.
 ![Doom running on vkernel](doom.webp)
 
 
+## What about QUAKE?
+
+![Quake running on vkernel](quake.webp)
+
 ## Key Design Notes
 
 **Position-independent PE.** The kernel is compiled with `-fpic` and linked
