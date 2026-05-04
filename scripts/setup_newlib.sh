@@ -83,6 +83,12 @@ fi
 # ─────────────────────────────────────────────────────────────
 # 2. Configure
 # ─────────────────────────────────────────────────────────────
+if [ -f "$BUILD_DIR/config.log" ] && \
+   grep -q -- '--disable-newlib-io-float' "$BUILD_DIR/config.log" 2>/dev/null; then
+    echo "==> Existing newlib build has float I/O disabled; rebuilding..."
+    rm -rf "$BUILD_DIR" "$SYSROOT_DIR"
+fi
+
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
@@ -125,7 +131,7 @@ if [ ! -f Makefile ]; then
         --prefix="$SYSROOT_DIR" \
         --disable-multilib \
         --disable-newlib-supplied-syscalls \
-        --disable-newlib-io-float \
+        --enable-newlib-io-float \
         --enable-newlib-io-long-long \
         --enable-newlib-io-c99-formats \
         --enable-newlib-mb \

@@ -14,6 +14,9 @@ BOOT_IMG  := $(BUILD_DIR)/$(KERNEL_NAME)_boot.img
 USERSPACE_DIR  := userspace
 LIBC_DIR       := $(USERSPACE_DIR)/libc
 SYSROOT_DIR    := $(USERSPACE_DIR)/sysroot
+NEWLIB_BUILD_DIR := $(USERSPACE_DIR)/newlib-build
+NEWLIB_BUILD_LOG := $(NEWLIB_BUILD_DIR)/config.log
+NEWLIB_CFG_MAKEFILE := $(NEWLIB_BUILD_DIR)/x86_64-elf/newlib/Makefile
 HELLO_VBIN      := $(USERSPACE_DIR)/hello/hello.vbin
 FRAMEBUFFER_VBIN := $(USERSPACE_DIR)/framebuffer/framebuffer.vbin
 FRAMEBUFFER_TEXT_VBIN := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.vbin
@@ -21,10 +24,11 @@ RAYTRACER_VBIN := $(USERSPACE_DIR)/raytracer/raytracer.vbin
 SHELL_VBIN      := $(USERSPACE_DIR)/shell/shell.vbin
 DOOM_VBIN       := $(USERSPACE_DIR)/doom/doom.vbin
 MODPLAY_VBIN    := $(USERSPACE_DIR)/MODPlay/modplay.vbin
+CLOWNMDEMU_VBIN := $(USERSPACE_DIR)/clownmdemu/clownmdemu.vbin
 ROTOZOOM_VBIN    := $(USERSPACE_DIR)/rotozoom/rotozoom.vbin
 VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
 SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN)
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -134,7 +138,9 @@ userspace: $(USERSPACE_BINARIES)
 
 # newlib sysroot (headers + libc.a/libm.a) — run once
 newlib-setup:
-	@if [ ! -f $(SYSROOT_DIR)/lib/libc.a ]; then \
+	@if [ ! -f $(SYSROOT_DIR)/lib/libc.a ] || \
+	    grep -q -- '--disable-newlib-io-float' $(NEWLIB_BUILD_LOG) 2>/dev/null || \
+	    grep -q 'NO_FLOATING_POINT' $(NEWLIB_CFG_MAKEFILE) 2>/dev/null; then \
 		echo "  NEWLIB  Building sysroot..."; \
 		bash scripts/setup_newlib.sh; \
 	else \
@@ -170,6 +176,9 @@ $(DOOM_VBIN): $(USERSPACE_DIR)/doom/Makefile libc-glue
 $(MODPLAY_VBIN): $(USERSPACE_DIR)/MODPlay/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
 
+$(CLOWNMDEMU_VBIN): $(USERSPACE_DIR)/clownmdemu/Makefile libc-glue
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/clownmdemu CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
+
 $(ROTOZOOM_VBIN): $(USERSPACE_DIR)/rotozoom/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/rotozoom CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
 
@@ -200,6 +209,7 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/clownmdemu clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube clean
 
