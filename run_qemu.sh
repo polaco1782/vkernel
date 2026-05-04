@@ -74,6 +74,7 @@ find userspace -name "*.vbin" | while read -r vbin; do
     echo "Found userspace binary: ${vbin}"
     cp -va "${vbin}" "${ESP_VKERNEL}/"
 done
+find "${ESP_VKERNEL}" -maxdepth 1 -type f -name "*.vbin" -printf '%f\n' | sort > "${ESP_VKERNEL}/vgui_apps.txt"
 
 # Copy DOOM WAD file (check multiple search locations)
 cp -va "userspace/doom/doom1.wad" "${ESP_VKERNEL}/doom1.wad"
@@ -83,8 +84,7 @@ cp -va "userspace/MODPlay/makemove.mod" "${ESP_VKERNEL}/makemove.mod"
 cp -va "userspace/MODPlay/UNREALPM.S3M" "${ESP_VKERNEL}/UNREALPM.S3M"
 cp -va "userspace/rotozoom/head.bmp" "${ESP_VKERNEL}/head.bmp"
 cp -va "userspace/quake/pak0.pak" "${ESP_VKERNEL}/pak0.pak"
-
-touch ${ESP_VKERNEL}/../../ANAL.txt
+cp -va "userspace/clownmdemu/sonic1.bin" "${ESP_VKERNEL}/sonic1.bin"
 
 # Writable OVMF_VARS
 cp "${OVMF_VARS}" "${NVRAM_FILE}"

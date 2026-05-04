@@ -33,6 +33,16 @@ static bool g_show_shell    = true;
 static bool g_open_about    = false;   /* one-shot: triggers OpenPopup */
 static vk_u32 g_default_app_w = 320;
 static vk_u32 g_default_app_h = 200;
+static const char* g_launch_manifest_path = "vgui_apps.txt";
+
+struct launch_menu_entry_t {
+    char path[96];
+    char label[96];
+};
+
+static const int LAUNCH_MENU_CAP = 64;
+static launch_menu_entry_t g_launch_apps[LAUNCH_MENU_CAP];
+static int g_launch_app_count = 0;
 
 struct wm_app_window_t {
     bool used;
@@ -56,6 +66,7 @@ static wm_app_window_t g_apps[WM_MAX_APPS];
 static int g_focused_app = -1;
 
 static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h);
+static void refresh_launch_apps();
 static int focused_app_index();
 static void clear_app_focus_if_window_focused();
 
@@ -102,6 +113,165 @@ static void log_clear()
 {
     g_log_count = 0;
     g_log_head  = 0;
+}
+
+static bool string_ends_with(const char* text, const char* suffix)
+{
+    size_t text_len = strlen(text);
+    size_t suffix_len = strlen(suffix);
+    if (text_len < suffix_len)
+        return false;
+    return strcmp(text + text_len - suffix_len, suffix) == 0;
+}
+
+static const char* path_basename(const char* path)
+{
+    const char* base = path;
+    for (const char* p = path; *p != '\0'; ++p) {
+        if (*p == '/' || *p == '\\')
+            base = p + 1;
+    }
+    return base;
+}
+
+static void trim_ascii_whitespace(char* text)
+{
+    char* start = text;
+    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')
+        ++start;
+
+    char* end = start + strlen(start);
+    while (end > start) {
+        char ch = end[-1];
+        if (ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n')
+            break;
+        --end;
+    }
+    *end = '\0';
+
+    if (start != text)
+        memmove(text, start, (size_t)(end - start) + 1);
+}
+
+static bool launch_app_exists(const char* path)
+{
+    for (int i = 0; i < g_launch_app_count; ++i) {
+        if (strcmp(g_launch_apps[i].path, path) == 0)
+            return true;
+    }
+    return false;
+}
+
+static void launch_app_add(const char* path)
+{
+    if (!path || *path == '\0')
+        return;
+    if (!string_ends_with(path, ".vbin"))
+        return;
+    if (g_launch_app_count >= LAUNCH_MENU_CAP)
+        return;
+    if (launch_app_exists(path))
+        return;
+
+    launch_menu_entry_t& entry = g_launch_apps[g_launch_app_count++];
+    strncpy(entry.path, path, sizeof(entry.path) - 1);
+    entry.path[sizeof(entry.path) - 1] = '\0';
+
+    const char* base = path_basename(path);
+    strncpy(entry.label, base, sizeof(entry.label) - 1);
+    entry.label[sizeof(entry.label) - 1] = '\0';
+}
+
+static void parse_launch_line(char* line)
+{
+    trim_ascii_whitespace(line);
+    if (line[0] == '\0' || line[0] == '#')
+        return;
+
+    const char* path = line;
+    if (strncmp(line, "run", 3) == 0 && (line[3] == ' ' || line[3] == '\t')) {
+        path = line + 3;
+        while (*path == ' ' || *path == '\t')
+            ++path;
+    }
+
+    launch_app_add(path);
+}
+
+static void sort_launch_apps()
+{
+    for (int i = 1; i < g_launch_app_count; ++i) {
+        launch_menu_entry_t entry = g_launch_apps[i];
+        int j = i;
+        while (j > 0 && strcmp(g_launch_apps[j - 1].label, entry.label) > 0) {
+            g_launch_apps[j] = g_launch_apps[j - 1];
+            --j;
+        }
+        g_launch_apps[j] = entry;
+    }
+}
+
+static bool load_launch_apps_from_file(const char* path)
+{
+    vk_file_handle_t fh = VK_CALL(file_open, path, "r");
+    if (fh == (vk_file_handle_t)0)
+        return false;
+
+    char chunk[256];
+    char line[128];
+    int line_pos = 0;
+    vk_usize read_count;
+
+    while ((read_count = VK_CALL(file_read_handle, fh, chunk, sizeof(chunk))) > 0) {
+        for (vk_usize i = 0; i < read_count; ++i) {
+            const char ch = chunk[i];
+            if (ch == '\r')
+                continue;
+
+            if (ch == '\n' || line_pos >= (int)sizeof(line) - 1) {
+                line[line_pos] = '\0';
+                parse_launch_line(line);
+                line_pos = 0;
+                if (ch == '\n')
+                    continue;
+            }
+
+            line[line_pos++] = ch;
+        }
+    }
+
+    if (line_pos > 0) {
+        line[line_pos] = '\0';
+        parse_launch_line(line);
+    }
+
+    VK_CALL(file_close, fh);
+    return true;
+}
+
+static void refresh_launch_apps()
+{
+    g_launch_app_count = 0;
+
+    const char* source = nullptr;
+    if (load_launch_apps_from_file(g_launch_manifest_path)) {
+        source = g_launch_manifest_path;
+    } else if (load_launch_apps_from_file("shell.txt")) {
+        source = "shell.txt";
+    }
+
+    sort_launch_apps();
+
+    if (source && g_launch_app_count > 0) {
+        log_addf("Launch menu loaded %d app%s from %s.",
+                 g_launch_app_count,
+                 g_launch_app_count == 1 ? "" : "s",
+                 source);
+    } else if (source) {
+        log_addf("Launch menu file %s did not contain any runnable apps.", source);
+    } else {
+        log_add("Launch menu file not found.");
+    }
 }
 
 /* ================================================================
@@ -166,6 +336,27 @@ static void draw_menu_bar()
             g_show_settings = true;
             log_add("Opened Settings.");
         }
+        ImGui::EndMenu();
+    }
+
+    /* ---- Launch ---- */
+    if (ImGui::BeginMenu("Launch")) {
+        if (ImGui::MenuItem("Refresh App List"))
+            refresh_launch_apps();
+
+        ImGui::Separator();
+
+        if (g_launch_app_count == 0) {
+            ImGui::BeginDisabled();
+            ImGui::MenuItem("No staged apps found", nullptr, false, false);
+            ImGui::EndDisabled();
+        } else {
+            for (int i = 0; i < g_launch_app_count; ++i) {
+                if (ImGui::MenuItem(g_launch_apps[i].label))
+                    (void)launch_windowed_app(g_launch_apps[i].path, g_default_app_w, g_default_app_h);
+            }
+        }
+
         ImGui::EndMenu();
     }
 
@@ -971,7 +1162,8 @@ int main(int /*argc*/, char** /*argv*/)
     log_add("Move the mouse to control the cursor.");
     log_add("Alt to open the menu bar.  Tab/Arrows to navigate.");
     log_add("Enter/Space to activate.  Ctrl+Q to quit.");
-    log_add("Press F5 to launch sr_cube in a managed window.");
+    log_add("Use Launch from the menu bar to start staged apps.");
+    refresh_launch_apps();
 
     if (vk_get_api()->vk_set_compositor_active)
         (void)vk_get_api()->vk_set_compositor_active(1u);
@@ -1003,14 +1195,6 @@ int main(int /*argc*/, char** /*argv*/)
                     (void)vk_get_api()->vk_send_key((vk_u64)g_apps[focused].task_id, &evt);
                 } else {
                     ImGui_ImplVK_ProcessKey(&evt);
-
-                    /* F5 launches the framebuffer app. */
-                    if (evt.pressed && evt.scancode == 0x3Fu)
-                        (void)launch_windowed_app("sr_cube.vbin", g_default_app_w, g_default_app_h);
-
-                    /* F6 launches Doom in a managed window. */
-                    if (evt.pressed && evt.scancode == 0x40u)
-                        (void)launch_windowed_app("doom.vbin", g_default_app_w, g_default_app_h);
                 }
 
                 /* Hard quit: Ctrl+Q (checked in raw events as well) */
