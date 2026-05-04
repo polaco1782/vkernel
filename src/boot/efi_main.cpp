@@ -285,9 +285,8 @@ auto efi_main(
      * and a graphical fallback for minimal builds. */
     if (fb_info.valid) {
         log::info() << "Launching graphical shell...";
-        //if (process::run("vgui.vbin", process::console_interface::graphical) < 0 &&
-        //    process::run("shell.vbin", process::console_interface::graphical) < 0) {
-        if (process::run("shell.vbin", process::console_interface::graphical) < 0) {
+        if (process::run("vgui.vbin", process::console_interface::graphical) < 0 &&
+            process::run("shell.vbin", process::console_interface::graphical) < 0) {
             vk_panic(__FILE__, __LINE__, "Failed to launch graphical shell!");
         }
     } else {
