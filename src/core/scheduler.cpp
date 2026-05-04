@@ -4,9 +4,9 @@
  *
  * scheduler.cpp - Round-robin preemptive scheduler
  *
- * Uses the PIT (8254) on IRQ0 (vector 32) for preemption.
- * Context switches save/restore RSP; the full register file is
- * pushed by the ISR stub in interrupts.S.
+ * Uses the PIT (8254) on the BSP and the local APIC timer on APs
+ * for preemption (both on vector 32).  Context switches save/restore
+ * RSP; the full register file is pushed by the ISR stub in interrupts.S.
  */
 
 #include "config.h"
@@ -27,8 +27,8 @@ namespace vk {
 
 static task   g_tasks[MAX_TASKS];
 static usize  g_task_count       = 0;
-static bool   g_scheduler_active = false;
-static u64    g_tick_count       = 0;
+static volatile bool g_scheduler_active = false;
+static volatile u64  g_tick_count       = 0;
 
 /*
  * Per-CPU current-task index.
@@ -84,6 +84,24 @@ static constexpr u16 PIC1_DATA = 0x21;
 static constexpr u16 PIC2_CMD  = 0xA0;
 static constexpr u16 PIC2_DATA = 0xA1;
 
+/* Local APIC MMIO (used for AP timer preemption and universal EOI) */
+static constexpr u32 MSR_IA32_APIC_BASE  = 0x1B;
+static constexpr u64 APIC_BASE_ENABLE    = (1ULL << 11);
+static constexpr u64 APIC_BASE_PHYS_MASK = 0x0000'0000'FFFF'F000ULL;
+static constexpr u32 LAPIC_ID            = 0x020;
+static constexpr u32 LAPIC_EOI           = 0x0B0;
+static constexpr u32 LAPIC_LVT_TIMER     = 0x320;
+static constexpr u32 LAPIC_INIT_COUNT    = 0x380;
+static constexpr u32 LAPIC_CUR_COUNT     = 0x390;
+static constexpr u32 LAPIC_DIVIDE_CONFIG = 0x3E0;
+
+static constexpr u32 LAPIC_TIMER_VECTOR         = 32;
+static constexpr u32 LAPIC_TIMER_MASKED         = (1u << 16);
+static constexpr u32 LAPIC_TIMER_PERIODIC       = (1u << 17);
+static constexpr u32 LAPIC_TIMER_DIVIDE_BY_16   = 0x3;
+static constexpr u32 LAPIC_TIMER_SAMPLE_TICKS   = 5;
+static constexpr u32 LAPIC_TIMER_MIN_INIT_COUNT = 0x1000;
+
 static void pic_remap() {
     /* Save masks */
     u8 mask1 = arch::inb(PIC1_DATA);
@@ -133,6 +151,80 @@ static void pic_eoi() {
     arch::outb(PIC1_CMD, 0x20);
 }
 
+static inline auto lapic_base() -> volatile u32* {
+    const u64 apic_base = arch::rdmsr(MSR_IA32_APIC_BASE);
+    if ((apic_base & APIC_BASE_ENABLE) == 0) {
+        return null;
+    }
+
+    return reinterpret_cast<volatile u32*>(
+        static_cast<usize>(apic_base & APIC_BASE_PHYS_MASK));
+}
+
+static inline auto lapic_read(u32 offset) -> u32 {
+    auto* lapic = lapic_base();
+    if (lapic == null) {
+        return 0;
+    }
+
+    return lapic[offset / 4];
+}
+
+static inline void lapic_write(u32 offset, u32 value) {
+    auto* lapic = lapic_base();
+    if (lapic == null) {
+        return;
+    }
+
+    lapic[offset / 4] = value;
+    (void)lapic[LAPIC_ID / 4];
+}
+
+static void lapic_timer_prepare_masked() {
+    lapic_write(LAPIC_DIVIDE_CONFIG, LAPIC_TIMER_DIVIDE_BY_16);
+    lapic_write(LAPIC_LVT_TIMER, LAPIC_TIMER_MASKED | LAPIC_TIMER_VECTOR);
+}
+
+static auto lapic_timer_calibrate() -> u32 {
+    while (!g_scheduler_active) {
+        arch::cpu_pause();
+    }
+
+    lapic_timer_prepare_masked();
+
+    u64 tick = g_tick_count;
+    while (g_tick_count == tick) {
+        arch::cpu_pause();
+    }
+
+    const u64 start_tick = g_tick_count;
+    lapic_write(LAPIC_INIT_COUNT, 0xFFFF'FFFFu);
+
+    while (g_tick_count < start_tick + LAPIC_TIMER_SAMPLE_TICKS) {
+        arch::cpu_pause();
+    }
+
+    const u64 elapsed_ticks = g_tick_count - start_tick;
+    const u32 current_count = lapic_read(LAPIC_CUR_COUNT);
+    u64 counts_per_tick = (0xFFFF'FFFFULL - current_count) /
+        (elapsed_ticks == 0 ? 1 : elapsed_ticks);
+
+    if (counts_per_tick < LAPIC_TIMER_MIN_INIT_COUNT) {
+        counts_per_tick = LAPIC_TIMER_MIN_INIT_COUNT;
+    }
+    if (counts_per_tick > 0xFFFF'FFFFULL) {
+        counts_per_tick = 0xFFFF'FFFFULL;
+    }
+
+    return static_cast<u32>(counts_per_tick);
+}
+
+static void lapic_timer_start_periodic(u32 init_count) {
+    lapic_write(LAPIC_DIVIDE_CONFIG, LAPIC_TIMER_DIVIDE_BY_16);
+    lapic_write(LAPIC_LVT_TIMER, LAPIC_TIMER_PERIODIC | LAPIC_TIMER_VECTOR);
+    lapic_write(LAPIC_INIT_COUNT, init_count);
+}
+
 /* ============================================================
  * Scheduler internals
  * ============================================================ */
@@ -146,6 +238,10 @@ static inline usize cpu_current_task() {
 static inline void cpu_set_current_task(usize idx) {
     u8 apic_id = smp::current_cpu_apic_id();
     g_per_cpu_task[apic_id] = idx;
+}
+
+static inline auto cpu_allows_shared_idle() -> bool {
+    return smp::current_cpu_apic_id() == g_bsp_apic_id;
 }
 
 [[maybe_unused]] static void task_trampoline(void* user_data) {
@@ -163,6 +259,22 @@ static void wake_sleeping_tasks() {
     }
 }
 
+static inline auto task_can_run_on_this_cpu(usize task_index) -> bool {
+    if (task_index >= g_task_count) {
+        return false;
+    }
+
+    if (task_index == 0) {
+        return cpu_allows_shared_idle();
+    }
+
+    if (!cpu_allows_shared_idle() && !g_tasks[task_index].allow_secondary_cpu) {
+        return false;
+    }
+
+    return true;
+}
+
 static auto pick_next_task(usize cur) -> usize {
     if (g_task_count == 0) {
         return SCHED_NO_TASK;
@@ -174,13 +286,14 @@ static auto pick_next_task(usize cur) -> usize {
         usize start = (cur > 0 && cur < g_task_count) ? cur : 0;
         for (usize i = 1; i < g_task_count; ++i) {
             usize next = ((start + i - 1) % (g_task_count - 1)) + 1;
-            if (g_tasks[next].state == task_state::ready) {
+            if (g_tasks[next].state == task_state::ready &&
+                task_can_run_on_this_cpu(next)) {
                 return next;
             }
         }
     }
 
-    if (g_tasks[0].state == task_state::ready) {
+    if (g_tasks[0].state == task_state::ready && task_can_run_on_this_cpu(0)) {
         return 0;
     }
 
@@ -258,6 +371,7 @@ auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) 
     t.entry = entry;
     t.user_data = user_data;
     t.xsave_valid = false;
+    t.allow_secondary_cpu = g_scheduler_active;
     t.cpu_ticks = 0;
     if (!t.name.assign(name)) {
         g_sched_lock.release();
@@ -360,7 +474,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         /* Only the BSP's PIT (IRQ0) advances the global clock.
          * APs fire vector 32 from their LAPIC timers for scheduling only;
          * if they also incremented g_tick_count, ticks would run N× fast. */
-        ++g_tick_count;
+        (void)arch::atomic_add(&g_tick_count, 1);
     }
 
     /* Send EOI.
@@ -372,14 +486,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
      * ignores the PIC port write.
      */
     pic_eoi();
-    {
-        constexpr u32 MSR_IA32_APIC_BASE  = 0x1B;
-        constexpr u64 APIC_BASE_PHYS_MASK = 0x0000'0000'FFFF'F000ULL;
-        constexpr u32 LAPIC_EOI = 0x0B0;
-        const u64 lapic_phys = arch::rdmsr(MSR_IA32_APIC_BASE) & APIC_BASE_PHYS_MASK;
-        auto* lapic = reinterpret_cast<volatile u32*>(static_cast<usize>(lapic_phys));
-        lapic[LAPIC_EOI / 4] = 0;
-    }
+    lapic_write(LAPIC_EOI, 0);
 
     if (!g_scheduler_active || g_task_count < 2) {
         return regs;
@@ -423,6 +530,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
 
     cpu_set_current_task(next);
     g_tasks[next].state = task_state::running;
+    const u64 next_rsp = g_tasks[next].rsp;
 
     /* Restore the next task's x87/SSE state.  On the very first
      * dispatch the task has never run yet, so xsave_valid is false
@@ -435,7 +543,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
 
     g_sched_lock.release();
 
-    return reinterpret_cast<arch::register_state*>(g_tasks[next].rsp);
+    return reinterpret_cast<arch::register_state*>(next_rsp);
 }
 
 /*
@@ -479,28 +587,24 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
  * arch::ap_activate() and smp::lapic_init_local().
  *
  * Each AP:
- *   1. Programs its local LAPIC timer to fire at SCHED_HZ.
- *   2. Sets its per-CPU current task to the idle task (index 0).
- *   3. Enables interrupts and idles — the LAPIC timer will start
- *      preempting and dispatching tasks immediately.
+ *   1. Waits for the BSP scheduler to go live.
+ *   2. Calibrates its local LAPIC timer against the BSP PIT tick.
+ *   3. Enables interrupts and idles with no current task.  Vector 32
+ *      timer interrupts will dispatch runnable non-idle work onto this CPU.
  * ============================================================ */
 [[noreturn]] void sched::start_ap() {
-    /*
-     * Keep APs online but parked for now.
-     *
-     * The current scheduler has one global run queue and the userspace/kernel
-     * runtime still has shared state that assumes one task is executing kernel
-     * code at a time.  Letting AP LAPIC timers dispatch normal tasks can race
-     * the BSP during scheduler startup and can run two shell instances through
-     * non-SMP-safe paths at once.  The BSP continues to provide preemption via
-     * PIT IRQ0; AP task dispatch can be enabled once run queues and runtime
-     * locks are made SMP-safe.
-     */
     g_sched_lock.acquire();
     cpu_set_current_task(SCHED_NO_TASK);
     g_sched_lock.release();
 
-    log::debug() << "AP APIC " << smp::current_cpu_apic_id() << ": parked with scheduler disabled";
+    const u32 timer_init = lapic_timer_calibrate();
+    lapic_timer_start_periodic(timer_init);
+
+    log::debug() << "AP APIC " << smp::current_cpu_apic_id()
+                 << ": LAPIC timer armed (init=" << timer_init
+                 << ", target " << SCHED_HZ << " Hz), waiting for runnable work";
+
+    arch::enable_interrupts();
 
     while (true) {
         arch::cpu_halt();

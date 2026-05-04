@@ -269,11 +269,12 @@ extern "C" void ap_init_secondary() {
     arch::memory_barrier();
     *phys_ptr<volatile u32>(TRAM_READY) = 1;
 
-    log::info() << "AP APIC " << current_cpu_apic_id() << ": online, parking in scheduler AP loop";
+    log::info() << "AP APIC " << current_cpu_apic_id() << ": online, entering scheduler AP loop";
 
     /*
-     * Step 4: enter the AP scheduler loop.  APs are online but do not
-     * dispatch normal tasks until the runtime and scheduler are SMP-safe.
+     * Step 4: enter the AP scheduler loop.  The AP will wait until the BSP
+     * scheduler is active, then arm its LAPIC timer and begin preempting
+     * runnable work on this CPU.
      */
     sched::start_ap();
 }

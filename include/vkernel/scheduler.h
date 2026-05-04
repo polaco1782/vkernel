@@ -59,6 +59,7 @@ struct task {
     #endif
     task_entry_fn entry;
     bool          xsave_valid;             /* true after first XSAVE for this task */
+    bool          allow_secondary_cpu;     /* tasks created before scheduler start stay on BSP */
     u64           cpu_ticks;               /* Timer ticks consumed while running */
 
     [[nodiscard]] constexpr auto is_runnable() const -> bool {
