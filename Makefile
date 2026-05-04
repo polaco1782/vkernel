@@ -128,7 +128,7 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@ls -lh $@
 
 # Create bootable GPT + EFI System Partition disk image
-$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh
+$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh userspace
 	@echo "  DISK    $@"
 	@bash scripts/make_disk.sh $(EFI_FILE) $@
 

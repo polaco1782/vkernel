@@ -38,6 +38,7 @@ static KNode s_proc_count;
 static KNode s_proc_pid;
 static KNode s_proc_pid_id;
 static KNode s_proc_pid_state;
+static KNode s_proc_pid_cpu;
 static KNode s_proc_pid_cpu_ticks;
 static KNode s_proc_pid_name;
 
@@ -54,6 +55,7 @@ static u32 s_power_state = 0;
 static u64 s_proc_virtual_pid = 0;
 static u64 s_proc_virtual_ticks = 0;
 static u32 s_proc_virtual_state = 0;
+static i64 s_proc_virtual_cpu = -1;
 static static_string<32> s_proc_virtual_name;
 static bool s_initialized = false;
 
@@ -337,6 +339,10 @@ static auto get_proc_pid_state(KNode*) -> KVal {
     return KVal::from_enum(s_proc_virtual_state);
 }
 
+static auto get_proc_pid_cpu(KNode*) -> KVal {
+    return KVal::from_i64(s_proc_virtual_cpu);
+}
+
 static auto get_proc_pid_cpu_ticks(KNode*) -> KVal {
     return KVal::from_u64(s_proc_virtual_ticks);
 }
@@ -515,6 +521,14 @@ void init() {
     s_proc_pid_state.schema.cap_mask = 0x01;
     s_proc_pid_state.get_fn = get_proc_pid_state;
 
+    s_proc_pid_cpu = {};
+    s_proc_pid_cpu.schema.name = "cpu";
+    s_proc_pid_cpu.schema.type = KTag::I64;
+    s_proc_pid_cpu.schema.writable = false;
+    s_proc_pid_cpu.schema.volatile_node = true;
+    s_proc_pid_cpu.schema.cap_mask = 0x01;
+    s_proc_pid_cpu.get_fn = get_proc_pid_cpu;
+
     s_proc_pid_cpu_ticks = {};
     s_proc_pid_cpu_ticks.schema.name = "cpu_ticks";
     s_proc_pid_cpu_ticks.schema.type = KTag::U64;
@@ -610,6 +624,9 @@ static auto fill_proc_virtual(u64 pid) -> bool {
             s_proc_virtual_pid = snapshots[i].id;
             s_proc_virtual_ticks = snapshots[i].cpu_ticks;
             s_proc_virtual_state = static_cast<u32>(snapshots[i].state);
+            s_proc_virtual_cpu = (snapshots[i].cpu == SCHED_CPU_NONE)
+                ? -1
+                : static_cast<i64>(snapshots[i].cpu);
             (void)s_proc_virtual_name.assign(snapshots[i].name);
             return true;
         }
@@ -637,6 +654,7 @@ static auto resolve_proc_virtual(const char* path, usize len) -> KNode* {
     string_view tail(p.data() + pid_end + 1, p.size() - pid_end - 1);
     if (tail.equals("id")) return &s_proc_pid_id;
     if (tail.equals("state")) return &s_proc_pid_state;
+    if (tail.equals("cpu")) return &s_proc_pid_cpu;
     if (tail.equals("cpu_ticks")) return &s_proc_pid_cpu_ticks;
     if (tail.equals("name")) return &s_proc_pid_name;
     return null;
@@ -731,6 +749,7 @@ void kls(const char* path, char* out, usize out_cap) {
     if (node == &s_proc_pid) {
         pos = append_str(out, out_cap, pos, "id\n");
         pos = append_str(out, out_cap, pos, "state\n");
+        pos = append_str(out, out_cap, pos, "cpu\n");
         pos = append_str(out, out_cap, pos, "cpu_ticks\n");
         pos = append_str(out, out_cap, pos, "name\n");
         return;

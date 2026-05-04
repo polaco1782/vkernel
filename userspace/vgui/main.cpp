@@ -30,6 +30,7 @@ static bool g_show_console  = true;
 static bool g_show_settings = false;
 static bool g_show_demo     = false;
 static bool g_show_shell    = true;
+static bool g_show_task_manager = true;
 static bool g_open_about    = false;   /* one-shot: triggers OpenPopup */
 static vk_u32 g_default_app_w = 320;
 static vk_u32 g_default_app_h = 200;
@@ -65,10 +66,33 @@ static const int WM_MAX_APPS = 6;
 static wm_app_window_t g_apps[WM_MAX_APPS];
 static int g_focused_app = -1;
 
+static const int TASK_MANAGER_MAX_TASKS = 64;
+static const int TASK_MANAGER_HISTORY = 120;
+
+struct task_manager_row_t {
+    vk_task_info_t task;
+    float cpu_percent;
+};
+
+static task_manager_row_t g_task_rows[TASK_MANAGER_MAX_TASKS];
+static int g_task_row_count = 0;
+static vk_task_info_t g_task_prev[TASK_MANAGER_MAX_TASKS];
+static vk_usize g_task_prev_count = 0;
+static vk_u64 g_task_prev_tick = 0;
+static vk_u64 g_task_last_refresh_tick = 0;
+static float g_task_cpu_history[TASK_MANAGER_HISTORY];
+static int g_task_cpu_history_count = 0;
+static int g_task_cpu_history_head = 0;
+static vk_u32 g_task_cpu_count = 1;
+static vk_u64 g_task_last_cpu_query_tick = 0;
+static float g_task_total_cpu_percent = 0.0f;
+
 static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h);
 static void refresh_launch_apps();
 static int focused_app_index();
 static void clear_app_focus_if_window_focused();
+static void term_add(const char* line);
+static void term_addf(const char* fmt, ...);
 
 /* --- Counter widget --- */
 static int  g_counter        = 0;
@@ -113,6 +137,198 @@ static void log_clear()
 {
     g_log_count = 0;
     g_log_head  = 0;
+}
+
+static const char* task_state_label(vk_u32 state)
+{
+    switch (state) {
+    case 0u: return "ready";
+    case 1u: return "run";
+    case 2u: return "sleep";
+    case 3u: return "done";
+    default: return "?";
+    }
+}
+
+static void format_task_cpu_label(vk_u32 cpu, char* out, size_t out_size)
+{
+    if (!out || out_size == 0)
+        return;
+
+    if (cpu == VK_TASK_CPU_NONE)
+        snprintf(out, out_size, "-");
+    else
+        snprintf(out, out_size, "%u", (unsigned)cpu);
+}
+
+static vk_u64 find_previous_task_ticks(const vk_task_info_t* tasks,
+                                       vk_usize count,
+                                       vk_u64 id)
+{
+    for (vk_usize i = 0; i < count; ++i) {
+        if (tasks[i].id == id)
+            return tasks[i].cpu_ticks;
+    }
+    return 0;
+}
+
+static vk_u64 task_cpu_delta(const vk_task_info_t* task,
+                             const vk_task_info_t* prev,
+                             vk_usize prev_count)
+{
+    vk_u64 old_ticks = find_previous_task_ticks(prev, prev_count, task->id);
+    return task->cpu_ticks >= old_ticks ? task->cpu_ticks - old_ticks : 0;
+}
+
+static vk_u32 task_manager_query_cpu_count()
+{
+    char out[128];
+    vk_kobj_rpc_json("{\"op\":\"get\",\"path\":\"sys/cpu/count\"}", out, sizeof(out));
+
+    const char* marker = strstr(out, "\"value\":\"");
+    if (!marker)
+        return g_task_cpu_count ? g_task_cpu_count : 1u;
+
+    marker += 9;
+    vk_u64 value = 0;
+    while (*marker >= '0' && *marker <= '9') {
+        value = value * 10ULL + (vk_u64)(*marker - '0');
+        ++marker;
+    }
+
+    if (value == 0 || value > 256)
+        return 1u;
+
+    return (vk_u32)value;
+}
+
+static void task_manager_push_history(float percent)
+{
+    g_task_cpu_history[g_task_cpu_history_head] = percent;
+    g_task_cpu_history_head = (g_task_cpu_history_head + 1) % TASK_MANAGER_HISTORY;
+    if (g_task_cpu_history_count < TASK_MANAGER_HISTORY)
+        ++g_task_cpu_history_count;
+}
+
+static bool task_manager_row_precedes(const task_manager_row_t& lhs,
+                                      const task_manager_row_t& rhs)
+{
+    if (lhs.cpu_percent != rhs.cpu_percent)
+        return lhs.cpu_percent > rhs.cpu_percent;
+
+    const bool lhs_running = lhs.task.state == 1u;
+    const bool rhs_running = rhs.task.state == 1u;
+    if (lhs_running != rhs_running)
+        return lhs_running;
+
+    return lhs.task.id < rhs.task.id;
+}
+
+static void task_manager_sort_rows()
+{
+    for (int i = 1; i < g_task_row_count; ++i) {
+        task_manager_row_t row = g_task_rows[i];
+        int j = i;
+        while (j > 0 && task_manager_row_precedes(row, g_task_rows[j - 1])) {
+            g_task_rows[j] = g_task_rows[j - 1];
+            --j;
+        }
+        g_task_rows[j] = row;
+    }
+}
+
+static void task_manager_copy_previous(const vk_task_info_t* tasks, vk_usize count)
+{
+    if (count > TASK_MANAGER_MAX_TASKS)
+        count = TASK_MANAGER_MAX_TASKS;
+
+    if (count > 0)
+        memcpy(g_task_prev, tasks, sizeof(g_task_prev[0]) * (size_t)count);
+    g_task_prev_count = count;
+}
+
+static void task_manager_refresh()
+{
+    vk_u64 now_tick = VK_CALL(tick_count);
+    vk_u64 tps = VK_CALL(ticks_per_sec);
+    vk_u64 refresh_period = tps / 5ULL;
+    if (refresh_period == 0)
+        refresh_period = 1;
+
+    if (g_task_last_cpu_query_tick == 0 || now_tick - g_task_last_cpu_query_tick >= (tps ? tps : 1ULL)) {
+        g_task_cpu_count = task_manager_query_cpu_count();
+        g_task_last_cpu_query_tick = now_tick;
+    }
+
+    if (g_task_last_refresh_tick != 0 && now_tick - g_task_last_refresh_tick < refresh_period)
+        return;
+
+    vk_task_info_t tasks[TASK_MANAGER_MAX_TASKS];
+    vk_usize total = VK_CALL(task_snapshot, tasks, TASK_MANAGER_MAX_TASKS);
+    vk_usize count = total < TASK_MANAGER_MAX_TASKS ? total : TASK_MANAGER_MAX_TASKS;
+    g_task_last_refresh_tick = now_tick;
+
+    if (g_task_prev_tick == 0) {
+        for (vk_usize i = 0; i < count; ++i) {
+            g_task_rows[i].task = tasks[i];
+            g_task_rows[i].cpu_percent = 0.0f;
+        }
+        g_task_row_count = (int)count;
+        task_manager_sort_rows();
+        task_manager_copy_previous(tasks, count);
+        g_task_prev_tick = now_tick;
+        g_task_total_cpu_percent = 0.0f;
+        task_manager_push_history(0.0f);
+        return;
+    }
+
+    vk_u64 elapsed_ticks = now_tick >= g_task_prev_tick ? now_tick - g_task_prev_tick : 1ULL;
+    if (elapsed_ticks == 0)
+        elapsed_ticks = 1;
+
+    vk_u64 total_delta = 0;
+    for (vk_usize i = 0; i < count; ++i) {
+        vk_u64 delta = task_cpu_delta(&tasks[i], g_task_prev, g_task_prev_count);
+        g_task_rows[i].task = tasks[i];
+        g_task_rows[i].cpu_percent = (float)delta * 100.0f / (float)elapsed_ticks;
+        total_delta += delta;
+    }
+
+    g_task_row_count = (int)count;
+    task_manager_sort_rows();
+    task_manager_copy_previous(tasks, count);
+    g_task_prev_tick = now_tick;
+
+    g_task_total_cpu_percent = (float)total_delta * 100.0f / (float)elapsed_ticks;
+    const float max_percent = (float)((g_task_cpu_count ? g_task_cpu_count : 1u) * 100u);
+    if (g_task_total_cpu_percent > max_percent)
+        g_task_total_cpu_percent = max_percent;
+    task_manager_push_history(g_task_total_cpu_percent);
+}
+
+static void term_add_task_list()
+{
+    vk_task_info_t tasks[TASK_MANAGER_MAX_TASKS];
+    vk_usize total = VK_CALL(task_snapshot, tasks, TASK_MANAGER_MAX_TASKS);
+    vk_usize count = total < TASK_MANAGER_MAX_TASKS ? total : TASK_MANAGER_MAX_TASKS;
+
+    term_add("PID  CPU  STATE    CPU TICKS  NAME");
+    for (vk_usize i = 0; i < count; ++i) {
+        char cpu_buf[8];
+        char line[128];
+        format_task_cpu_label(tasks[i].cpu, cpu_buf, sizeof(cpu_buf));
+        snprintf(line, sizeof(line), "%3llu  %3s  %-7s  %8llu  %s",
+                 (unsigned long long)tasks[i].id,
+                 cpu_buf,
+                 task_state_label(tasks[i].state),
+                 (unsigned long long)tasks[i].cpu_ticks,
+                 tasks[i].name);
+        term_add(line);
+    }
+
+    if (total > count)
+        term_addf("... %llu more task(s) not shown.",
+                  (unsigned long long)(total - count));
 }
 
 static bool string_ends_with(const char* text, const char* suffix)
@@ -365,6 +581,7 @@ static void draw_menu_bar()
         ImGui::MenuItem("Info Panel",   nullptr, &g_show_info);
         ImGui::MenuItem("Console",      nullptr, &g_show_console);
         ImGui::MenuItem("Shell",        nullptr, &g_show_shell);
+        ImGui::MenuItem("Task Manager", nullptr, &g_show_task_manager);
         ImGui::Separator();
         ImGui::MenuItem("ImGui Demo",   nullptr, &g_show_demo);
         ImGui::EndMenu();
@@ -615,7 +832,7 @@ static void sh_mem(const char*)
 
 static void sh_tasks(const char*)
 {
-    term_add_kobj_rpc("{\"op\":\"tasks\"}");
+    term_add_task_list();
 }
 
 static void sh_cat(const char* arg)
@@ -838,6 +1055,110 @@ static void draw_shell_window()
     /* Auto-focus the input field the first time the window appears. */
     if (ImGui::IsWindowAppearing())
         ImGui::SetKeyboardFocusHere(-1);
+
+    ImGui::End();
+}
+
+static void draw_task_manager_window()
+{
+    if (!g_show_task_manager) return;
+
+    task_manager_refresh();
+
+    ImGui::SetNextWindowPos(ImVec2(860.0f, 30.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(470.0f, 420.0f), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Task Manager", &g_show_task_manager)) {
+        ImGui::End();
+        return;
+    }
+    clear_app_focus_if_window_focused();
+
+    const float max_cpu_percent = (float)((g_task_cpu_count ? g_task_cpu_count : 1u) * 100u);
+    float history[TASK_MANAGER_HISTORY];
+    int history_count = g_task_cpu_history_count;
+    int history_start = (g_task_cpu_history_count >= TASK_MANAGER_HISTORY) ? g_task_cpu_history_head : 0;
+    for (int i = 0; i < history_count; ++i)
+        history[i] = g_task_cpu_history[(history_start + i) % TASK_MANAGER_HISTORY];
+
+    ImGui::SeparatorText("CPU Load");
+    char overlay[64];
+    snprintf(overlay, sizeof(overlay), "%.1f%% / %.0f%%", g_task_total_cpu_percent, max_cpu_percent);
+    ImGui::PlotLines("##cpu_history",
+                     history_count > 0 ? history : nullptr,
+                     history_count,
+                     0,
+                     history_count > 0 ? overlay : "Collecting samples...",
+                     0.0f,
+                     max_cpu_percent,
+                     ImVec2(-1.0f, 90.0f));
+    ImGui::Text("Online CPUs: %u", (unsigned)g_task_cpu_count);
+    ImGui::SameLine();
+    ImGui::Text("Tasks shown: %d", g_task_row_count);
+
+    ImGui::SeparatorText("Current CPU Owners");
+    for (vk_u32 cpu = 0; cpu < g_task_cpu_count; ++cpu) {
+        const vk_task_info_t* owner = nullptr;
+        for (int i = 0; i < g_task_row_count; ++i) {
+            if (g_task_rows[i].task.state == 1u && g_task_rows[i].task.cpu == cpu) {
+                owner = &g_task_rows[i].task;
+                break;
+            }
+        }
+
+        if (owner) {
+            ImGui::BulletText("CPU %u: %s (#%llu)",
+                              (unsigned)cpu,
+                              owner->name,
+                              (unsigned long long)owner->id);
+        } else {
+            ImGui::BulletText("CPU %u: idle / no task", (unsigned)cpu);
+        }
+    }
+
+    ImGui::SeparatorText("Processes");
+    ImGuiTableFlags table_flags = ImGuiTableFlags_RowBg
+                                | ImGuiTableFlags_Borders
+                                | ImGuiTableFlags_Resizable
+                                | ImGuiTableFlags_ScrollY
+                                | ImGuiTableFlags_SizingStretchProp;
+    if (ImGui::BeginTable("##task_table", 6, table_flags, ImVec2(0.0f, 0.0f))) {
+        ImGui::TableSetupColumn("PID",   ImGuiTableColumnFlags_WidthFixed, 44.0f);
+        ImGui::TableSetupColumn("CPU",   ImGuiTableColumnFlags_WidthFixed, 42.0f);
+        ImGui::TableSetupColumn("CPU%",  ImGuiTableColumnFlags_WidthFixed, 54.0f);
+        ImGui::TableSetupColumn("Ticks", ImGuiTableColumnFlags_WidthFixed, 74.0f);
+        ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 68.0f);
+        ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+
+        for (int i = 0; i < g_task_row_count; ++i) {
+            const task_manager_row_t& row = g_task_rows[i];
+            char cpu_buf[8];
+            format_task_cpu_label(row.task.cpu, cpu_buf, sizeof(cpu_buf));
+
+            ImGui::TableNextRow();
+            if (row.task.state == 1u)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.68f, 0.95f, 0.72f, 1.0f));
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%llu", (unsigned long long)row.task.id);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(cpu_buf);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%.1f", row.cpu_percent);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%llu", (unsigned long long)row.task.cpu_ticks);
+            ImGui::TableSetColumnIndex(4);
+            ImGui::TextUnformatted(task_state_label(row.task.state));
+            ImGui::TableSetColumnIndex(5);
+            ImGui::TextUnformatted(row.task.name);
+
+            if (row.task.state == 1u)
+                ImGui::PopStyleColor();
+        }
+
+        ImGui::EndTable();
+    }
 
     ImGui::End();
 }
@@ -1240,6 +1561,7 @@ int main(int /*argc*/, char** /*argv*/)
         draw_info_window(&fb);
         draw_console_window();
         draw_shell_window();
+        draw_task_manager_window();
         draw_app_windows();
         draw_settings_window();
         draw_about_modal();

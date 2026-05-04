@@ -243,7 +243,7 @@ static vk_usize stub_task_snapshot(vk_task_info_t* out, vk_usize max_tasks) {
     for (vk_usize i = 0; i < count; ++i) {
         out[i].id = snapshots[i].id;
         out[i].state = static_cast<vk_u32>(snapshots[i].state);
-        out[i]._reserved = 0;
+        out[i].cpu = snapshots[i].cpu;
         out[i].cpu_ticks = snapshots[i].cpu_ticks;
         static_string<32> name_buf(snapshots[i].name);
         memory::copy(out[i].name, name_buf.c_str(), sizeof(out[i].name));

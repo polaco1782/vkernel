@@ -67,7 +67,7 @@ typedef vk_u64 vk_file_handle_t;
 typedef struct vk_task_info {
     vk_u64 id;
     vk_u32 state;       /* 0=ready, 1=running, 2=blocked, 3=terminated */
-    vk_u32 _reserved;
+    vk_u32 cpu;         /* APIC ID while running, VK_TASK_CPU_NONE otherwise */
     vk_u64 cpu_ticks;   /* Scheduler ticks spent running on any CPU */
     char   name[32];
 } vk_task_info_t;
@@ -197,6 +197,8 @@ static inline const vk_api_t* vk_get_api(void) {
 #define VK_SND_FORMAT_UNSIGNED_8   0
 #define VK_SND_FORMAT_SIGNED_16    1
 #define VK_SND_FORMAT_SIGNED_16_STEREO 2
+
+#define VK_TASK_CPU_NONE 0xFFFFFFFFu
 
 /* Maximum simultaneous mixer channels */
 #define VK_SND_MIX_CHANNELS        8

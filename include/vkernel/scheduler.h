@@ -33,6 +33,7 @@ enum class task_state : u8 {
 inline constexpr usize TASK_STACK_SIZE = 1048576; /* 1 MiB per task (Quake needs more headroom) */
 inline constexpr usize MAX_TASKS = 64;
 inline constexpr u32 SCHED_TICK_HZ = 100;        /* 10 ms scheduler tick */
+inline constexpr u32 SCHED_CPU_NONE = 0xFFFF'FFFFu;
 
 /* Sentinel: CPU is idle and not currently executing any task.
  * Used as the initial g_per_cpu_task value for APs so that their first
@@ -60,6 +61,7 @@ struct task {
     task_entry_fn entry;
     bool          xsave_valid;             /* true after first XSAVE for this task */
     bool          allow_secondary_cpu;     /* tasks created before scheduler start stay on BSP */
+    u32           current_cpu;             /* APIC ID while running, SCHED_CPU_NONE otherwise */
     u64           cpu_ticks;               /* Timer ticks consumed while running */
 
     [[nodiscard]] constexpr auto is_runnable() const -> bool {
@@ -70,6 +72,7 @@ struct task {
 struct task_snapshot {
     u64        id;
     task_state state;
+    u32        cpu;
     u64        cpu_ticks;
     string_view name;
 };

@@ -14,6 +14,8 @@
 
 set -e
 
+shopt -s nullglob
+
 EFI_FILE="$1"
 OUTPUT="$2"
 shift 2
@@ -53,6 +55,18 @@ ESP_TRACKS=62
 ESP_HEADS=64
 ESP_SECS=32
 
+copy_into_esp() {
+    local src="$1"
+    local dest_name="$2"
+
+    if [ ! -f "${src}" ]; then
+        return 0
+    fi
+
+    echo "    ${dest_name}"
+    mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${src}" "::/EFI/vkernel/${dest_name}"
+}
+
 rm -f "${OUTPUT}"
 
 echo "  Creating ${DISK_MB} MiB blank disk..."
@@ -71,13 +85,28 @@ echo "  Staging EFI application..."
 mmd    -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI ::/EFI/BOOT
 mcopy  -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${EFI_FILE}" ::/EFI/BOOT/bootx64.efi
 
-echo "  Staging userspace binaries... (${#EXTRA_ELFS[@]} ELF files)"
+echo "  Staging userspace binaries..."
 mmd -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/vkernel
-for elf in build/esp/EFI/vkernel/*; do
-    name=$(basename "${elf}")
-    echo "    ${name}"
-    mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${elf}" "::/EFI/vkernel/${name}"
-done
+
+manifest_file=$(mktemp)
+while IFS= read -r -d '' vbin; do
+    name=$(basename "${vbin}")
+    copy_into_esp "${vbin}" "${name}"
+    printf '%s\n' "${name}" >> "${manifest_file}"
+done < <(find userspace -name "*.vbin" -print0)
+
+sort -u "${manifest_file}" -o "${manifest_file}"
+copy_into_esp "${manifest_file}" "vgui_apps.txt"
+rm -f "${manifest_file}"
+
+copy_into_esp "userspace/doom/doom1.wad" "doom1.wad"
+copy_into_esp "userspace/doom/doom2.wad" "doom2.wad"
+copy_into_esp "userspace/shell/shell_exec.txt" "shell.txt"
+copy_into_esp "userspace/MODPlay/makemove.mod" "makemove.mod"
+copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "UNREALPM.S3M"
+copy_into_esp "userspace/rotozoom/head.bmp" "head.bmp"
+copy_into_esp "userspace/quake/pak0.pak" "pak0.pak"
+copy_into_esp "userspace/clownmdemu/sonic1.bin" "sonic1.bin"
 
 echo "  Done: ${OUTPUT}"
 mdir -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/BOOT 2>/dev/null || true

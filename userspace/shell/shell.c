@@ -351,12 +351,6 @@ static void cmd_mem(const char* arg)
     vk_kobj_cmd_json("mem");
 }
 
-static void cmd_tasks(const char* arg)
-{
-    (void)arg;
-    vk_kobj_cmd_json("tasks");
-}
-
 #define TOP_MAX_TASKS 64
 #define TOP_MAX_ROWS  18
 
@@ -368,6 +362,51 @@ static const char* task_state_name(vk_u32 state)
         case 2: return "sleep";
         case 3: return "done";
         default: return "?";
+    }
+}
+
+static void shell_put_task_cpu(vk_u32 cpu, vk_usize width)
+{
+    if (cpu == VK_TASK_CPU_NONE) {
+        shell_put_padded("-", width);
+        return;
+    }
+
+    shell_put_dec_width((vk_u64)cpu, width);
+}
+
+static void tasks_print_row(const vk_task_info_t* task)
+{
+    shell_put_dec_width(task->id, 3);
+    VK_CALL(puts, "  ");
+    shell_put_task_cpu(task->cpu, 3);
+    VK_CALL(puts, "  ");
+    shell_put_padded(task_state_name(task->state), 7);
+    VK_CALL(puts, "  ");
+    shell_put_dec_width(task->cpu_ticks, 8);
+    VK_CALL(puts, "  ");
+    VK_CALL(puts, task->name);
+    VK_CALL(putc, '\n');
+}
+
+static void cmd_tasks(const char* arg)
+{
+    vk_task_info_t tasks[TOP_MAX_TASKS];
+    vk_usize total;
+    vk_usize count;
+
+    (void)arg;
+    total = VK_CALL(task_snapshot, tasks, TOP_MAX_TASKS);
+    count = total < TOP_MAX_TASKS ? total : TOP_MAX_TASKS;
+
+    VK_CALL(puts, "PID  CPU  STATE    CPU TICKS  NAME\n");
+    for (vk_usize i = 0; i < count; ++i)
+        tasks_print_row(&tasks[i]);
+
+    if (total > count) {
+        VK_CALL(puts, "... ");
+        VK_CALL(put_dec, (vk_u64)(total - count));
+        VK_CALL(puts, " more task(s) not shown.\n");
     }
 }
 
@@ -408,6 +447,8 @@ static void top_print_row(const vk_task_info_t* task,
 {
     shell_put_dec_width(task->id, 3);
     VK_CALL(puts, "  ");
+    shell_put_task_cpu(task->cpu, 3);
+    VK_CALL(puts, "  ");
     top_print_percent(cpu_delta, elapsed_ticks);
     VK_CALL(puts, "  ");
     shell_put_dec_width(task->cpu_ticks, 8);
@@ -438,7 +479,7 @@ static void top_render(const vk_task_info_t* prev,
     VK_CALL(puts, "   Sample: ");
     VK_CALL(put_dec, elapsed_ticks);
     VK_CALL(puts, " ticks\n\n");
-    VK_CALL(puts, "PID  CPU%   CPU TICKS  STATE    NAME\n");
+    VK_CALL(puts, "PID  CPU  CPU%   CPU TICKS  STATE    NAME\n");
 
     for (vk_usize row = 0; row < rows; ++row) {
         vk_usize best = TOP_MAX_TASKS;
