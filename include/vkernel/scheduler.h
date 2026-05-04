@@ -61,6 +61,7 @@ struct task {
     task_entry_fn entry;
     bool          xsave_valid;             /* true after first XSAVE for this task */
     bool          allow_secondary_cpu;     /* tasks created before scheduler start stay on BSP */
+    u32           affinity_cpu;            /* CPU that owns this task's stack after first dispatch */
     u32           current_cpu;             /* APIC ID while running, SCHED_CPU_NONE otherwise */
     u64           cpu_ticks;               /* Timer ticks consumed while running */
 

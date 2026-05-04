@@ -16,11 +16,13 @@ namespace {
 
 constexpr const char* kRomPath = "sonic1.bin";
 constexpr vk_u32 kOutputSampleRate = 44100;
-constexpr vk_u32 kPlayBlockFrames = 2048;
+/* AC'97 playback is a one-shot DMA window, so bigger submissions buy more
+ * underrun tolerance when emulation or rendering stalls for a frame or two. */
+constexpr vk_u32 kPlayBlockFrames = 8192*2;
 constexpr vk_u32 kQueueCapacityFrames = 32768;
 constexpr vk_u32 kQueuePrimeFrames = kPlayBlockFrames * 2;
 constexpr vk_u32 kMaxFrameAudioFrames = 2048;
-constexpr vk_u32 kMaxCatchupFrames = 3;
+constexpr vk_u32 kMaxCatchupFrames = 4;
 constexpr vk_u32 kMaxLogMessage = 512;
 constexpr vk_u32 kDefaultScreenWidth = VDP_H40_SCREEN_WIDTH_IN_TILES * VDP_TILE_WIDTH;
 constexpr vk_u32 kDefaultScreenHeight = VDP_V28_SCANLINES_IN_TILES * VDP_STANDARD_TILE_HEIGHT;
