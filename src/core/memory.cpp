@@ -24,6 +24,97 @@ static u32 g_memory_map_count = 0;
 static constexpr u32 REGION_POOL_SIZE = 512;
 static memory_region g_region_pool[REGION_POOL_SIZE];
 
+static_assert((config::initial_kernel_heap_size % PAGE_SIZE_4K) == 0,
+              "initial kernel heap must be page-aligned");
+
+#if defined(_MSC_VER)
+__declspec(align(4096))
+static u8 g_initial_kernel_heap[config::initial_kernel_heap_size];
+#else
+static u8 g_initial_kernel_heap[config::initial_kernel_heap_size]
+    __attribute__((aligned(4096), section(".heap"), used));
+#endif
+
+static_assert(config::initial_kernel_heap_size > sizeof(heap_block),
+              "initial kernel heap must fit heap metadata");
+
+static constexpr size_phys HEAP_MIN_ALIGNMENT = 16;
+static constexpr size_phys HEAP_MIN_SPLIT_DATA_SIZE = 16;
+
+struct aligned_heap_candidate {
+    heap_block* block = null;
+    usize aligned_data = 0;
+    usize used_header_addr = 0;
+    size_phys prefix_data_size = 0;
+    size_phys suffix_total = 0;
+};
+
+static auto find_heap_block(heap_block* free_list, size_phys size) -> heap_block* {
+    for (auto* block = free_list; block != null; block = block->next) {
+        if (!block->used && block->size >= size) {
+            return block;
+        }
+    }
+    return null;
+}
+
+static auto find_aligned_heap_block(heap_block* free_list,
+                                    size_phys size,
+                                    size_phys alignment) -> aligned_heap_candidate {
+    const size_phys header_size = sizeof(heap_block);
+
+    for (auto* block = free_list; block != null; block = block->next) {
+        if (block->used) {
+            continue;
+        }
+
+        const usize block_addr = reinterpret_cast<usize>(block);
+        const usize data_start = block_addr + header_size;
+        const usize block_end = data_start + static_cast<usize>(block->size);
+
+        usize aligned_data = align_up(data_start, static_cast<usize>(alignment));
+
+        while (true) {
+            const usize used_header_addr = aligned_data - header_size;
+            if (used_header_addr == block_addr) {
+                break;
+            }
+            if (used_header_addr >= data_start) {
+                const size_phys prefix_data_size =
+                    static_cast<size_phys>(used_header_addr - data_start);
+                if (prefix_data_size >= HEAP_MIN_SPLIT_DATA_SIZE) {
+                    break;
+                }
+            }
+            if (aligned_data + static_cast<usize>(size) > block_end) {
+                break;
+            }
+            aligned_data += static_cast<usize>(alignment);
+        }
+
+        if (aligned_data < data_start) {
+            continue;
+        }
+
+        const usize used_header_addr = aligned_data - header_size;
+        if (used_header_addr < block_addr || aligned_data + size > block_end) {
+            continue;
+        }
+
+        aligned_heap_candidate fit;
+        fit.block = block;
+        fit.aligned_data = aligned_data;
+        fit.used_header_addr = used_header_addr;
+        fit.prefix_data_size =
+            static_cast<size_phys>(used_header_addr - data_start);
+        fit.suffix_total =
+            static_cast<size_phys>(block_end - (aligned_data + size));
+        return fit;
+    }
+
+    return {};
+}
+
 static auto alloc_region_node() -> memory_region* {
     for (u32 i = 0; i < REGION_POOL_SIZE; ++i) {
         if (g_region_pool[i].size == 0)
@@ -263,18 +354,25 @@ void phys_allocator::free_pages(phys_addr addr, u32 page_count) {
 
 /* Kernel heap initialization */
 auto kernel_heap::init(void* base, size_phys size) -> status_code {
+    if (base == null || size <= sizeof(heap_block)) {
+        return status_code::invalid_param;
+    }
+
     free_list_ = reinterpret_cast<heap_block*>(base);
     free_list_->size = size - sizeof(heap_block);
     free_list_->used = false;
     free_list_->next = null;
     free_list_->prev = null;
+    total_bytes_ = size;
+    subheap_count_ = 1;
+    expanding_ = false;
 
     log::debug() << "heap: base=" << reinterpret_cast<const void*>(base) << ", capacity=" << static_cast<unsigned long long>(size / (1024 * 1024)) << " MB";
 
     return status_code::success;
 }
 
-/* Add a new physically-contiguous region to the heap's free list */
+/* Add a new physically-contiguous subheap to the heap's free list */
 auto kernel_heap::add_region(void* base, size_phys size) -> status_code {
     if (base == null || size <= sizeof(heap_block)) {
         return status_code::invalid_param;
@@ -288,22 +386,128 @@ auto kernel_heap::add_region(void* base, size_phys size) -> status_code {
 
     lock_.acquire();
 
-    if (free_list_ == null) {
+    if (free_list_ == null ||
+        reinterpret_cast<usize>(block) < reinterpret_cast<usize>(free_list_)) {
+        block->next = free_list_;
+        if (free_list_ != null) {
+            free_list_->prev = block;
+        }
         free_list_ = block;
     } else {
-        auto* tail = free_list_;
-        while (tail->next != null) {
-            tail = tail->next;
+        auto* current = free_list_;
+        while (current->next != null &&
+               reinterpret_cast<usize>(current->next) < reinterpret_cast<usize>(block)) {
+            current = current->next;
         }
-        tail->next  = block;
-        block->prev = tail;
+
+        block->next = current->next;
+        block->prev = current;
+        current->next = block;
+        if (block->next != null) {
+            block->next->prev = block;
+        }
     }
+
+    if (block->prev != null && !block->prev->used && block->prev->end() == block) {
+        block->prev->size += block->size + sizeof(heap_block);
+        block->prev->next = block->next;
+        if (block->next != null) {
+            block->next->prev = block->prev;
+        }
+        block = block->prev;
+    }
+
+    if (block->next != null && !block->next->used && block->end() == block->next) {
+        auto* next = block->next;
+        block->size += next->size + sizeof(heap_block);
+        block->next = next->next;
+        if (block->next != null) {
+            block->next->prev = block;
+        }
+    }
+
+    total_bytes_ += size;
+    ++subheap_count_;
 
     lock_.release();
 
-    log::debug() << "heap: added region base=" << reinterpret_cast<const void*>(base) << ", +" << static_cast<unsigned long long>(size / (1024 * 1024)) << " MB";
+    log::debug() << "heap: added subheap base=" << reinterpret_cast<const void*>(base) << ", +" << static_cast<unsigned long long>(size / (1024 * 1024)) << " MB";
 
     return status_code::success;
+}
+
+auto kernel_heap::expand(size_phys size, size_phys alignment) -> bool {
+    if (size == 0) {
+        return false;
+    }
+
+    const size_phys header_size = sizeof(heap_block);
+    const size_phys max_size = ~static_cast<size_phys>(0);
+    const size_phys effective_alignment =
+        max(alignment, static_cast<size_phys>(HEAP_MIN_ALIGNMENT));
+    const size_phys alignment_slack =
+        max(effective_alignment, static_cast<size_phys>(PAGE_SIZE_4K));
+
+    if (size > max_size - header_size - alignment_slack) {
+        return false;
+    }
+
+    const size_phys minimum_bytes = size + header_size + alignment_slack;
+    if (minimum_bytes > (max_size - PAGE_SIZE_4K) / 2) {
+        return false;
+    }
+
+    size_phys grow_bytes = align_up(
+        (minimum_bytes * 2) + PAGE_SIZE_4K,
+        static_cast<usize>(PAGE_SIZE_4K));
+    if (grow_bytes < config::kernel_heap_min_subheap_size) {
+        grow_bytes = config::kernel_heap_min_subheap_size;
+    }
+
+    const u64 page_count64 = grow_bytes / PAGE_SIZE_4K;
+    if (page_count64 == 0 || page_count64 > 0xFFFFFFFFULL) {
+        return false;
+    }
+
+    u32 phys_alignment = PAGE_SIZE_4K;
+    const size_phys requested_phys_alignment =
+        max(alignment, static_cast<size_phys>(PAGE_SIZE_4K));
+    if (requested_phys_alignment <= 0xFFFFFFFFULL) {
+        phys_alignment = static_cast<u32>(requested_phys_alignment);
+    }
+
+    const u32 page_count = static_cast<u32>(page_count64);
+    const phys_addr phys = g_phys_alloc.allocate_pages(page_count, phys_alignment, 0);
+    if (phys == 0) {
+        log::warn() << "heap: expansion allocation failed ("
+                    << static_cast<unsigned long long>(page_count)
+                    << " pages)";
+        return false;
+    }
+
+    void* const base = reinterpret_cast<void*>(static_cast<u64>(phys));
+    arch::make_region_writable(phys, grow_bytes);
+    memory::set(base, 0, grow_bytes);
+
+    if (add_region(base, grow_bytes) != status_code::success) {
+        g_phys_alloc.free_pages(phys, page_count);
+        log::warn() << "heap: failed to attach expanded subheap";
+        return false;
+    }
+
+    lock_.acquire();
+    const size_phys total_bytes = total_bytes_;
+    const u32 subheap_count = subheap_count_;
+    lock_.release();
+
+    log::info() << "heap: expanded by "
+                << static_cast<unsigned long long>(grow_bytes / (1024 * 1024))
+                << " MB (total "
+                << static_cast<unsigned long long>(total_bytes / (1024 * 1024))
+                << " MB across "
+                << static_cast<unsigned long long>(subheap_count)
+                << " subheap(s))";
+    return true;
 }
 
 /* Kernel heap allocation */
@@ -312,46 +516,56 @@ auto kernel_heap::allocate(size_phys size) -> void* {
         return null;
     }
 
-    lock_.acquire();
-    
     /* Align size to 16 bytes so every allocation starts on a 16-byte boundary
      * (required by SSE/XMM constants in PE .rdata that use MOVAPS/XORPS). */
-    size = align_up(size, static_cast<usize>(16));
-    
-    /* Find a free block that fits */
-    auto block = free_list_;
-    while (block != null) {
-        if (!block->used && block->size >= size) {
-            /* Found a suitable block */
+    size = align_up(size, static_cast<usize>(HEAP_MIN_ALIGNMENT));
+
+    while (true) {
+        lock_.acquire();
+
+        auto* block = find_heap_block(free_list_, size);
+        if (block != null) {
             block->used = true;
-            
-            /* Split the block if there's enough remaining space */
-            if (block->size > size + sizeof(heap_block) + 16) {
-                auto new_block = reinterpret_cast<heap_block*>(
-                    reinterpret_cast<u8*>(block) + sizeof(heap_block) + size
-                );
+
+            if (block->size > size + sizeof(heap_block) + HEAP_MIN_SPLIT_DATA_SIZE) {
+                auto* new_block = reinterpret_cast<heap_block*>(
+                    reinterpret_cast<u8*>(block) + sizeof(heap_block) + size);
                 new_block->size = block->size - size - sizeof(heap_block);
                 new_block->used = false;
                 new_block->next = block->next;
                 new_block->prev = block;
-                
+
                 if (block->next != null) {
                     block->next->prev = new_block;
                 }
-                
+
                 block->next = new_block;
                 block->size = size;
             }
-            
+
             lock_.release();
             return block->data();
         }
-        block = block->next;
+
+        if (!expanding_) {
+            expanding_ = true;
+            lock_.release();
+
+            const bool expanded = expand(size, HEAP_MIN_ALIGNMENT);
+
+            lock_.acquire();
+            expanding_ = false;
+            lock_.release();
+
+            if (!expanded) {
+                return null;
+            }
+            continue;
+        }
+
+        lock_.release();
+        arch::cpu_pause();
     }
-    
-    lock_.release();
-    /* No suitable block found */
-    return null;
 }
 
 /* Zero-initialized allocation */
@@ -368,7 +582,7 @@ auto kernel_heap::allocate_zero_aligned(size_phys size, size_phys alignment) -> 
         return null;
     }
 
-    if (alignment <= 16) {
+    if (alignment <= HEAP_MIN_ALIGNMENT) {
         return allocate_zero(size);
     }
 
@@ -376,112 +590,79 @@ auto kernel_heap::allocate_zero_aligned(size_phys size, size_phys alignment) -> 
         return null;
     }
 
-    lock_.acquire();
+    size = align_up(size, static_cast<usize>(HEAP_MIN_ALIGNMENT));
 
-    size = align_up(size, static_cast<usize>(16));
+    while (true) {
+        lock_.acquire();
 
-    constexpr size_phys MIN_SPLIT_DATA_SIZE = 16;
-    const size_phys header_size = sizeof(heap_block);
+        const auto fit = find_aligned_heap_block(free_list_, size, alignment);
+        if (fit.block != null) {
+            auto* block = fit.block;
+            auto* old_next = block->next;
+            const size_phys header_size = sizeof(heap_block);
 
-    auto block = free_list_;
-    while (block != null) {
-        if (block->used) {
-            block = block->next;
-            continue;
-        }
-
-        auto* old_next = block->next;
-        const usize block_addr = reinterpret_cast<usize>(block);
-        const usize data_start = block_addr + header_size;
-        const usize block_end = data_start + static_cast<usize>(block->size);
-
-        usize aligned_data = align_up(data_start, static_cast<usize>(alignment));
-
-        /*
-         * free() finds metadata immediately before the returned pointer.
-         * If aligning would leave a tiny unusable prefix, move to the next
-         * alignment slot so the prefix remains a valid free heap block.
-         */
-        while (true) {
-            const usize used_header_addr = aligned_data - header_size;
-            if (used_header_addr == block_addr) {
-                break;
-            }
-            if (used_header_addr >= data_start) {
-                const size_phys prefix_data_size =
-                    static_cast<size_phys>(used_header_addr - data_start);
-                if (prefix_data_size >= MIN_SPLIT_DATA_SIZE) {
-                    break;
+            heap_block* used_block = null;
+            if (fit.prefix_data_size == 0 && fit.used_header_addr == reinterpret_cast<usize>(block)) {
+                used_block = block;
+            } else {
+                block->size = fit.prefix_data_size;
+                used_block = reinterpret_cast<heap_block*>(fit.used_header_addr);
+                used_block->prev = block;
+                used_block->next = old_next;
+                block->next = used_block;
+                if (old_next != null) {
+                    old_next->prev = used_block;
                 }
             }
-            if (aligned_data + static_cast<usize>(size) > block_end) {
-                break;
+
+            used_block->used = true;
+
+            if (fit.suffix_total > header_size + HEAP_MIN_SPLIT_DATA_SIZE) {
+                auto* suffix = reinterpret_cast<heap_block*>(fit.aligned_data + size);
+                suffix->size = fit.suffix_total - header_size;
+                suffix->used = false;
+                suffix->prev = used_block;
+                suffix->next = old_next;
+
+                used_block->size = size;
+                used_block->next = suffix;
+                if (old_next != null) {
+                    old_next->prev = suffix;
+                }
+            } else {
+                used_block->size = size + fit.suffix_total;
+                used_block->next = old_next;
+                if (old_next != null) {
+                    old_next->prev = used_block;
+                }
             }
-            aligned_data += static_cast<usize>(alignment);
+
+            lock_.release();
+
+            void* ptr = reinterpret_cast<void*>(fit.aligned_data);
+            memory::set(ptr, 0, size);
+            return ptr;
         }
 
-        if (aligned_data < data_start) {
-            block = block->next;
+        if (!expanding_) {
+            expanding_ = true;
+            lock_.release();
+
+            const bool expanded = expand(size, alignment);
+
+            lock_.acquire();
+            expanding_ = false;
+            lock_.release();
+
+            if (!expanded) {
+                return null;
+            }
             continue;
-        }
-
-        const usize used_header_addr = aligned_data - header_size;
-        if (used_header_addr < block_addr || aligned_data + size > block_end) {
-            block = block->next;
-            continue;
-        }
-
-        const size_phys prefix_data_size =
-            static_cast<size_phys>(used_header_addr - data_start);
-        const size_phys suffix_total =
-            static_cast<size_phys>(block_end - (aligned_data + size));
-
-        heap_block* used_block = null;
-        if (prefix_data_size == 0 && used_header_addr == block_addr) {
-            used_block = block;
-        } else {
-            block->size = prefix_data_size;
-            used_block = reinterpret_cast<heap_block*>(used_header_addr);
-            used_block->prev = block;
-            used_block->next = old_next;
-            block->next = used_block;
-            if (old_next != null) {
-                old_next->prev = used_block;
-            }
-        }
-
-        used_block->used = true;
-
-        if (suffix_total > header_size + MIN_SPLIT_DATA_SIZE) {
-            auto* suffix = reinterpret_cast<heap_block*>(aligned_data + size);
-            suffix->size = suffix_total - header_size;
-            suffix->used = false;
-            suffix->prev = used_block;
-            suffix->next = old_next;
-
-            used_block->size = size;
-            used_block->next = suffix;
-            if (old_next != null) {
-                old_next->prev = suffix;
-            }
-        } else {
-            used_block->size =
-                static_cast<size_phys>(block_end - aligned_data);
-            used_block->next = old_next;
-            if (old_next != null) {
-                old_next->prev = used_block;
-            }
         }
 
         lock_.release();
-
-        void* ptr = reinterpret_cast<void*>(aligned_data);
-        memory::set(ptr, 0, size);
-        return ptr;
+        arch::cpu_pause();
     }
-
-    lock_.release();
-    return null;
 }
 
 /* Free kernel heap memory */
@@ -595,51 +776,21 @@ auto memory::init(span<const memory_map_entry> map) -> status_code {
     }
 
     /* ---------------------------------------------------------------
-     * Build the kernel heap from all free physical memory.
+     * Initialize the kernel heap from the fixed .heap reservation.
      *
-     * Physical addresses are valid as virtual addresses here because
-     * UEFI's identity-mapped page tables are still active.
+     * This matches Serenity's boot-heap model more closely: allocator
+     * metadata lives in kernel-owned image memory instead of reclaiming
+     * arbitrary physical regions during early boot.
      * --------------------------------------------------------------- */
-    bool heap_initialized = false;
-    size_phys heap_bytes  = 0;
+    void* const heap_base = g_initial_kernel_heap;
+    const size_phys heap_size = sizeof(g_initial_kernel_heap);
 
-    for (u32 i = 0; i < g_memory_map_count; ++i) {
-        const auto& entry = g_memory_map[i];
+    arch::make_region_writable(
+        reinterpret_cast<phys_addr>(heap_base), heap_size);
+    memory::set(heap_base, 0, heap_size);
 
-        const bool is_free =
-            entry.type == memory_type::conventional ||
-            entry.type == memory_type::boot_services_code ||
-            entry.type == memory_type::boot_services_data;
-
-        if (!is_free || entry.number_of_pages == 0) continue;
-
-        const u32 pages = static_cast<u32>(
-            entry.number_of_pages < 0xFFFFFFFFULL ? entry.number_of_pages : 0xFFFFFFFFU);
-
-        const phys_addr addr =
-            g_phys_alloc.allocate_pages(pages, PAGE_SIZE_4K, 0);
-        if (addr == 0) continue;
-
-        void*      base = reinterpret_cast<void*>(static_cast<u64>(addr));
-        size_phys  size = static_cast<size_phys>(pages) * PAGE_SIZE_4K;
-
-        /* Ensure every page in this region is writable in the UEFI page
-         * tables before we write heap_block metadata into them.  UEFI may
-         * map boot_services_code regions as R/W=0; with CR0.WP active that
-         * causes a protection fault on the very first heap header write. */
-        arch::make_region_writable(addr, size);
-
-        if (!heap_initialized) {
-            if (g_kernel_heap.init(base, size) != status_code::success) continue;
-            heap_initialized = true;
-        } else {
-            g_kernel_heap.add_region(base, size);
-        }
-        heap_bytes += size;
-    }
-
-    if (!heap_initialized) {
-        log::error() << "memory: no free physical memory above 16 MB for kernel heap";
+    if (g_kernel_heap.init(heap_base, heap_size) != status_code::success) {
+        log::error() << "memory: failed to initialize fixed kernel heap";
         return status_code::no_memory;
     }
 
@@ -649,8 +800,10 @@ auto memory::init(span<const memory_map_entry> map) -> status_code {
                 << static_cast<unsigned long long>(
                        (g_phys_alloc.total_pages() * PAGE_SIZE_4K) / (1024 * 1024))
                 << " MB total, "
-                << static_cast<unsigned long long>(heap_bytes / (1024 * 1024))
-                << " MB heap)";
+                << static_cast<unsigned long long>(heap_size / (1024 * 1024))
+                << " MB fixed heap @ "
+                << reinterpret_cast<const void*>(heap_base)
+                << ")";
     
     return status_code::success;
 }
@@ -713,6 +866,8 @@ void memory::dump_heap() {
     log::info() << "----------------------------------------";
     log::info() << "  Total Used:  " << used_count << " blocks, " << used_total << " bytes";
     log::info() << "  Total Free:  " << free_count << " blocks, " << free_total << " bytes";
+    log::info() << "  Capacity:    " << g_kernel_heap.total_bytes() << " bytes across "
+                << g_kernel_heap.subheap_count() << " subheap(s)";
     log::info() << "========================================\n\n";
 }
 

@@ -20,7 +20,7 @@ subsystem, ATA PIO driver, and ports of Doom, Quake, ClownMDEmu, and Dear ImGui.
 | PIT 8254 @ 100 Hz (preemption clock) | ✅ Working |
 | Round-robin preemptive scheduler | ✅ Working |
 | SMP (INIT-SIPI-SIPI + LAPIC timer per AP) | ✅ Working (4 APs online) |
-| Kernel heap (64 MB static) | ✅ Working |
+| Kernel heap (64 MB boot heap + expandable subheaps) | ✅ Working |
 | Physical page allocator | ⚠️ Stub (page count tracked; no free list) |
 | ACPI RSDP/RSDT/XSDT/MADT parser | ✅ Working |
 | PCI bus enumeration (I/O config space) | ✅ Working |
@@ -67,8 +67,10 @@ subsystem, ATA PIO driver, and ports of Doom, Quake, ClownMDEmu, and Dear ImGui.
 │                      Microkernel Core  (ring 0)                  │
 │  ┌────────────┬──────────────┬──────────┬──────────────────────┐ │
 │  │ Scheduler  │ Memory       │ Input    │ Console / vk::log    │ │
-│  │ PIT+LAPIC  │ 64 MB heap   │ PS/2 +   │ serial + GOP fb      │ │
-│  │ SMP 4 CPUs │ phys alloc   │ COM1     │ leveled logging      │ │
+│  │ PIT+LAPIC  │ 64 MB boot   │ PS/2 +   │ serial + GOP fb      │ │
+│  │ SMP 4 CPUs │ heap +       │ COM1     │ leveled logging      │ │
+│  │            │ subheaps     │          │                      │ │
+│  │            │ phys alloc   │          │                      │ │
 │  ├────────────┴──────────────┴──────────┴──────────────────────┤ │
 │  │ Filesystem          │ Process loader  │ Panic               │ │
 │  │ ramfs + UEFI ESP    │ ELF64 · PE/COFF │ vk_panic() · halt   │ │

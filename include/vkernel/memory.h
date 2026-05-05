@@ -187,7 +187,7 @@ public:
 
     auto init(void* base, size_phys size) -> status_code;
 
-    /* Extend the heap with an additional physically-contiguous region.
+    /* Extend the heap with an additional physically-contiguous subheap.
      * The region must remain valid for the lifetime of the heap. */
     auto add_region(void* base, size_phys size) -> status_code;
 
@@ -201,9 +201,16 @@ public:
 
     /* For diagnostic purposes only (not thread-safe) */
     [[nodiscard]] auto get_free_list() const -> heap_block* { return free_list_; }
+    [[nodiscard]] auto total_bytes() const -> size_phys { return total_bytes_; }
+    [[nodiscard]] auto subheap_count() const -> u32 { return subheap_count_; }
 
 private:
+    auto expand(size_phys size, size_phys alignment) -> bool;
+
     heap_block* free_list_ = null;
+    size_phys total_bytes_ = 0;
+    u32 subheap_count_ = 0;
+    bool expanding_ = false;
     spinlock lock_;
 };
 

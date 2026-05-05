@@ -30,6 +30,8 @@ static KNode s_sys_mem;
 static KNode s_sys_mem_total_kb;
 static KNode s_sys_mem_free_kb;
 static KNode s_sys_mem_heap_used;
+static KNode s_sys_mem_heap_capacity;
+static KNode s_sys_mem_heap_subheaps;
 static KNode s_sys_power;
 static KNode s_sys_power_state;
 
@@ -319,6 +321,14 @@ static auto get_sys_mem_heap_used(KNode*) -> KVal {
     return KVal::from_u64(used);
 }
 
+static auto get_sys_mem_heap_capacity(KNode*) -> KVal {
+    return KVal::from_u64(g_kernel_heap.total_bytes());
+}
+
+static auto get_sys_mem_heap_subheaps(KNode*) -> KVal {
+    return KVal::from_u64(static_cast<u64>(g_kernel_heap.subheap_count()));
+}
+
 static auto get_sys_power_state(KNode*) -> KVal {
     return KVal::from_enum(s_power_state);
 }
@@ -477,6 +487,26 @@ void init() {
     s_sys_mem_heap_used.schema.cap_mask = 0x01;
     s_sys_mem_heap_used.get_fn = get_sys_mem_heap_used;
     add_child(&s_sys_mem, &s_sys_mem_heap_used);
+
+    s_sys_mem_heap_capacity = {};
+    s_sys_mem_heap_capacity.schema.name = "heap_capacity";
+    s_sys_mem_heap_capacity.schema.type = KTag::U64;
+    s_sys_mem_heap_capacity.schema.writable = false;
+    s_sys_mem_heap_capacity.schema.volatile_node = true;
+    s_sys_mem_heap_capacity.schema.unit = "bytes";
+    s_sys_mem_heap_capacity.schema.cap_mask = 0x01;
+    s_sys_mem_heap_capacity.get_fn = get_sys_mem_heap_capacity;
+    add_child(&s_sys_mem, &s_sys_mem_heap_capacity);
+
+    s_sys_mem_heap_subheaps = {};
+    s_sys_mem_heap_subheaps.schema.name = "heap_subheaps";
+    s_sys_mem_heap_subheaps.schema.type = KTag::U64;
+    s_sys_mem_heap_subheaps.schema.writable = false;
+    s_sys_mem_heap_subheaps.schema.volatile_node = true;
+    s_sys_mem_heap_subheaps.schema.unit = "count";
+    s_sys_mem_heap_subheaps.schema.cap_mask = 0x01;
+    s_sys_mem_heap_subheaps.get_fn = get_sys_mem_heap_subheaps;
+    add_child(&s_sys_mem, &s_sys_mem_heap_subheaps);
 
     s_sys_power = {};
     s_sys_power.schema.name = "power";

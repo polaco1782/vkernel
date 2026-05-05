@@ -152,6 +152,11 @@ inline constexpr u32 max_tasks             = 256;
 inline constexpr u32 max_ipc_endpoints     = 1024;
 inline constexpr u32 max_devices           = 128;
 
+/* Fixed kernel heap reserved in the image. Keep this generous until the
+ * heap supports Serenity-style expansion beyond the boot subheap. */
+inline constexpr usize initial_kernel_heap_size = 64 * 1024 * 1024;
+inline constexpr usize kernel_heap_min_subheap_size = 1 * 1024 * 1024;
+
 /* ============================================================
  * Kernel address space layout (x86_64 higher-half)
  * ============================================================ */

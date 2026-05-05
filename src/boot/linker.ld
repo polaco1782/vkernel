@@ -62,13 +62,18 @@ SECTIONS
 
     . = ALIGN(4096);
 
-    /* BSS (zero-initialised) */
-    .bss :
+    /* BSS + fixed boot heap (zero-initialised, not stored in the image) */
+    .bss (NOLOAD) :
     {
         _bss = .;
         *(.bss .bss.*)
         *(COMMON)
         _ebss = .;
+
+        . = ALIGN(4096);
+        _heap_start = .;
+        KEEP(*(.heap .heap.*))
+        _heap_end = .;
     }
 
     _end = .;
