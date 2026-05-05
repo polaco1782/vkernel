@@ -241,6 +241,10 @@ static void stub_wait_task(vk_i64 task_id) {
     sched::wait_for_task(static_cast<u64>(task_id));
 }
 
+static int stub_terminate_task(vk_u64 task_id) {
+    return sched::terminate_task(task_id) ? 1 : 0;
+}
+
 static vk_usize stub_task_snapshot(vk_task_info_t* out, vk_usize max_tasks) {
     if (out == null || max_tasks == 0) {
         return sched::snapshot_tasks(null, 0);
@@ -827,6 +831,7 @@ void init() {
     s_api.vk_send_mouse = stub_send_mouse;
     /* process command line */
     s_api.vk_get_cmdline = stub_get_cmdline;
+    s_api.vk_terminate_task = stub_terminate_task;
 
     s_api_ready = true;
 }

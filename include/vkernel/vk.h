@@ -160,6 +160,7 @@ typedef struct vk_api {
     /* ---- compositor control ---- */
     int (*vk_set_compositor_active)(vk_u32 active);
     int (*vk_set_compositor_default_fb)(const vk_framebuffer_info_t* fb);
+
     /* ---- kobj ---- */
     vk_usize (*vk_kobj_rpc)(const char* req_json, char* out, vk_usize out_cap);
 
@@ -169,11 +170,12 @@ typedef struct vk_api {
     /* ---- process command line ---- */
     vk_usize (*vk_get_cmdline)(char* out, vk_usize out_cap);
     vk_i64   (*vk_run_cmdline)(const char* command_line);
+    int      (*vk_terminate_task)(vk_u64 task_id);
 
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 27ULL
+#define VK_API_VERSION 28ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

@@ -30,6 +30,7 @@ static bool g_show_console  = true;
 static bool g_show_settings = false;
 static bool g_show_demo     = false;
 static bool g_show_task_manager = true;
+static bool g_show_kobj     = true;
 static bool g_open_about    = false;   /* one-shot: triggers OpenPopup */
 static vk_u32 g_default_app_w = 320;
 static vk_u32 g_default_app_h = 200;
@@ -47,6 +48,7 @@ static int g_launch_app_count = 0;
 struct wm_app_window_t {
     bool used;
     bool open;
+    bool close_requested;
     bool focus_next;
     vk_i64 task_id;
     vk_u32 w;
@@ -59,6 +61,12 @@ struct wm_app_window_t {
     int blit_w;
     int blit_h;
     char title[64];
+    /* Dynamic resize — pending dimensions set each frame when avail area
+     * differs from the current buffer; actual realloc happens after the
+     * size has been stable for RESIZE_DEBOUNCE_TICKS ticks. */
+    vk_u32 pending_w;
+    vk_u32 pending_h;
+    vk_u64 resize_request_tick;
 };
 
 static const int WM_MAX_APPS = 6;
@@ -86,10 +94,40 @@ static vk_u32 g_task_cpu_count = 1;
 static vk_u64 g_task_last_cpu_query_tick = 0;
 static float g_task_total_cpu_percent = 0.0f;
 
-static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h);
+static const int KOBJ_PATH_LEN = 128;
+static const int KOBJ_VALUE_LEN = 256;
+static const int KOBJ_TYPE_LEN = 32;
+static const int KOBJ_DESC_LEN = 512;
+static const int KOBJ_ITEM_LEN = 64;
+static const int KOBJ_ITEMS_MAX = 64;
+
+static char g_kobj_selected_path[KOBJ_PATH_LEN] = "sys";
+static char g_kobj_value[KOBJ_VALUE_LEN] = "";
+static char g_kobj_type[KOBJ_TYPE_LEN] = "";
+static char g_kobj_desc[KOBJ_DESC_LEN] = "";
+static char g_kobj_path_input[KOBJ_PATH_LEN] = "sys";
+static vk_u64 g_kobj_last_refresh_tick = 0;
+static bool g_kobj_auto_refresh = true;
+
+/* Edit state — populated on selection, used by the detail panel. */
+static const int KOBJ_ENUM_LABEL_MAX = 8;
+static const int KOBJ_ENUM_LABEL_LEN = 32;
+static bool g_kobj_writable = false;
+static char g_kobj_enum_labels[KOBJ_ENUM_LABEL_MAX][KOBJ_ENUM_LABEL_LEN];
+static int  g_kobj_enum_count = 0;
+static int  g_kobj_enum_selected = 0;
+static char g_kobj_edit_buf[KOBJ_VALUE_LEN] = "";
+static bool g_kobj_has_range = false;
+static long long g_kobj_range_min = 0;
+static long long g_kobj_range_max = 0;
+
+static void try_resize_app(wm_app_window_t& app);
+
+static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h);  /* forward */
 static void refresh_launch_apps();
 static int focused_app_index();
 static void clear_app_focus_if_window_focused();
+static void draw_kobj_window();
 
 /* --- Counter widget --- */
 static int  g_counter        = 0;
@@ -301,6 +339,325 @@ static void task_manager_refresh()
     if (g_task_total_cpu_percent > max_percent)
         g_task_total_cpu_percent = max_percent;
     task_manager_push_history(g_task_total_cpu_percent);
+}
+
+static void copy_text(char* out, size_t out_cap, const char* text)
+{
+    if (!out || out_cap == 0)
+        return;
+
+    if (!text)
+        text = "";
+
+    strncpy(out, text, out_cap - 1);
+    out[out_cap - 1] = '\0';
+}
+
+static void kobj_build_path_request(char* out,
+                                    size_t out_cap,
+                                    const char* op,
+                                    const char* path)
+{
+    if (!out || out_cap == 0)
+        return;
+
+    vk_usize pos = 0;
+    out[pos++] = '{';
+    out[pos++] = '"'; out[pos++] = 'o'; out[pos++] = 'p'; out[pos++] = '"';
+    out[pos++] = ':'; out[pos++] = '"';
+    pos = vk_json_copy_escaped(out, (vk_usize)out_cap, pos, op ? op : "");
+    out[pos++] = '"';
+    out[pos++] = ','; out[pos++] = '"'; out[pos++] = 'p'; out[pos++] = 'a'; out[pos++] = 't'; out[pos++] = 'h'; out[pos++] = '"';
+    out[pos++] = ':'; out[pos++] = '"';
+    pos = vk_json_copy_escaped(out, (vk_usize)out_cap, pos, path ? path : "");
+    out[pos++] = '"';
+    out[pos++] = '}';
+    if (pos >= (vk_usize)out_cap)
+        pos = (vk_usize)out_cap - 1;
+    out[pos] = '\0';
+}
+
+static bool json_extract_string_field(const char* json,
+                                      const char* key,
+                                      char* out,
+                                      size_t out_cap)
+{
+    if (!json || !key || !out || out_cap == 0)
+        return false;
+
+    char pattern[48];
+    snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
+    const char* cur = strstr(json, pattern);
+    if (!cur)
+        return false;
+
+    cur += strlen(pattern);
+    size_t pos = 0;
+
+    while (*cur != '\0') {
+        char ch = *cur++;
+        if (ch == '"')
+            break;
+
+        if (ch == '\\' && *cur != '\0') {
+            char esc = *cur++;
+            if (esc == 'n') ch = '\n';
+            else if (esc == 'r') ch = '\r';
+            else if (esc == 't') ch = '\t';
+            else ch = esc;
+        }
+
+        if (pos + 1 < out_cap)
+            out[pos++] = ch;
+    }
+
+    out[pos] = '\0';
+    return true;
+}
+
+static bool json_response_ok(const char* json)
+{
+    return json && strstr(json, "\"ok\":true") != nullptr;
+}
+
+static int json_extract_items(const char* json,
+                              char items[][KOBJ_ITEM_LEN],
+                              int max_items)
+{
+    if (!json || !items || max_items <= 0)
+        return 0;
+
+    const char* cur = strstr(json, "\"items\":[");
+    if (!cur)
+        return 0;
+
+    cur += 9;
+    int count = 0;
+
+    while (*cur != '\0' && *cur != ']' && count < max_items) {
+        while (*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n' || *cur == ',')
+            ++cur;
+
+        if (*cur != '"')
+            break;
+
+        ++cur;
+        size_t pos = 0;
+        while (*cur != '\0' && *cur != '"') {
+            char ch = *cur++;
+            if (ch == '\\' && *cur != '\0') {
+                char esc = *cur++;
+                if (esc == 'n') ch = '\n';
+                else if (esc == 'r') ch = '\r';
+                else if (esc == 't') ch = '\t';
+                else ch = esc;
+            }
+
+            if (pos + 1 < KOBJ_ITEM_LEN)
+                items[count][pos++] = ch;
+        }
+
+        items[count][pos] = '\0';
+        if (*cur == '"')
+            ++cur;
+        ++count;
+    }
+
+    return count;
+}
+
+static void kobj_join_path(const char* parent,
+                           const char* child,
+                           char* out,
+                           size_t out_cap)
+{
+    if (!out || out_cap == 0)
+        return;
+
+    if (!parent || parent[0] == '\0') {
+        copy_text(out, out_cap, child);
+        return;
+    }
+
+    snprintf(out, out_cap, "%s/%s", parent, child ? child : "");
+    out[out_cap - 1] = '\0';
+}
+
+static int kobj_ls_items(const char* path,
+                         char items[][KOBJ_ITEM_LEN],
+                         int max_items)
+{
+    char req[256];
+    char out[1536];
+
+    kobj_build_path_request(req, sizeof(req), "ls", path);
+    vk_kobj_rpc_json(req, out, sizeof(out));
+
+    if (!json_response_ok(out))
+        return 0;
+
+    return json_extract_items(out, items, max_items);
+}
+
+/* Parse a "key:   value\n" line from describe text.
+ * Returns pointer to value (trimmed) in a static buffer, or nullptr. */
+static const char* desc_get_field(const char* text, const char* key)
+{
+    static char s_buf[256];
+    size_t klen = strlen(key);
+    const char* p = text;
+    while (*p) {
+        if (strncmp(p, key, klen) == 0) {
+            const char* v = p + klen;
+            while (*v == ' ' || *v == '\t' || *v == ':') ++v;
+            size_t n = 0;
+            while (v[n] && v[n] != '\n' && n + 1 < sizeof(s_buf)) ++n;
+            memcpy(s_buf, v, n);
+            s_buf[n] = '\0';
+            /* rtrim */
+            while (n > 0 && (s_buf[n-1] == ' ' || s_buf[n-1] == '\t')) s_buf[--n] = '\0';
+            return s_buf;
+        }
+        while (*p && *p != '\n') ++p;
+        if (*p == '\n') ++p;
+    }
+    return nullptr;
+}
+
+/* Simple signed integer parser (no stdlib dependency). */
+static long long parse_ll(const char* s)
+{
+    if (!s) return 0;
+    while (*s == ' ' || *s == '\t') ++s;
+    long long sign = 1, v = 0;
+    if (*s == '-') { sign = -1; ++s; }
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s++ - '0'); }
+    return sign * v;
+}
+
+static void kobj_parse_edit_state()
+{
+    g_kobj_writable = false;
+    g_kobj_enum_count = 0;
+    g_kobj_enum_selected = 0;
+    g_kobj_has_range = false;
+    g_kobj_range_min = 0;
+    g_kobj_range_max = 0;
+    g_kobj_edit_buf[0] = '\0';
+
+    const char* w = desc_get_field(g_kobj_desc, "writable");
+    if (w && strcmp(w, "yes") == 0)
+        g_kobj_writable = true;
+
+    if (!g_kobj_writable)
+        return;
+
+    /* Enum labels: "labels:   a, b, c" */
+    if (strcmp(g_kobj_type, "enum") == 0) {
+        const char* labels = desc_get_field(g_kobj_desc, "labels");
+        if (labels) {
+            const char* p = labels;
+            while (*p && g_kobj_enum_count < KOBJ_ENUM_LABEL_MAX) {
+                while (*p == ' ') ++p;
+                size_t n = 0;
+                while (p[n] && p[n] != ',' && n + 1 < (size_t)KOBJ_ENUM_LABEL_LEN) ++n;
+                /* rtrim */
+                size_t m = n;
+                while (m > 0 && (p[m-1] == ' ')) --m;
+                memcpy(g_kobj_enum_labels[g_kobj_enum_count], p, m);
+                g_kobj_enum_labels[g_kobj_enum_count][m] = '\0';
+                ++g_kobj_enum_count;
+                p += n;
+                if (*p == ',') ++p;
+            }
+        }
+        /* find current index */
+        for (int i = 0; i < g_kobj_enum_count; ++i) {
+            if (strcmp(g_kobj_enum_labels[i], g_kobj_value) == 0) {
+                g_kobj_enum_selected = i;
+                break;
+            }
+        }
+        return;
+    }
+
+    /* Range for numeric types */
+    const char* range = desc_get_field(g_kobj_desc, "range");
+    if (range && strcmp(range, "(unbounded)") != 0) {
+        const char* dots = strstr(range, "..");
+        if (dots) {
+            g_kobj_range_min = parse_ll(range);
+            g_kobj_range_max = parse_ll(dots + 2);
+            g_kobj_has_range = (g_kobj_range_max > g_kobj_range_min);
+        }
+    }
+
+    /* Seed edit buffer with current value */
+    strncpy(g_kobj_edit_buf, g_kobj_value, sizeof(g_kobj_edit_buf) - 1);
+    g_kobj_edit_buf[sizeof(g_kobj_edit_buf) - 1] = '\0';
+}
+
+static void kobj_refresh_selected()
+{
+    char req[256];
+    char out[1536];
+
+    kobj_build_path_request(req, sizeof(req), "get", g_kobj_selected_path);
+    vk_kobj_rpc_json(req, out, sizeof(out));
+    if (!json_extract_string_field(out, "value", g_kobj_value, sizeof(g_kobj_value)))
+        copy_text(g_kobj_value, sizeof(g_kobj_value), "(unavailable)");
+    if (!json_extract_string_field(out, "type", g_kobj_type, sizeof(g_kobj_type)))
+        copy_text(g_kobj_type, sizeof(g_kobj_type), "(unknown)");
+
+    kobj_build_path_request(req, sizeof(req), "describe", g_kobj_selected_path);
+    vk_kobj_rpc_json(req, out, sizeof(out));
+    if (!json_extract_string_field(out, "text", g_kobj_desc, sizeof(g_kobj_desc)))
+        copy_text(g_kobj_desc, sizeof(g_kobj_desc), "(no description)");
+
+    kobj_parse_edit_state();
+
+    g_kobj_last_refresh_tick = VK_CALL(tick_count);
+}
+
+static void kobj_select_path(const char* path)
+{
+    if (!path || path[0] == '\0')
+        return;
+
+    copy_text(g_kobj_selected_path, sizeof(g_kobj_selected_path), path);
+    copy_text(g_kobj_path_input, sizeof(g_kobj_path_input), path);
+    kobj_refresh_selected();
+}
+
+static void draw_kobj_tree_node(const char* parent_path,
+                                const char* label,
+                                int depth)
+{
+    if (!label || label[0] == '\0' || depth > 8)
+        return;
+
+    char path[KOBJ_PATH_LEN];
+    kobj_join_path(parent_path, label, path, sizeof(path));
+
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (strcmp(g_kobj_selected_path, path) == 0)
+        flags |= ImGuiTreeNodeFlags_Selected;
+
+    bool open = ImGui::TreeNodeEx(path, flags, "%s", label);
+    if (ImGui::IsItemClicked())
+        kobj_select_path(path);
+
+    if (open) {
+        char children[KOBJ_ITEMS_MAX][KOBJ_ITEM_LEN];
+        int child_count = kobj_ls_items(path, children, KOBJ_ITEMS_MAX);
+        if (child_count == 0) {
+            ImGui::TextDisabled("(empty)");
+        } else {
+            for (int i = 0; i < child_count; ++i)
+                draw_kobj_tree_node(path, children[i], depth + 1);
+        }
+        ImGui::TreePop();
+    }
 }
 
 static bool string_ends_with(const char* text, const char* suffix)
@@ -553,6 +910,7 @@ static void draw_menu_bar()
         ImGui::MenuItem("Info Panel",   nullptr, &g_show_info);
         ImGui::MenuItem("Console",      nullptr, &g_show_console);
         ImGui::MenuItem("Task Manager", nullptr, &g_show_task_manager);
+        ImGui::MenuItem("KObj Navigator", nullptr, &g_show_kobj);
         ImGui::Separator();
         ImGui::MenuItem("ImGui Demo",   nullptr, &g_show_demo);
         ImGui::EndMenu();
@@ -810,6 +1168,129 @@ static void draw_task_manager_window()
     ImGui::End();
 }
 
+static void draw_kobj_window()
+{
+    if (!g_show_kobj) return;
+
+    if (g_kobj_auto_refresh) {
+        vk_u64 now = VK_CALL(tick_count);
+        vk_u32 tps = VK_CALL(ticks_per_sec);
+        vk_u64 period = tps ? (vk_u64)(tps / 2u) : 0;
+        if (period == 0 || now - g_kobj_last_refresh_tick >= period)
+            kobj_refresh_selected();
+    }
+
+    ImGui::SetNextWindowPos(ImVec2(860.0f, 470.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(470.0f, 260.0f), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("KObj Navigator", &g_show_kobj)) {
+        ImGui::End();
+        return;
+    }
+    clear_app_focus_if_window_focused();
+
+    if (ImGui::Button("Refresh"))
+        kobj_refresh_selected();
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto", &g_kobj_auto_refresh);
+
+    ImGui::SetNextItemWidth(-64.0f);
+    ImGui::InputText("##kobj_path", g_kobj_path_input, sizeof(g_kobj_path_input));
+    ImGui::SameLine();
+    if (ImGui::Button("Go"))
+        kobj_select_path(g_kobj_path_input);
+
+    ImGui::BeginChild("##kobj_tree", ImVec2(180.0f, 0.0f), true);
+    char roots[KOBJ_ITEMS_MAX][KOBJ_ITEM_LEN];
+    int root_count = kobj_ls_items("", roots, KOBJ_ITEMS_MAX);
+    if (root_count == 0) {
+        ImGui::TextDisabled("No kobj nodes.");
+    } else {
+        for (int i = 0; i < root_count; ++i)
+            draw_kobj_tree_node("", roots[i], 0);
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    ImGui::BeginChild("##kobj_detail", ImVec2(0.0f, 0.0f), true);
+    ImGui::Text("Path: %s", g_kobj_selected_path);
+    ImGui::Text("Type: %s", g_kobj_type[0] ? g_kobj_type : "(unknown)");
+    ImGui::SeparatorText("Value");
+    ImGui::TextWrapped("%s", g_kobj_value[0] ? g_kobj_value : "(empty)");
+
+    if (g_kobj_writable) {
+        ImGui::SeparatorText("Edit");
+
+        bool did_set = false;
+        char set_req[512];
+        char set_out[256];
+
+        if (strcmp(g_kobj_type, "enum") == 0 && g_kobj_enum_count > 0) {
+            /* Build a pointer array for the Combo */
+            const char* items[KOBJ_ENUM_LABEL_MAX];
+            for (int i = 0; i < g_kobj_enum_count; ++i)
+                items[i] = g_kobj_enum_labels[i];
+
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::Combo("##kobj_enum", &g_kobj_enum_selected, items, g_kobj_enum_count))
+                did_set = true;
+
+            if (did_set) {
+                snprintf(set_req, sizeof(set_req),
+                    "{\"op\":\"set\",\"path\":\"%s\",\"value\":\"%s\"}",
+                    g_kobj_selected_path,
+                    g_kobj_enum_labels[g_kobj_enum_selected]);
+                vk_kobj_rpc_json(set_req, set_out, sizeof(set_out));
+                kobj_refresh_selected();
+            }
+        } else if (strcmp(g_kobj_type, "bool") == 0) {
+            bool cur_bool = (strcmp(g_kobj_value, "yes") == 0 || strcmp(g_kobj_value, "true") == 0);
+            if (ImGui::Checkbox("Enabled##kobj_bool", &cur_bool)) {
+                snprintf(set_req, sizeof(set_req),
+                    "{\"op\":\"set\",\"path\":\"%s\",\"value\":\"%s\"}",
+                    g_kobj_selected_path, cur_bool ? "true" : "false");
+                vk_kobj_rpc_json(set_req, set_out, sizeof(set_out));
+                kobj_refresh_selected();
+            }
+        } else if ((strcmp(g_kobj_type, "u64") == 0 || strcmp(g_kobj_type, "i64") == 0)
+                   && g_kobj_has_range) {
+            int cur_int = (int)parse_ll(g_kobj_value);
+            int rmin = (int)g_kobj_range_min;
+            int rmax = (int)g_kobj_range_max;
+            ImGui::SetNextItemWidth(-80.0f);
+            if (ImGui::SliderInt("##kobj_slider", &cur_int, rmin, rmax)) {
+                snprintf(g_kobj_edit_buf, sizeof(g_kobj_edit_buf), "%d", cur_int);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Set##kobj_range")) {
+                snprintf(set_req, sizeof(set_req),
+                    "{\"op\":\"set\",\"path\":\"%s\",\"value\":\"%s\"}",
+                    g_kobj_selected_path, g_kobj_edit_buf);
+                vk_kobj_rpc_json(set_req, set_out, sizeof(set_out));
+                kobj_refresh_selected();
+            }
+        } else {
+            ImGui::SetNextItemWidth(-80.0f);
+            ImGui::InputText("##kobj_edit", g_kobj_edit_buf, sizeof(g_kobj_edit_buf));
+            ImGui::SameLine();
+            if (ImGui::Button("Set##kobj_text")) {
+                snprintf(set_req, sizeof(set_req),
+                    "{\"op\":\"set\",\"path\":\"%s\",\"value\":\"%s\"}",
+                    g_kobj_selected_path, g_kobj_edit_buf);
+                vk_kobj_rpc_json(set_req, set_out, sizeof(set_out));
+                kobj_refresh_selected();
+            }
+        }
+    }
+
+    ImGui::SeparatorText("Describe");
+    ImGui::TextWrapped("%s", g_kobj_desc[0] ? g_kobj_desc : "(no description)");
+    ImGui::EndChild();
+
+    ImGui::End();
+}
+
 /* ================================================================
  * draw_settings_window
  * ================================================================ */
@@ -942,6 +1423,20 @@ static void capture_app_snapshot(wm_app_window_t& app)
     }
 }
 
+static void request_app_termination(const wm_app_window_t& app)
+{
+    if (app.task_id < 0)
+        return;
+
+    if (!app_task_running(app.task_id))
+        return;
+
+    if (vk_get_api()->vk_terminate_task((vk_u64)app.task_id))
+        log_addf("App task %lld termination requested.", (long long)app.task_id);
+    else
+        log_addf("Failed to terminate app task %lld.", (long long)app.task_id);
+}
+
 static void release_app_slot(wm_app_window_t& app)
 {
     if (app.pixels) {
@@ -964,6 +1459,77 @@ static int find_free_app_slot()
     for (int i = 0; i < WM_MAX_APPS; ++i)
         if (!g_apps[i].used) return i;
     return -1;
+}
+
+static void try_resize_app(wm_app_window_t& app)
+{
+    static const vk_u32 RESIZE_DEBOUNCE_TICKS = 20; /* ~200 ms at 100 Hz */
+    static const vk_u32 MIN_SIZE = 64;
+    static const vk_u32 MAX_SIZE = 2048;
+
+    if (app.pending_w == 0 || app.pending_h == 0)
+        return;
+
+    /* Clamp to sane bounds */
+    vk_u32 nw = app.pending_w < MIN_SIZE ? MIN_SIZE : (app.pending_w > MAX_SIZE ? MAX_SIZE : app.pending_w);
+    vk_u32 nh = app.pending_h < MIN_SIZE ? MIN_SIZE : (app.pending_h > MAX_SIZE ? MAX_SIZE : app.pending_h);
+
+    /* Already at this size? */
+    if (nw == app.w && nh == app.h) {
+        app.pending_w = 0;
+        app.pending_h = 0;
+        return;
+    }
+
+    /* Wait for the size to be stable (debounce) */
+    vk_u64 now = VK_CALL(tick_count);
+    if (now - app.resize_request_tick < RESIZE_DEBOUNCE_TICKS)
+        return;
+
+    /* Kernel API must support set_task_framebuffer */
+    if (!vk_get_api()->vk_set_task_framebuffer)
+        return;
+
+    /* Allocate new buffers */
+    vk_usize new_bytes = (vk_usize)nw * nh * sizeof(vk_u32);
+    vk_u32* new_pixels   = (vk_u32*)VK_CALL(malloc, new_bytes);
+    vk_u32* new_snapshot = (vk_u32*)VK_CALL(malloc, new_bytes);
+    vk_u32* new_verify   = (vk_u32*)VK_CALL(malloc, new_bytes);
+    if (!new_pixels || !new_snapshot || !new_verify) {
+        VK_CALL(free, new_pixels);
+        VK_CALL(free, new_snapshot);
+        VK_CALL(free, new_verify);
+        app.pending_w = 0;
+        app.pending_h = 0;
+        return;
+    }
+    VK_CALL(memset, new_pixels,   0, new_bytes);
+    VK_CALL(memset, new_snapshot, 0, new_bytes);
+    VK_CALL(memset, new_verify,   0, new_bytes);
+
+    /* Tell the kernel to redirect the app's framebuffer to the new buffer.
+     * After this returns the app will write into new_pixels on its next frame. */
+    vk_framebuffer_info_t new_fb = {};
+    new_fb.base   = (vk_u64)(vk_usize)new_pixels;
+    new_fb.width  = nw;
+    new_fb.height = nh;
+    new_fb.stride = nw;
+    new_fb.format = VK_PIXEL_FORMAT_BGRX_8BPP;
+    new_fb.valid  = 1u;
+    vk_get_api()->vk_set_task_framebuffer((vk_u64)app.task_id, &new_fb);
+
+    /* Free old buffers and swap in new ones */
+    VK_CALL(free, app.pixels);
+    VK_CALL(free, app.snapshot);
+    VK_CALL(free, app.verify);
+
+    app.pixels   = new_pixels;
+    app.snapshot = new_snapshot;
+    app.verify   = new_verify;
+    app.w        = nw;
+    app.h        = nh;
+    app.pending_w = 0;
+    app.pending_h = 0;
 }
 
 static vk_i64 launch_windowed_app(const char* path, vk_u32 w, vk_u32 h)
@@ -1030,8 +1596,19 @@ static void draw_app_windows()
     for (int i = 0; i < WM_MAX_APPS; ++i) {
         wm_app_window_t& app = g_apps[i];
         if (!app.used) continue;
-        if (!app_task_running(app.task_id)) app.open = false;
+        bool running = app_task_running(app.task_id);
+        if (!running) {
+            app.open = false;
+            app.close_requested = true;
+        }
         if (!app.open) {
+            if (running) {
+                if (!app.close_requested) {
+                    request_app_termination(app);
+                    app.close_requested = true;
+                }
+                continue;
+            }
             if (g_focused_app == i)
                 g_focused_app = -1;
             release_app_slot(app);
@@ -1043,47 +1620,61 @@ static void draw_app_windows()
             ImGui::SetNextWindowFocus();
             app.focus_next = false;
         }
-        if (!ImGui::Begin(app.title, &app.open)) {
-            ImGui::End();
-            continue;
+        bool draw_contents = ImGui::Begin(app.title, &app.open);
+        if (draw_contents) {
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+                g_focused_app = i;
+
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+            /* Keep aspect ratio; allow both up- and down-scaling so the
+             * image fills the window without distortion or clipping. */
+            float sx = (float)avail.x / (float)app.w;
+            float sy = (float)avail.y / (float)app.h;
+            float s = sx < sy ? sx : sy;
+            if (s <= 0.0f) s = 1.0f;
+            int draw_w = (int)((float)app.w * s);
+            int draw_h = (int)((float)app.h * s);
+            if (draw_w > (int)avail.x) draw_w = (int)avail.x;
+            if (draw_h > (int)avail.y) draw_h = (int)avail.y;
+
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - (float)draw_w) * 0.5f);
+            ImGui::InvisibleButton("##app_canvas", ImVec2((float)draw_w, (float)draw_h));
+            ImVec2 p0 = ImGui::GetItemRectMin();
+            ImVec2 p1 = ImGui::GetItemRectMax();
+            app.blit_x = (int)p0.x;
+            app.blit_y = (int)p0.y;
+            app.blit_w = draw_w;
+            app.blit_h = draw_h;
+
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(p0, p1, IM_COL32(8, 8, 8, 255));
+            capture_app_snapshot(app);
+            ImGui_ImplVK_FramebufferImage image = {};
+            image.pixels = app.snapshot;
+            image.width = app.w;
+            image.height = app.h;
+            image.stride = app.w;
+            image.format = VK_PIXEL_FORMAT_BGRX_8BPP;
+            image.p_min = p0;
+            image.p_max = p1;
+            ImGui_ImplVK_AddFramebufferImage(dl, &image);
+            dl->AddRect(p0, p1, IM_COL32(180, 180, 180, 255));
         }
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
-            g_focused_app = i;
-
-        ImVec2 avail = ImGui::GetContentRegionAvail();
-        float sx = (float)avail.x / (float)app.w;
-        float sy = (float)avail.y / (float)app.h;
-        float s = sx < sy ? sx : sy;
-        if (s < 1.0f) s = 1.0f;
-        int draw_w = (int)((float)app.w * s);
-        int draw_h = (int)((float)app.h * s);
-        if (draw_w > (int)avail.x) draw_w = (int)avail.x;
-        if (draw_h > (int)avail.y) draw_h = (int)avail.y;
-
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - (float)draw_w) * 0.5f);
-        ImGui::InvisibleButton("##app_canvas", ImVec2((float)draw_w, (float)draw_h));
-        ImVec2 p0 = ImGui::GetItemRectMin();
-        ImVec2 p1 = ImGui::GetItemRectMax();
-        app.blit_x = (int)p0.x;
-        app.blit_y = (int)p0.y;
-        app.blit_w = draw_w;
-        app.blit_h = draw_h;
-
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(p0, p1, IM_COL32(8, 8, 8, 255));
-        capture_app_snapshot(app);
-        ImGui_ImplVK_FramebufferImage image = {};
-        image.pixels = app.snapshot;
-        image.width = app.w;
-        image.height = app.h;
-        image.stride = app.w;
-        image.format = VK_PIXEL_FORMAT_BGRX_8BPP;
-        image.p_min = p0;
-        image.p_max = p1;
-        ImGui_ImplVK_AddFramebufferImage(dl, &image);
-        dl->AddRect(p0, p1, IM_COL32(180, 180, 180, 255));
 
         ImGui::End();
+
+        if (!app.open) {
+            if (!app.close_requested) {
+                request_app_termination(app);
+                app.close_requested = true;
+            }
+
+            if (!app_task_running(app.task_id)) {
+                if (g_focused_app == i)
+                    g_focused_app = -1;
+                release_app_slot(app);
+            }
+        }
     }
 }
 
@@ -1101,6 +1692,13 @@ int main(int /*argc*/, char** /*argv*/)
         VK_CALL(puts, "vgui: no framebuffer available\n");
         return 1;
     }
+
+    /* Default app buffer at half the screen resolution — large enough that
+     * upscaling inside the window manager is minimal and quality is good. */
+    g_default_app_w = fb.width  / 2;
+    g_default_app_h = fb.height / 2;
+    if (g_default_app_w < 320) g_default_app_w = 320;
+    if (g_default_app_h < 200) g_default_app_h = 200;
 
     /* ---- ImGui context ---- */
     ImGui::CreateContext();
@@ -1156,6 +1754,7 @@ int main(int /*argc*/, char** /*argv*/)
     log_add("Enter/Space to activate.  Ctrl+Q to quit.");
     log_add("Use Launch from the menu bar to start staged apps.");
     refresh_launch_apps();
+    kobj_refresh_selected();
 
     if (vk_get_api()->vk_set_compositor_active)
         (void)vk_get_api()->vk_set_compositor_active(1u);
@@ -1225,6 +1824,7 @@ int main(int /*argc*/, char** /*argv*/)
         draw_info_window(&fb);
         draw_console_window();
         draw_task_manager_window();
+        draw_kobj_window();
         draw_app_windows();
         draw_settings_window();
         draw_about_modal();

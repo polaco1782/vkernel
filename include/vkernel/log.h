@@ -127,6 +127,24 @@ private:
 auto hex(char* out, usize out_size, u64 value) -> usize;
 auto hex_bytes(char* out, usize out_size, const u8* data, usize length) -> usize;
 
+/* ============================================================
+ * Log routing — controls where log output is sent at runtime.
+ *
+ *   default_route  — graphical console (framebuffer / serial shell)
+ *   serial         — COM1 serial port only (bypasses framebuffer)
+ *   disabled       — suppress all log output
+ *
+ * Readable/writable via kobj at sys/log/route.
+ * ============================================================ */
+enum class route : u8 {
+    default_route = 0,
+    serial        = 1,
+    disabled      = 2,
+};
+
+auto get_route() -> route;
+void set_route(route r);
+
 } // namespace log
 
 } // namespace vk

@@ -116,6 +116,9 @@ void sleep(u64 ticks);
 /* Wait until specified task terminates */
 void wait_for_task(u64 task_id);
 
+/* Mark the specified task as terminated so it will not be scheduled again. */
+[[nodiscard]] auto terminate_task(u64 task_id) -> bool;
+
 /* Terminate current task — does not return to caller */
 [[noreturn]] void exit_task();
 

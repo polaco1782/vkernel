@@ -16,6 +16,7 @@
 #include "memory.h"
 #include "scheduler.h"
 #include "panic.h"
+#include "process_internal.h"
 #include "arch/x86_64/arch.h"
 #include "smp.h"
 
@@ -29,6 +30,7 @@ static task   g_tasks[MAX_TASKS];
 static usize  g_task_count       = 0;
 static volatile bool g_scheduler_active = false;
 static volatile u64  g_tick_count       = 0;
+static constexpr usize CPU_IDLE_STACK_SIZE = 4096;
 
 /*
  * Per-CPU current-task index.
@@ -38,6 +40,13 @@ static volatile u64  g_tick_count       = 0;
  */
 static constexpr u32 MAX_APIC_IDS = 256;
 static usize g_per_cpu_task[MAX_APIC_IDS];   /* current task index per CPU */
+static u64 g_cpu_idle_rsp[MAX_APIC_IDS];
+
+#if defined(_MSC_VER)
+static __declspec(align(16)) u8 g_cpu_idle_stacks[MAX_APIC_IDS][CPU_IDLE_STACK_SIZE];
+#else
+static u8 g_cpu_idle_stacks[MAX_APIC_IDS][CPU_IDLE_STACK_SIZE] __attribute__((aligned(16)));
+#endif
 
 /* Global scheduler spinlock — held only during the brief task-pick window */
 static spinlock g_sched_lock;
@@ -259,6 +268,31 @@ static inline auto task_matches_cpu_affinity(usize task_index, u8 this_apic) -> 
     sched::exit_task();
 }
 
+[[noreturn]] static void cpu_idle_trampoline() {
+    arch::enable_interrupts();
+    while (true) {
+        arch::cpu_halt();
+    }
+}
+
+static void init_cpu_idle_frame(u8 apic_id) {
+    auto* stack_top = reinterpret_cast<u64*>(
+        reinterpret_cast<usize>(&g_cpu_idle_stacks[apic_id][CPU_IDLE_STACK_SIZE]) & ~0xFull);
+    auto* iret_frame = stack_top - 6;
+
+    iret_frame[0] = reinterpret_cast<u64>(&cpu_idle_trampoline); /* RIP */
+    iret_frame[1] = arch::SEG_KERNEL_CODE; /* CS */
+    iret_frame[2] = 0x2; /* RFLAGS: IF enabled in trampoline */
+    iret_frame[3] = reinterpret_cast<u64>(stack_top); /* RSP if privilege changes */
+    iret_frame[4] = arch::SEG_KERNEL_DATA; /* SS if privilege changes */
+    iret_frame[5] = 0; /* padding: same rationale as task creation */
+
+    for (int i = 1; i <= 19; ++i)
+        iret_frame[-i] = 0;
+
+    g_cpu_idle_rsp[apic_id] = reinterpret_cast<u64>(iret_frame - 19);
+}
+
 static void wake_sleeping_tasks() {
     for (usize i = 0; i < g_task_count; ++i) {
         if (g_tasks[i].state == task_state::blocked && g_tasks[i].wake_tick <= g_tick_count) {
@@ -361,6 +395,8 @@ auto sched::init() -> status_code {
         g_per_cpu_task[i] = SCHED_NO_TASK;
     for (usize i = 0; i < MAX_APIC_IDS; ++i)
         g_yield_in_progress[i] = false;
+    for (usize i = 0; i < MAX_APIC_IDS; ++i)
+        init_cpu_idle_frame(static_cast<u8>(i));
     g_task_count       = 0;
     g_scheduler_active = false;
     g_tick_count       = 0;
@@ -529,6 +565,8 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
      * into g_tasks[SCHED_NO_TASK] would be an out-of-bounds write and would
      * also corrupt another task's saved RSP if two CPUs happen to both have
      * SCHED_NO_TASK simultaneously. */
+    process::process_task_context* terminated_ctx = null;
+
     if (cur < g_task_count) {
         g_tasks[cur].rsp = reinterpret_cast<u64>(regs);
         /* Save x87/SSE state.  Without this, XMM register contents
@@ -542,12 +580,27 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         g_tasks[cur].xsave_valid = true;
         if (g_tasks[cur].state == task_state::running) {
             g_tasks[cur].state = task_state::ready;
+        } else if (g_tasks[cur].state == task_state::terminated &&
+                   g_tasks[cur].user_data != null) {
+            terminated_ctx = static_cast<process::process_task_context*>(g_tasks[cur].user_data);
+            g_tasks[cur].user_data = null;
         }
         g_tasks[cur].current_cpu = SCHED_CPU_NONE;
     }
 
     usize next = pick_next_task(cur);
     if (next >= g_task_count) {
+        const bool cur_non_runnable = cur < g_task_count && !g_tasks[cur].is_runnable();
+        if (cur_non_runnable) {
+            cpu_set_current_task(SCHED_NO_TASK);
+            init_cpu_idle_frame(this_apic);
+            g_sched_lock.release();
+            if (terminated_ctx != null) {
+                process::cleanup_process_context(terminated_ctx, -1);
+            }
+            return reinterpret_cast<arch::register_state*>(g_cpu_idle_rsp[this_apic]);
+        }
+
         g_sched_lock.release();
         return regs;
     }
@@ -570,6 +623,10 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     }
 
     g_sched_lock.release();
+
+    if (terminated_ctx != null) {
+        process::cleanup_process_context(terminated_ctx, -1);
+    }
 
     return reinterpret_cast<arch::register_state*>(next_rsp);
 }
@@ -686,20 +743,30 @@ auto sched::tick_count() -> u64 {
 
 auto sched::snapshot_tasks(task_snapshot* out, usize max_tasks) -> usize {
     g_sched_lock.acquire();
-    usize total = g_task_count;
+    usize total = 0;
+    for (usize i = 0; i < g_task_count; ++i) {
+        if (g_tasks[i].state != task_state::terminated) {
+            ++total;
+        }
+    }
 
     if (out == null || max_tasks == 0) {
         g_sched_lock.release();
         return total;
     }
 
-    usize count = total < max_tasks ? total : max_tasks;
-    for (usize i = 0; i < count; ++i) {
-        out[i].id = g_tasks[i].id;
-        out[i].state = g_tasks[i].state;
-        out[i].cpu = g_tasks[i].current_cpu;
-        out[i].cpu_ticks = g_tasks[i].cpu_ticks;
-        out[i].name = g_tasks[i].name.view();
+    usize count = 0;
+    for (usize i = 0; i < g_task_count && count < max_tasks; ++i) {
+        if (g_tasks[i].state == task_state::terminated) {
+            continue;
+        }
+
+        out[count].id = g_tasks[i].id;
+        out[count].state = g_tasks[i].state;
+        out[count].cpu = g_tasks[i].current_cpu;
+        out[count].cpu_ticks = g_tasks[i].cpu_ticks;
+        out[count].name = g_tasks[i].name.view();
+        ++count;
     }
     g_sched_lock.release();
     return total;
@@ -742,6 +809,42 @@ void sched::wait_for_task(u64 task_id) {
         if (!found) return; /* task never existed */
         sleep(1);
     }
+}
+
+auto sched::terminate_task(u64 task_id) -> bool {
+    process::process_task_context* terminated_ctx = null;
+
+    g_sched_lock.acquire();
+
+    for (usize i = 0; i < g_task_count; ++i) {
+        if (g_tasks[i].id != task_id) {
+            continue;
+        }
+
+        if (i == 0) {
+            g_sched_lock.release();
+            return false;
+        }
+
+        g_tasks[i].state = task_state::terminated;
+        g_tasks[i].wake_tick = 0;
+        g_tasks[i].affinity_cpu = SCHED_CPU_NONE;
+        if (g_tasks[i].current_cpu == SCHED_CPU_NONE && g_tasks[i].user_data != null) {
+            terminated_ctx = static_cast<process::process_task_context*>(g_tasks[i].user_data);
+            g_tasks[i].user_data = null;
+        }
+        log::debug() << "Task termination requested: " << g_tasks[i].name.c_str();
+        g_sched_lock.release();
+
+        if (terminated_ctx != null) {
+            process::cleanup_process_context(terminated_ctx, -1);
+        }
+
+        return true;
+    }
+
+    g_sched_lock.release();
+    return false;
 }
 
 [[noreturn]] void sched::exit_task() {

@@ -33,6 +33,9 @@ static KNode s_sys_mem_heap_used;
 static KNode s_sys_power;
 static KNode s_sys_power_state;
 
+static KNode s_sys_log;
+static KNode s_sys_log_route;
+
 static KNode s_proc;
 static KNode s_proc_count;
 static KNode s_proc_pid;
@@ -327,6 +330,17 @@ static auto set_sys_power_state(KNode*, KVal v) -> bool {
     return true;
 }
 
+static auto get_sys_log_route(KNode*) -> KVal {
+    return KVal::from_enum(static_cast<u32>(log::get_route()));
+}
+
+static auto set_sys_log_route(KNode*, KVal v) -> bool {
+    if (v.tag != KTag::Enum) return false;
+    if (v.as_enum_idx > 2) return false;
+    log::set_route(static_cast<log::route>(v.as_enum_idx));
+    return true;
+}
+
 static auto get_proc_count(KNode*) -> KVal {
     return KVal::from_u64(sched::snapshot_tasks(null, 0));
 }
@@ -482,6 +496,26 @@ void init() {
     s_sys_power_state.get_fn = get_sys_power_state;
     s_sys_power_state.set_fn = set_sys_power_state;
     add_child(&s_sys_power, &s_sys_power_state);
+
+    s_sys_log = {};
+    s_sys_log.schema.name = "log";
+    s_sys_log.schema.type = KTag::Struct;
+    s_sys_log.schema.cap_mask = 0x01;
+    add_child(&s_sys, &s_sys_log);
+
+    s_sys_log_route = {};
+    s_sys_log_route.schema.name = "route";
+    s_sys_log_route.schema.type = KTag::Enum;
+    s_sys_log_route.schema.writable = true;
+    s_sys_log_route.schema.volatile_node = false;
+    s_sys_log_route.schema.unit = "";
+    s_sys_log_route.schema.enum_labels[0] = "default";
+    s_sys_log_route.schema.enum_labels[1] = "serial";
+    s_sys_log_route.schema.enum_labels[2] = "disabled";
+    s_sys_log_route.schema.cap_mask = 0x03;
+    s_sys_log_route.get_fn = get_sys_log_route;
+    s_sys_log_route.set_fn = set_sys_log_route;
+    add_child(&s_sys_log, &s_sys_log_route);
 
     s_proc = {};
     s_proc.schema.name = "proc";

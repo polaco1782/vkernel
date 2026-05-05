@@ -33,6 +33,12 @@ static inline void vk_wait_task(vk_i64 task_id) {
         vk_get_api()->vk_wait_task(task_id);
 }
 
+static inline int vk_terminate_task(vk_u64 task_id) {
+    if (vk_get_api()->vk_terminate_task)
+        return vk_get_api()->vk_terminate_task(task_id);
+    return 0;
+}
+
 static inline vk_usize vk_json_copy_escaped(char* out, vk_usize out_cap, vk_usize pos, const char* s) {
     vk_usize i = 0;
     if (!s) return pos;

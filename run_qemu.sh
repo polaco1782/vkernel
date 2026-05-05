@@ -116,6 +116,7 @@ echo "Mouse: press Ctrl+Alt+G to grab/release the mouse inside the VM."
 echo ""
 
 exec ${QEMU} \
+    -display sdl \
     -machine pc \
     -cpu host \
     -smp 4 \

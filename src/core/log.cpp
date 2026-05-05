@@ -14,24 +14,6 @@ namespace vk {
 
 namespace log {
 
-struct format_state {
-    char last_char = '\0';
-};
-
-static void format_putc(format_state& state, char c) {
-    console::putc(c);
-    state.last_char = c;
-}
-
-static void format_puts(format_state& state, const char* str) {
-    if (str == null) {
-        str = "(null)";
-    }
-    while (*str != '\0') {
-        format_putc(state, *str++);
-    }
-}
-
 static constexpr char hex_digits[] = "0123456789ABCDEF";
 
 static auto copy_to_buffer(char* out, usize out_size, const char* str) -> usize {
@@ -115,43 +97,6 @@ static auto format_hex_bytes_to_buffer(char* out, usize out_size, const u8* data
     return pos;
 }
 
-static void format_unsigned(format_state& state, u64 value, u32 base,
-                            bool uppercase, bool prefix, usize min_digits = 1) {
-    static constexpr char lower_digits[] = "0123456789abcdef";
-    static constexpr char upper_digits[] = "0123456789ABCDEF";
-    const char* digits = uppercase ? upper_digits : lower_digits;
-
-    char buffer[32];
-    constexpr usize buffer_capacity = sizeof(buffer) / sizeof(buffer[0]);
-    usize count = 0;
-
-    do {
-        buffer[count++] = digits[value % base];
-        value /= base;
-    } while (value != 0 && count < buffer_capacity);
-
-    while (count < min_digits && count < buffer_capacity) {
-        buffer[count++] = '0';
-    }
-
-    if (prefix) {
-        format_puts(state, uppercase ? "0X" : "0x");
-    }
-
-    while (count > 0) {
-        format_putc(state, buffer[--count]);
-    }
-}
-
-static void format_signed(format_state& state, i64 value) {
-    u64 magnitude = static_cast<u64>(value);
-    if (value < 0) {
-        format_putc(state, '-');
-        magnitude = static_cast<u64>(-(value + 1)) + 1;
-    }
-    format_unsigned(state, magnitude, 10, false, false);
-}
-
 static auto level_enabled(level lvl) -> bool {
     switch (lvl) {
         case level::printk:  return true;
@@ -191,6 +136,17 @@ static auto level_color(level lvl) -> console_color {
         default:
             return console_color::white;
     }
+}
+
+/* Current log routing destination — modified via kobj at sys/log/route. */
+static volatile u32 s_log_route = 0;  /* 0=default, 1=serial, 2=disabled */
+
+auto get_route() -> route {
+    return static_cast<route>(s_log_route);
+}
+
+void set_route(route r) {
+    s_log_route = static_cast<u32>(r);
 }
 
 /* Spinlock for serialising log output across CPUs.
@@ -241,12 +197,17 @@ line::line(level lvl, bool append_newline)
     lock();
 
     const char* prefix = level_prefix(level_);
+    const u32 route = s_log_route;
     if (level_ == level::crash) {
-        console::set_color(console_color::white, console_color::red);
+        if (route == 0) console::set_color(console_color::white, console_color::red);
     } else if (prefix != null) {
-        console::set_color(level_color(level_), console_color::black);
-        puts(prefix);
-        console::set_color(console_color::white, console_color::black);
+        if (route == 0) {
+            console::set_color(level_color(level_), console_color::black);
+            puts(prefix);
+            console::set_color(console_color::white, console_color::black);
+        } else if (route == 1) {
+            console::puts_serial(prefix);
+        }
     }
 }
 
@@ -259,7 +220,7 @@ line::~line() {
         putc('\n');
     }
 
-    if (level_ != level::printk) {
+    if (level_ != level::printk && s_log_route == 0) {
         console::set_color(console_color::white, console_color::black);
     }
 
@@ -270,7 +231,13 @@ void line::putc(char c) {
     if (!enabled_) {
         return;
     }
-    console::putc(c);
+    const u32 route = s_log_route;
+    if (route == 1) {
+        console::putc_serial(c);
+    } else if (route == 0) {
+        console::putc(c);
+    }
+    /* route == 2: disabled — suppress */
     last_char_ = c;
 }
 
@@ -290,18 +257,43 @@ void line::append_unsigned(u64 value, u32 base, bool uppercase, bool prefix, usi
     if (!enabled_) {
         return;
     }
-    format_state state{ last_char_ };
-    format_unsigned(state, value, base, uppercase, prefix, min_digits);
-    last_char_ = state.last_char;
+    static constexpr char lower_digits[] = "0123456789abcdef";
+    static constexpr char upper_digits[] = "0123456789ABCDEF";
+    const char* digits = uppercase ? upper_digits : lower_digits;
+
+    char tmp[32];
+    constexpr usize tmp_capacity = sizeof(tmp) / sizeof(tmp[0]);
+    usize count = 0;
+
+    do {
+        tmp[count++] = digits[value % base];
+        value /= base;
+    } while (value != 0 && count < tmp_capacity);
+
+    while (count < min_digits && count < tmp_capacity) {
+        tmp[count++] = '0';
+    }
+
+    if (prefix) {
+        putc('0');
+        putc(uppercase ? 'X' : 'x');
+    }
+
+    while (count > 0) {
+        putc(tmp[--count]);
+    }
 }
 
 void line::append_signed(i64 value) {
     if (!enabled_) {
         return;
     }
-    format_state state{ last_char_ };
-    format_signed(state, value);
-    last_char_ = state.last_char;
+    if (value < 0) {
+        putc('-');
+        append_unsigned(static_cast<u64>(-(value + 1)) + 1, 10, false, false, 1);
+    } else {
+        append_unsigned(static_cast<u64>(value), 10, false, false, 1);
+    }
 }
 
 auto line::operator<<(const char* value) -> line& {
