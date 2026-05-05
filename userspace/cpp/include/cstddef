@@ -1,0 +1,14 @@
+#ifndef VKCPP_CSTDDEF_H
+#define VKCPP_CSTDDEF_H
+
+#include <stddef.h>
+
+namespace std {
+
+using ptrdiff_t = ::ptrdiff_t;
+using size_t = ::size_t;
+using nullptr_t = decltype(nullptr);
+
+}  // namespace std
+
+#endif  // VKCPP_CSTDDEF_H

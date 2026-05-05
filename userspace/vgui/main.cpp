@@ -1837,7 +1837,7 @@ int main(int /*argc*/, char** /*argv*/)
         ImGui_ImplVK_RenderDrawData(ImGui::GetDrawData(), &fb);
 
         /* --- 6. Yield CPU slice back to the scheduler --- */
-        vk_get_api()->vk_yield();
+        vk_get_api()->vk_sleep(1);
     }
 
     /* ---- Cleanup ---- */

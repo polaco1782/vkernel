@@ -860,27 +860,120 @@ static void rasterize_triangle(
  * ================================================================ */
 
 /*
- * Draw a simple software cross cursor into the back-buffer.
+ * Draw the active ImGui mouse cursor using the baked atlas masks.
  */
 static void draw_cursor(unsigned int* buf, int W, int H, int S,
                          int cx, int cy, vk_pixel_format_t fmt)
 {
-    unsigned int white  = pack_px(255, 255, 255, fmt);
-    unsigned int shadow = pack_px(0,   0,   0,   fmt);
-    const int ARM = 8;
+    ImGui_ImplVK_Data* bd = get_bd();
+    if (!bd || !bd->font_pixels || bd->font_tex_w <= 0 || bd->font_tex_h <= 0)
+        return;
 
-    for (int i = -ARM; i <= ARM; ++i) {
-        /* Horizontal shadow then white */
-        int sx = cx + i, sy = cy + 1;
-        if (sx >= 0 && sx < W && sy >= 0 && sy < H) buf[sy * S + sx] = shadow;
-        sy = cy;
-        if (sx >= 0 && sx < W && sy >= 0 && sy < H) buf[sy * S + sx] = white;
-        /* Vertical shadow then white */
-        sx = cx + 1; sy = cy + i;
-        if (sx >= 0 && sx < W && sy >= 0 && sy < H) buf[sy * S + sx] = shadow;
-        sx = cx;
-        if (sx >= 0 && sx < W && sy >= 0 && sy < H) buf[sy * S + sx] = white;
-    }
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    if (!atlas)
+        return;
+
+    ImGuiMouseCursor cursor = ImGui::GetMouseCursor();
+    if (cursor == ImGuiMouseCursor_None)
+        return;
+
+    ImVec2 offset;
+    ImVec2 size;
+    ImVec2 uv_border[2];
+    ImVec2 uv_fill[2];
+    if (!atlas->GetMouseCursorTexData(cursor, &offset, &size, uv_border, uv_fill))
+        return;
+
+    float scale = ImGui::GetStyle().MouseCursorScale;
+    if (scale <= 0.0f)
+        scale = 1.0f;
+
+    const int src_w = (int)(size.x + 0.5f);
+    const int src_h = (int)(size.y + 0.5f);
+    if (src_w <= 0 || src_h <= 0)
+        return;
+
+    const int border_x = (int)(uv_border[0].x * (float)bd->font_tex_w + 0.5f);
+    const int border_y = (int)(uv_border[0].y * (float)bd->font_tex_h + 0.5f);
+    const int fill_x   = (int)(uv_fill[0].x   * (float)bd->font_tex_w + 0.5f);
+    const int fill_y   = (int)(uv_fill[0].y   * (float)bd->font_tex_h + 0.5f);
+
+    auto floor_to_int = [](float v) -> int {
+        int i = (int)v;
+        return ((float)i > v) ? (i - 1) : i;
+    };
+    auto ceil_to_int = [](float v) -> int {
+        int i = (int)v;
+        return ((float)i < v) ? (i + 1) : i;
+    };
+    auto draw_layer = [&](float draw_x, float draw_y,
+                          int src_x0, int src_y0, ImU32 rgba) {
+        unsigned int sr = (rgba      ) & 0xFFu;
+        unsigned int sg = (rgba >>  8) & 0xFFu;
+        unsigned int sb = (rgba >> 16) & 0xFFu;
+        unsigned int sa = (rgba >> 24) & 0xFFu;
+        if (sa == 0u)
+            return;
+
+        const float draw_w = (float)src_w * scale;
+        const float draw_h = (float)src_h * scale;
+
+        int dst_x0 = floor_to_int(draw_x);
+        int dst_y0 = floor_to_int(draw_y);
+        int dst_x1 = ceil_to_int(draw_x + draw_w);
+        int dst_y1 = ceil_to_int(draw_y + draw_h);
+
+        if (dst_x0 < 0) dst_x0 = 0;
+        if (dst_y0 < 0) dst_y0 = 0;
+        if (dst_x1 > W) dst_x1 = W;
+        if (dst_y1 > H) dst_y1 = H;
+        if (dst_x0 >= dst_x1 || dst_y0 >= dst_y1)
+            return;
+
+        const float alpha_scale = 1.0f / 255.0f;
+        for (int py = dst_y0; py < dst_y1; ++py) {
+            float src_fy = ((float)py + 0.5f - draw_y) / scale;
+            if (src_fy < 0.0f || src_fy >= (float)src_h)
+                continue;
+
+            int sy = src_y0 + (int)src_fy;
+            unsigned int* row = buf + (vk_usize)py * S;
+
+            for (int px = dst_x0; px < dst_x1; ++px) {
+                float src_fx = ((float)px + 0.5f - draw_x) / scale;
+                if (src_fx < 0.0f || src_fx >= (float)src_w)
+                    continue;
+
+                int sx = src_x0 + (int)src_fx;
+                unsigned int mask = bd->font_pixels[(vk_usize)sy * bd->font_tex_w + sx];
+                unsigned int alpha_u8 = (mask * sa + 127u) / 255u;
+                if (alpha_u8 == 0u)
+                    continue;
+
+                if (alpha_u8 >= 255u) {
+                    row[px] = pack_px(sr, sg, sb, fmt);
+                    continue;
+                }
+
+                unsigned int dr, dg, db;
+                unpack_px(row[px], fmt, &dr, &dg, &db);
+                float alpha = (float)alpha_u8 * alpha_scale;
+                float inv_a = 1.0f - alpha;
+                unsigned int out_r = (unsigned int)((float)sr * alpha + (float)dr * inv_a + 0.5f); if (out_r > 255u) out_r = 255u;
+                unsigned int out_g = (unsigned int)((float)sg * alpha + (float)dg * inv_a + 0.5f); if (out_g > 255u) out_g = 255u;
+                unsigned int out_b = (unsigned int)((float)sb * alpha + (float)db * inv_a + 0.5f); if (out_b > 255u) out_b = 255u;
+                row[px] = pack_px(out_r, out_g, out_b, fmt);
+            }
+        }
+    };
+
+    const float base_x = (float)cx - offset.x * scale;
+    const float base_y = (float)cy - offset.y * scale;
+
+    draw_layer(base_x + 1.0f * scale, base_y, border_x, border_y, IM_COL32(0, 0, 0, 48));
+    draw_layer(base_x + 2.0f * scale, base_y, border_x, border_y, IM_COL32(0, 0, 0, 48));
+    draw_layer(base_x, base_y, border_x, border_y, IM_COL32(0, 0, 0, 255));
+    draw_layer(base_x, base_y, fill_x, fill_y, IM_COL32(255, 255, 255, 255));
 }
 
 __attribute__((optimize("O2")))

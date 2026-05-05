@@ -1,0 +1,253 @@
+#ifndef VKCPP_VECTOR_H
+#define VKCPP_VECTOR_H
+
+#include <cstddef>
+#include <initializer_list>
+#include <memory>
+#include <utility>
+
+namespace std {
+
+template <typename T, typename Alloc = allocator<T>>
+class vector {
+public:
+    using value_type = T;
+    using allocator_type = Alloc;
+    using size_type = size_t;
+    using reference = value_type&;
+    using const_reference = const value_type&;
+    using pointer = value_type*;
+    using const_pointer = const value_type*;
+    using iterator = pointer;
+    using const_iterator = const_pointer;
+
+    vector() noexcept : allocator_(), data_(nullptr), size_(0), capacity_(0) {}
+
+    explicit vector(size_type count) : vector()
+    {
+        resize(count);
+    }
+
+    vector(size_type count, const T& value) : vector()
+    {
+        reserve(count);
+        while (size_ < count) {
+            emplace_back(value);
+        }
+    }
+
+    vector(initializer_list<T> values) : vector()
+    {
+        reserve(values.size());
+        for (const auto& value : values) {
+            emplace_back(value);
+        }
+    }
+
+    vector(const vector& other) : vector()
+    {
+        reserve(other.size_);
+        for (size_type index = 0; index < other.size_; ++index) {
+            emplace_back(other.data_[index]);
+        }
+    }
+
+    vector(vector&& other) noexcept
+        : allocator_(std::move(other.allocator_)),
+          data_(other.data_),
+          size_(other.size_),
+          capacity_(other.capacity_)
+    {
+        other.data_ = nullptr;
+        other.size_ = 0;
+        other.capacity_ = 0;
+    }
+
+    ~vector()
+    {
+        clear();
+        deallocate_storage();
+    }
+
+    vector& operator=(const vector& other)
+    {
+        if (this == &other) {
+            return *this;
+        }
+        vector copy(other);
+        swap(copy);
+        return *this;
+    }
+
+    vector& operator=(vector&& other) noexcept
+    {
+        if (this == &other) {
+            return *this;
+        }
+        clear();
+        deallocate_storage();
+        data_ = other.data_;
+        size_ = other.size_;
+        capacity_ = other.capacity_;
+        other.data_ = nullptr;
+        other.size_ = 0;
+        other.capacity_ = 0;
+        return *this;
+    }
+
+    vector& operator=(initializer_list<T> values)
+    {
+        clear();
+        reserve(values.size());
+        for (const auto& value : values) {
+            emplace_back(value);
+        }
+        return *this;
+    }
+
+    iterator begin() noexcept { return data_; }
+    const_iterator begin() const noexcept { return data_; }
+    iterator end() noexcept { return data_ + size_; }
+    const_iterator end() const noexcept { return data_ + size_; }
+
+    pointer data() noexcept { return data_; }
+    const_pointer data() const noexcept { return data_; }
+
+    size_type size() const noexcept { return size_; }
+    size_type capacity() const noexcept { return capacity_; }
+    bool empty() const noexcept { return size_ == 0; }
+
+    reference operator[](size_type index) noexcept { return data_[index]; }
+    const_reference operator[](size_type index) const noexcept { return data_[index]; }
+
+    reference front() noexcept { return data_[0]; }
+    const_reference front() const noexcept { return data_[0]; }
+    reference back() noexcept { return data_[size_ - 1]; }
+    const_reference back() const noexcept { return data_[size_ - 1]; }
+
+    void clear() noexcept
+    {
+        destroy_range(data_, size_);
+        size_ = 0;
+    }
+
+    void reserve(size_type new_capacity)
+    {
+        if (new_capacity <= capacity_) {
+            return;
+        }
+        reallocate(new_capacity);
+    }
+
+    void resize(size_type count)
+    {
+        if (count < size_) {
+            destroy_range(data_ + count, size_ - count);
+            size_ = count;
+            return;
+        }
+        reserve(count);
+        while (size_ < count) {
+            emplace_back();
+        }
+    }
+
+    void resize(size_type count, const T& value)
+    {
+        if (count < size_) {
+            destroy_range(data_ + count, size_ - count);
+            size_ = count;
+            return;
+        }
+        reserve(count);
+        while (size_ < count) {
+            emplace_back(value);
+        }
+    }
+
+    template <typename... Args>
+    reference emplace_back(Args&&... args)
+    {
+        reserve_for_one_more();
+        std::construct_at(data_ + size_, std::forward<Args>(args)...);
+        ++size_;
+        return back();
+    }
+
+    void push_back(const T& value)
+    {
+        emplace_back(value);
+    }
+
+    void push_back(T&& value)
+    {
+        emplace_back(std::move(value));
+    }
+
+    void pop_back()
+    {
+        if (size_ == 0) {
+            return;
+        }
+        --size_;
+        std::destroy_at(data_ + size_);
+    }
+
+    void swap(vector& other) noexcept
+    {
+        std::swap(allocator_, other.allocator_);
+        std::swap(data_, other.data_);
+        std::swap(size_, other.size_);
+        std::swap(capacity_, other.capacity_);
+    }
+
+private:
+    static void destroy_range(pointer ptr, size_type count) noexcept
+    {
+        for (size_type index = 0; index < count; ++index) {
+            std::destroy_at(ptr + index);
+        }
+    }
+
+    void reserve_for_one_more()
+    {
+        if (size_ < capacity_) {
+            return;
+        }
+        size_type new_capacity = capacity_ == 0 ? 4 : capacity_ * 2;
+        if (new_capacity <= size_) {
+            new_capacity = size_ + 1;
+        }
+        reallocate(new_capacity);
+    }
+
+    void reallocate(size_type new_capacity)
+    {
+        pointer new_data = allocator_.allocate(new_capacity);
+        for (size_type index = 0; index < size_; ++index) {
+            std::construct_at(new_data + index, std::move(data_[index]));
+        }
+        destroy_range(data_, size_);
+        deallocate_storage();
+        data_ = new_data;
+        capacity_ = new_capacity;
+    }
+
+    void deallocate_storage() noexcept
+    {
+        if (data_ != nullptr) {
+            allocator_.deallocate(data_, capacity_);
+            data_ = nullptr;
+        }
+        capacity_ = 0;
+    }
+
+    allocator_type allocator_;
+    pointer data_;
+    size_type size_;
+    size_type capacity_;
+};
+
+}  // namespace std
+
+#endif  // VKCPP_VECTOR_H

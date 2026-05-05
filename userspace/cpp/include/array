@@ -1,0 +1,43 @@
+#ifndef VKCPP_ARRAY_H
+#define VKCPP_ARRAY_H
+
+#include <cstddef>
+
+namespace std {
+
+template <typename T, size_t N>
+struct array {
+    using value_type = T;
+    using size_type = size_t;
+    using iterator = value_type*;
+    using const_iterator = const value_type*;
+    using reference = value_type&;
+    using const_reference = const value_type&;
+
+    value_type elements[N == 0 ? 1 : N];
+
+    constexpr reference operator[](size_type index) noexcept { return elements[index]; }
+    constexpr const_reference operator[](size_type index) const noexcept { return elements[index]; }
+
+    constexpr iterator begin() noexcept { return data(); }
+    constexpr const_iterator begin() const noexcept { return data(); }
+    constexpr iterator end() noexcept { return data() + N; }
+    constexpr const_iterator end() const noexcept { return data() + N; }
+
+    constexpr value_type* data() noexcept { return elements; }
+    constexpr const value_type* data() const noexcept { return elements; }
+
+    constexpr size_type size() const noexcept { return N; }
+    constexpr bool empty() const noexcept { return N == 0; }
+
+    void fill(const value_type& value)
+    {
+        for (size_type index = 0; index < N; ++index) {
+            elements[index] = value;
+        }
+    }
+};
+
+}  // namespace std
+
+#endif  // VKCPP_ARRAY_H

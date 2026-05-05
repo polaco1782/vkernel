@@ -1,10 +1,13 @@
 CC      ?= gcc
 CXX     ?= g++
+AR      ?= ar
 OBJCOPY ?= objcopy
 
 USER_INCLUDE   := ../include
 SYSROOT        := ../sysroot
 LIBC_DIR       := ../libc
+CPP_DIR        := ../cpp
+CPP_INCLUDE    := $(CPP_DIR)/include
 KERNEL_INCLUDE := ../../include
 VENDOR_DIR     := vendor/clownmdemu-core
 
@@ -43,6 +46,7 @@ endif
 CXXFLAGS += -Wall -Wextra
 CXXFLAGS += -isystem $(SYSROOT)/include
 CXXFLAGS += -I$(USER_INCLUDE)
+CXXFLAGS += -I$(CPP_INCLUDE)
 CXXFLAGS += -I$(KERNEL_INCLUDE)
 
 LDFLAGS := -nostdlib
@@ -53,9 +57,14 @@ LDFLAGS += -Wl,-z,norelro
 LDFLAGS += -Wl,--gc-sections
 LDFLAGS += -L$(SYSROOT)/lib
 LDFLAGS += -L$(LIBC_DIR)
+LDFLAGS += -L$(CPP_DIR)
 
 CRT0   := $(LIBC_DIR)/crt0.o
-LIBS   := -Wl,--start-group -lvksys -lc -lstdc++ -lm -lgcc -Wl,--end-group
+CPP_RUNTIME_LIB := $(CPP_DIR)/libvkcpp.a
+DEBUG_ARG       := $(if $(DEBUG),DEBUG=$(DEBUG),)
+# The frontend still forces the vendored core onto the C API path, but
+# libvkcpp keeps the freestanding C++ runtime available for frontend code.
+LIBS   := -Wl,--start-group -lvkcpp -lvksys -lc -lm -lgcc -Wl,--end-group
 
 TARGET := clownmdemu.vbin
 
@@ -65,7 +74,10 @@ OBJS     := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)
 
 .PHONY: all clean distclean
 
-all: $(TARGET)
+all: $(CPP_RUNTIME_LIB) $(TARGET)
+
+$(CPP_RUNTIME_LIB):
+	@$(MAKE) --no-print-directory -C $(CPP_DIR) CXX=$(CXX) AR=$(AR) $(DEBUG_ARG)
 
 main.o: main.cpp
 	@echo "  CXX     $<"
@@ -75,7 +87,7 @@ main.o: main.cpp
 	@echo "  CC      $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-$(TARGET): $(OBJS) $(CRT0)
+$(TARGET): $(OBJS) $(CRT0) $(CPP_RUNTIME_LIB)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $(CRT0) $(OBJS) $(LIBS)
 ifndef DEBUG

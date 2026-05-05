@@ -19,6 +19,7 @@ ROOT_DIR        := $(realpath $(CURDIR)/../..)
 USER_INCLUDE    := ../include
 SYSROOT         := ../sysroot
 LIBC_DIR        := ../libc
+CPP_INCLUDE     := ../cpp/include
 KERNEL_INCLUDE  := $(ROOT_DIR)/include
 IMGUI_DIR       := ./imgui
 
@@ -42,6 +43,7 @@ endif
 CXXFLAGS  += -Wall -Wextra
 CXXFLAGS  += -isystem $(SYSROOT)/include
 CXXFLAGS  += -I$(USER_INCLUDE)
+CXXFLAGS  += -I$(CPP_INCLUDE)
 CXXFLAGS  += -I$(KERNEL_INCLUDE)
 CXXFLAGS  += -I$(IMGUI_DIR)
 CXXFLAGS  += -I.

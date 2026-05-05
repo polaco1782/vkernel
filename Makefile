@@ -28,7 +28,8 @@ CLOWNMDEMU_VBIN := $(USERSPACE_DIR)/clownmdemu/clownmdemu.vbin
 ROTOZOOM_VBIN    := $(USERSPACE_DIR)/rotozoom/rotozoom.vbin
 VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
 SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN)
+CPPCOMPAT_VBIN   := $(USERSPACE_DIR)/cppcompat/cppcompat.vbin
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -192,6 +193,9 @@ $(VGUI_VBIN): $(wildcard $(USERSPACE_DIR)/vgui/*.cpp) $(USERSPACE_DIR)/vgui/Make
 $(SR_CUBE_VBIN): $(USERSPACE_DIR)/sr_cube/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
 
+$(CPPCOMPAT_VBIN): $(USERSPACE_DIR)/cppcompat/main.cpp $(USERSPACE_DIR)/cppcompat/Makefile libc-glue
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat $(_DEBUG_FLAG)
+
 # Disassembly for debugging
 disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@$(OBJDUMP) -d $< > $(BUILD_DIR)/$(KERNEL_NAME).dis
@@ -210,6 +214,8 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/clownmdemu clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cpp clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube clean
 

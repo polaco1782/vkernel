@@ -1,0 +1,74 @@
+#ifndef VKCPP_UTILITY_H
+#define VKCPP_UTILITY_H
+
+#include <cstddef>
+#include <type_traits>
+
+namespace std {
+
+template <typename T>
+constexpr remove_reference_t<T>&& move(T&& value) noexcept
+{
+    return static_cast<remove_reference_t<T>&&>(value);
+}
+
+template <typename T>
+constexpr T&& forward(remove_reference_t<T>& value) noexcept
+{
+    return static_cast<T&&>(value);
+}
+
+template <typename T>
+constexpr T&& forward(remove_reference_t<T>&& value) noexcept
+{
+    static_assert(!is_lvalue_reference_v<T>, "bad forward call");
+    return static_cast<T&&>(value);
+}
+
+template <typename T>
+void swap(T& lhs, T& rhs)
+{
+    T temp = std::move(lhs);
+    lhs = std::move(rhs);
+    rhs = std::move(temp);
+}
+
+template <typename Container>
+constexpr auto size(const Container& container) -> decltype(container.size())
+{
+    return container.size();
+}
+
+template <typename T, size_t N>
+constexpr size_t size(const T (&)[N]) noexcept
+{
+    return N;
+}
+
+template <typename Container>
+constexpr auto data(Container& container) -> decltype(container.data())
+{
+    return container.data();
+}
+
+template <typename Container>
+constexpr auto data(const Container& container) -> decltype(container.data())
+{
+    return container.data();
+}
+
+template <typename T, size_t N>
+constexpr T* data(T (&array)[N]) noexcept
+{
+    return array;
+}
+
+template <typename T, size_t N>
+constexpr const T* data(const T (&array)[N]) noexcept
+{
+    return array;
+}
+
+}  // namespace std
+
+#endif  // VKCPP_UTILITY_H

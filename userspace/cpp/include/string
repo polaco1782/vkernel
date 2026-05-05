@@ -1,0 +1,266 @@
+#ifndef VKCPP_STRING_H
+#define VKCPP_STRING_H
+
+#include <cstddef>
+#include <memory>
+#include <string.h>
+#include <utility>
+#include <vector>
+
+namespace std {
+
+template <typename CharT>
+struct char_traits;
+
+template <>
+struct char_traits<char> {
+    using char_type = char;
+    using int_type = int;
+
+    static void assign(char& dst, const char& src) noexcept { dst = src; }
+
+    static char* assign(char* dst, size_t count, char ch) noexcept
+    {
+        return static_cast<char*>(memset(dst, ch, count));
+    }
+
+    static bool eq(char lhs, char rhs) noexcept { return lhs == rhs; }
+    static bool lt(char lhs, char rhs) noexcept { return lhs < rhs; }
+
+    static int compare(const char* lhs, const char* rhs, size_t count) noexcept
+    {
+        return memcmp(lhs, rhs, count);
+    }
+
+    static size_t length(const char* str) noexcept
+    {
+        return str == nullptr ? 0 : strlen(str);
+    }
+
+    static const char* find(const char* str, size_t count, const char& ch) noexcept
+    {
+        return static_cast<const char*>(memchr(str, ch, count));
+    }
+
+    static char* move(char* dst, const char* src, size_t count) noexcept
+    {
+        return static_cast<char*>(memmove(dst, src, count));
+    }
+
+    static char* copy(char* dst, const char* src, size_t count) noexcept
+    {
+        return static_cast<char*>(memcpy(dst, src, count));
+    }
+};
+
+template <typename CharT, typename Traits = char_traits<CharT>, typename Alloc = allocator<CharT>>
+class basic_string {
+public:
+    using value_type = CharT;
+    using traits_type = Traits;
+    using allocator_type = Alloc;
+    using size_type = size_t;
+    using reference = value_type&;
+    using const_reference = const value_type&;
+    using iterator = value_type*;
+    using const_iterator = const value_type*;
+
+    static constexpr size_type npos = static_cast<size_type>(-1);
+
+    basic_string() : storage_(1, CharT()) {}
+
+    basic_string(const CharT* str) : storage_(1, CharT())
+    {
+        append(str);
+    }
+
+    basic_string(size_type count, CharT ch) : storage_(1, CharT())
+    {
+        resize(count, ch);
+    }
+
+    basic_string(const basic_string&) = default;
+
+    basic_string(basic_string&& other) noexcept : storage_(std::move(other.storage_))
+    {
+        ensure_storage();
+        other.reset_to_empty();
+    }
+
+    basic_string& operator=(const basic_string&) = default;
+
+    basic_string& operator=(basic_string&& other) noexcept
+    {
+        if (this == &other) {
+            return *this;
+        }
+        storage_ = std::move(other.storage_);
+        ensure_storage();
+        other.reset_to_empty();
+        return *this;
+    }
+
+    basic_string& operator=(const CharT* str)
+    {
+        clear();
+        append(str);
+        return *this;
+    }
+
+    const CharT* c_str() const noexcept { return storage_.data(); }
+    CharT* data() noexcept { return storage_.data(); }
+    const CharT* data() const noexcept { return storage_.data(); }
+
+    size_type size() const noexcept
+    {
+        return storage_.empty() ? 0 : storage_.size() - 1;
+    }
+
+    size_type length() const noexcept { return size(); }
+
+    size_type capacity() const noexcept
+    {
+        return storage_.capacity() == 0 ? 0 : storage_.capacity() - 1;
+    }
+
+    bool empty() const noexcept { return size() == 0; }
+
+    iterator begin() noexcept { return storage_.data(); }
+    const_iterator begin() const noexcept { return storage_.data(); }
+    iterator end() noexcept { return storage_.data() + size(); }
+    const_iterator end() const noexcept { return storage_.data() + size(); }
+
+    reference operator[](size_type index) noexcept { return storage_[index]; }
+    const_reference operator[](size_type index) const noexcept { return storage_[index]; }
+    reference front() noexcept { return storage_[0]; }
+    const_reference front() const noexcept { return storage_[0]; }
+    reference back() noexcept { return storage_[size() - 1]; }
+    const_reference back() const noexcept { return storage_[size() - 1]; }
+
+    void clear() noexcept
+    {
+        reset_to_empty();
+    }
+
+    void reserve(size_type new_capacity)
+    {
+        storage_.reserve(new_capacity + 1);
+    }
+
+    void resize(size_type count)
+    {
+        resize(count, CharT());
+    }
+
+    void resize(size_type count, CharT ch)
+    {
+        size_type current = size();
+        storage_.resize(count + 1);
+        if (count > current) {
+            for (size_type index = current; index < count; ++index) {
+                storage_[index] = ch;
+            }
+        }
+        storage_[count] = CharT();
+    }
+
+    void push_back(CharT ch)
+    {
+        size_type current = size();
+        storage_.resize(current + 2);
+        storage_[current] = ch;
+        storage_[current + 1] = CharT();
+    }
+
+    basic_string& append(const CharT* str)
+    {
+        return append(str, traits_type::length(str));
+    }
+
+    basic_string& append(const CharT* str, size_type count)
+    {
+        if (str == nullptr || count == 0) {
+            return *this;
+        }
+        size_type current = size();
+        storage_.resize(current + count + 1);
+        traits_type::copy(storage_.data() + current, str, count);
+        storage_[current + count] = CharT();
+        return *this;
+    }
+
+    basic_string& append(const basic_string& other)
+    {
+        if (this == &other) {
+            basic_string copy(other);
+            return append(copy.data(), copy.size());
+        }
+        return append(other.data(), other.size());
+    }
+
+    basic_string& operator+=(const basic_string& other)
+    {
+        return append(other);
+    }
+
+    basic_string& operator+=(const CharT* str)
+    {
+        return append(str);
+    }
+
+    basic_string& operator+=(CharT ch)
+    {
+        push_back(ch);
+        return *this;
+    }
+
+    int compare(const basic_string& other) const noexcept
+    {
+        size_type common = size() < other.size() ? size() : other.size();
+        int result = traits_type::compare(data(), other.data(), common);
+        if (result != 0) {
+            return result;
+        }
+        if (size() == other.size()) {
+            return 0;
+        }
+        return size() < other.size() ? -1 : 1;
+    }
+
+private:
+    void ensure_storage()
+    {
+        if (storage_.empty()) {
+            storage_.push_back(CharT());
+        }
+        storage_[size()] = CharT();
+    }
+
+    void reset_to_empty()
+    {
+        storage_.clear();
+        storage_.push_back(CharT());
+    }
+
+    vector<CharT, Alloc> storage_;
+};
+
+template <typename CharT, typename Traits, typename Alloc>
+inline bool operator==(const basic_string<CharT, Traits, Alloc>& lhs,
+                       const basic_string<CharT, Traits, Alloc>& rhs) noexcept
+{
+    return lhs.compare(rhs) == 0;
+}
+
+template <typename CharT, typename Traits, typename Alloc>
+inline bool operator!=(const basic_string<CharT, Traits, Alloc>& lhs,
+                       const basic_string<CharT, Traits, Alloc>& rhs) noexcept
+{
+    return !(lhs == rhs);
+}
+
+using string = basic_string<char>;
+
+}  // namespace std
+
+#endif  // VKCPP_STRING_H

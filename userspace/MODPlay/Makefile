@@ -11,11 +11,14 @@
 
 CC      ?= gcc
 CXX     ?= g++
+AR      ?= ar
 OBJCOPY ?= objcopy
 
 USER_INCLUDE   := ../include
 SYSROOT        := ../sysroot
 LIBC_DIR       := ../libc
+CPP_DIR        := ../cpp
+CPP_INCLUDE    := $(CPP_DIR)/include
 KERNEL_INCLUDE := ../../include
 
 CFLAGS  := -std=c11
@@ -53,6 +56,7 @@ endif
 CXXFLAGS += -Wall -Wextra
 CXXFLAGS += -isystem $(SYSROOT)/include
 CXXFLAGS += -I$(USER_INCLUDE)
+CXXFLAGS += -I$(CPP_INCLUDE)
 CXXFLAGS += -I$(KERNEL_INCLUDE)
 # modplay.c uses USE_LINEAR_INTERPOLATION by default (comment out for speed)
 
@@ -64,10 +68,14 @@ LDFLAGS += -Wl,-z,norelro
 LDFLAGS += -Wl,--gc-sections
 LDFLAGS += -L$(SYSROOT)/lib
 LDFLAGS += -L$(LIBC_DIR)
+LDFLAGS += -L$(CPP_DIR)
 
 # Link order: crt0 → objects → --start-group (libc, glue, libgcc) --end-group
 CRT0   := $(LIBC_DIR)/crt0.o
-LIBS   := -Wl,--start-group -lvksys -lc -lstdc++ -lm -lgcc -Wl,--end-group
+CPP_RUNTIME_LIB := $(CPP_DIR)/libvkcpp.a
+DEBUG_ARG       := $(if $(DEBUG),DEBUG=$(DEBUG),)
+# This frontend stays freestanding; libvkcpp provides the in-repo C++ runtime.
+LIBS   := -Wl,--start-group -lvkcpp -lvksys -lc -lm -lgcc -Wl,--end-group
 
 TARGET := modplay.vbin
 
@@ -77,7 +85,10 @@ OBJS   := $(CPP_SRCS:.cpp=.o) $(LIBMODPLAY_SRCS:.c=.o)
 
 .PHONY: all clean distclean
 
-all: $(TARGET)
+all: $(CPP_RUNTIME_LIB) $(TARGET)
+
+$(CPP_RUNTIME_LIB):
+	@$(MAKE) --no-print-directory -C $(CPP_DIR) CXX=$(CXX) AR=$(AR) $(DEBUG_ARG)
 
 main_vk.o: main_vk.cpp
 	@echo "  CXX     $<"
@@ -87,7 +98,7 @@ main_vk.o: main_vk.cpp
 	@echo "  CC      $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-$(TARGET): $(OBJS) $(CRT0)
+$(TARGET): $(OBJS) $(CRT0) $(CPP_RUNTIME_LIB)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $(CRT0) $(OBJS) $(LIBS)
 ifndef DEBUG
