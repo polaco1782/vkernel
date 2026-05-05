@@ -353,119 +353,6 @@ static void copy_text(char* out, size_t out_cap, const char* text)
     out[out_cap - 1] = '\0';
 }
 
-static void kobj_build_path_request(char* out,
-                                    size_t out_cap,
-                                    const char* op,
-                                    const char* path)
-{
-    if (!out || out_cap == 0)
-        return;
-
-    vk_usize pos = 0;
-    out[pos++] = '{';
-    out[pos++] = '"'; out[pos++] = 'o'; out[pos++] = 'p'; out[pos++] = '"';
-    out[pos++] = ':'; out[pos++] = '"';
-    pos = vk_json_copy_escaped(out, (vk_usize)out_cap, pos, op ? op : "");
-    out[pos++] = '"';
-    out[pos++] = ','; out[pos++] = '"'; out[pos++] = 'p'; out[pos++] = 'a'; out[pos++] = 't'; out[pos++] = 'h'; out[pos++] = '"';
-    out[pos++] = ':'; out[pos++] = '"';
-    pos = vk_json_copy_escaped(out, (vk_usize)out_cap, pos, path ? path : "");
-    out[pos++] = '"';
-    out[pos++] = '}';
-    if (pos >= (vk_usize)out_cap)
-        pos = (vk_usize)out_cap - 1;
-    out[pos] = '\0';
-}
-
-static bool json_extract_string_field(const char* json,
-                                      const char* key,
-                                      char* out,
-                                      size_t out_cap)
-{
-    if (!json || !key || !out || out_cap == 0)
-        return false;
-
-    char pattern[48];
-    snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
-    const char* cur = strstr(json, pattern);
-    if (!cur)
-        return false;
-
-    cur += strlen(pattern);
-    size_t pos = 0;
-
-    while (*cur != '\0') {
-        char ch = *cur++;
-        if (ch == '"')
-            break;
-
-        if (ch == '\\' && *cur != '\0') {
-            char esc = *cur++;
-            if (esc == 'n') ch = '\n';
-            else if (esc == 'r') ch = '\r';
-            else if (esc == 't') ch = '\t';
-            else ch = esc;
-        }
-
-        if (pos + 1 < out_cap)
-            out[pos++] = ch;
-    }
-
-    out[pos] = '\0';
-    return true;
-}
-
-static bool json_response_ok(const char* json)
-{
-    return json && strstr(json, "\"ok\":true") != nullptr;
-}
-
-static int json_extract_items(const char* json,
-                              char items[][KOBJ_ITEM_LEN],
-                              int max_items)
-{
-    if (!json || !items || max_items <= 0)
-        return 0;
-
-    const char* cur = strstr(json, "\"items\":[");
-    if (!cur)
-        return 0;
-
-    cur += 9;
-    int count = 0;
-
-    while (*cur != '\0' && *cur != ']' && count < max_items) {
-        while (*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n' || *cur == ',')
-            ++cur;
-
-        if (*cur != '"')
-            break;
-
-        ++cur;
-        size_t pos = 0;
-        while (*cur != '\0' && *cur != '"') {
-            char ch = *cur++;
-            if (ch == '\\' && *cur != '\0') {
-                char esc = *cur++;
-                if (esc == 'n') ch = '\n';
-                else if (esc == 'r') ch = '\r';
-                else if (esc == 't') ch = '\t';
-                else ch = esc;
-            }
-
-            if (pos + 1 < KOBJ_ITEM_LEN)
-                items[count][pos++] = ch;
-        }
-
-        items[count][pos] = '\0';
-        if (*cur == '"')
-            ++cur;
-        ++count;
-    }
-
-    return count;
-}
-
 static void kobj_join_path(const char* parent,
                            const char* child,
                            char* out,
@@ -487,16 +374,18 @@ static int kobj_ls_items(const char* path,
                          char items[][KOBJ_ITEM_LEN],
                          int max_items)
 {
-    char req[256];
     char out[1536];
 
-    kobj_build_path_request(req, sizeof(req), "ls", path);
-    vk_kobj_rpc_json(req, out, sizeof(out));
+    vk_kobj_rpc_path_json("ls", path, out, sizeof(out));
 
-    if (!json_response_ok(out))
+    if (!vk_kobj_response_ok(out))
         return 0;
 
-    return json_extract_items(out, items, max_items);
+    return vk_json_extract_string_array_field(out,
+                                              "items",
+                                              &items[0][0],
+                                              KOBJ_ITEM_LEN,
+                                              max_items);
 }
 
 /* Parse a "key:   value\n" line from describe text.
@@ -599,19 +488,16 @@ static void kobj_parse_edit_state()
 
 static void kobj_refresh_selected()
 {
-    char req[256];
     char out[1536];
 
-    kobj_build_path_request(req, sizeof(req), "get", g_kobj_selected_path);
-    vk_kobj_rpc_json(req, out, sizeof(out));
-    if (!json_extract_string_field(out, "value", g_kobj_value, sizeof(g_kobj_value)))
+    vk_kobj_rpc_path_json("get", g_kobj_selected_path, out, sizeof(out));
+    if (!vk_json_extract_string_field(out, "value", g_kobj_value, sizeof(g_kobj_value)))
         copy_text(g_kobj_value, sizeof(g_kobj_value), "(unavailable)");
-    if (!json_extract_string_field(out, "type", g_kobj_type, sizeof(g_kobj_type)))
+    if (!vk_json_extract_string_field(out, "type", g_kobj_type, sizeof(g_kobj_type)))
         copy_text(g_kobj_type, sizeof(g_kobj_type), "(unknown)");
 
-    kobj_build_path_request(req, sizeof(req), "describe", g_kobj_selected_path);
-    vk_kobj_rpc_json(req, out, sizeof(out));
-    if (!json_extract_string_field(out, "text", g_kobj_desc, sizeof(g_kobj_desc)))
+    vk_kobj_rpc_path_json("describe", g_kobj_selected_path, out, sizeof(out));
+    if (!vk_json_extract_string_field(out, "text", g_kobj_desc, sizeof(g_kobj_desc)))
         copy_text(g_kobj_desc, sizeof(g_kobj_desc), "(no description)");
 
     kobj_parse_edit_state();
@@ -1223,7 +1109,6 @@ static void draw_kobj_window()
         ImGui::SeparatorText("Edit");
 
         bool did_set = false;
-        char set_req[512];
         char set_out[256];
 
         if (strcmp(g_kobj_type, "enum") == 0 && g_kobj_enum_count > 0) {
@@ -1237,20 +1122,21 @@ static void draw_kobj_window()
                 did_set = true;
 
             if (did_set) {
-                snprintf(set_req, sizeof(set_req),
-                    "{\"op\":\"set\",\"path\":\"%s\",\"value\":\"%s\"}",
-                    g_kobj_selected_path,
-                    g_kobj_enum_labels[g_kobj_enum_selected]);
-                vk_kobj_rpc_json(set_req, set_out, sizeof(set_out));
+                vk_kobj_rpc_path_value_json("set",
+                                            g_kobj_selected_path,
+                                            g_kobj_enum_labels[g_kobj_enum_selected],
+                                            set_out,
+                                            sizeof(set_out));
                 kobj_refresh_selected();
             }
         } else if (strcmp(g_kobj_type, "bool") == 0) {
             bool cur_bool = (strcmp(g_kobj_value, "yes") == 0 || strcmp(g_kobj_value, "true") == 0);
             if (ImGui::Checkbox("Enabled##kobj_bool", &cur_bool)) {
-                snprintf(set_req, sizeof(set_req),
-                    "{\"op\":\"set\",\"path\":\"%s\",\"value\":\"%s\"}",
-                    g_kobj_selected_path, cur_bool ? "true" : "false");
-                vk_kobj_rpc_json(set_req, set_out, sizeof(set_out));
+                vk_kobj_rpc_path_value_json("set",
+                                            g_kobj_selected_path,
+                                            cur_bool ? "true" : "false",
+                                            set_out,
+                                            sizeof(set_out));
                 kobj_refresh_selected();
             }
         } else if ((strcmp(g_kobj_type, "u64") == 0 || strcmp(g_kobj_type, "i64") == 0)
@@ -1264,10 +1150,11 @@ static void draw_kobj_window()
             }
             ImGui::SameLine();
             if (ImGui::Button("Set##kobj_range")) {
-                snprintf(set_req, sizeof(set_req),
-                    "{\"op\":\"set\",\"path\":\"%s\",\"value\":\"%s\"}",
-                    g_kobj_selected_path, g_kobj_edit_buf);
-                vk_kobj_rpc_json(set_req, set_out, sizeof(set_out));
+                vk_kobj_rpc_path_value_json("set",
+                                            g_kobj_selected_path,
+                                            g_kobj_edit_buf,
+                                            set_out,
+                                            sizeof(set_out));
                 kobj_refresh_selected();
             }
         } else {
@@ -1275,10 +1162,11 @@ static void draw_kobj_window()
             ImGui::InputText("##kobj_edit", g_kobj_edit_buf, sizeof(g_kobj_edit_buf));
             ImGui::SameLine();
             if (ImGui::Button("Set##kobj_text")) {
-                snprintf(set_req, sizeof(set_req),
-                    "{\"op\":\"set\",\"path\":\"%s\",\"value\":\"%s\"}",
-                    g_kobj_selected_path, g_kobj_edit_buf);
-                vk_kobj_rpc_json(set_req, set_out, sizeof(set_out));
+                vk_kobj_rpc_path_value_json("set",
+                                            g_kobj_selected_path,
+                                            g_kobj_edit_buf,
+                                            set_out,
+                                            sizeof(set_out));
                 kobj_refresh_selected();
             }
         }

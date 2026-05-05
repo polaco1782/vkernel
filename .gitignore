@@ -11,6 +11,7 @@ build_vs/
 *.vbin
 
 # Object files
+*.a
 *.o
 *.obj
 *.lib
