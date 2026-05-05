@@ -2,9 +2,10 @@
 
 A minimal UEFI microkernel for x86_64, written in C++26 as a hobby project.
 Boots directly from UEFI firmware, runs freestanding userspace binaries out of
-a ramfs, and includes a working preemptive round-robin scheduler, PCI bus
-enumeration, ACPI table parsing, SMP bringup infrastructure, a loadable driver
-framework with SB16 and AC97 sound drivers, and ports of Doom and Dear ImGui.
+a ramfs, and includes a working preemptive SMP scheduler, PCI bus enumeration,
+ACPI table parsing, SMP bringup, a loadable driver framework with AC97 sound,
+a software audio mixer, a typed kernel-object tree (kobj), a block device
+subsystem, ATA PIO driver, and ports of Doom, Quake, ClownMDEmu, and Dear ImGui.
 
 ## Current Status
 
@@ -12,27 +13,33 @@ framework with SB16 and AC97 sound drivers, and ports of Doom and Dear ImGui.
 |---|---|
 | UEFI boot & self-relocator (GOT patching) | ✅ Working |
 | Serial + GOP framebuffer console | ✅ Working |
+| Leveled kernel logging (`vk::log`) | ✅ Working |
 | GDT / TSS / IDT (256 vectors, runtime addresses) | ✅ Working |
 | Paging hardening (WP + NXE) | ✅ Working |
 | PIC 8259A remapping (IRQ0 → vec 32) | ✅ Working |
 | PIT 8254 @ 100 Hz (preemption clock) | ✅ Working |
 | Round-robin preemptive scheduler | ✅ Working |
+| SMP (INIT-SIPI-SIPI + LAPIC timer per AP) | ✅ Working (4 APs online) |
 | Kernel heap (64 MB static) | ✅ Working |
 | Physical page allocator | ⚠️ Stub (page count tracked; no free list) |
 | ACPI RSDP/RSDT/XSDT/MADT parser | ✅ Working |
 | PCI bus enumeration (I/O config space) | ✅ Working |
 | Loadable driver framework | ✅ Working |
 | Sound subsystem (vtable + active driver) | ✅ Working |
-| SB16 sound driver | ✅ Working |
+| Software audio mixer (8 channels) | ✅ Working |
 | AC97 sound driver | ✅ Working |
 | Bochs VBE display driver | ✅ Working |
-| SMP bringup (INIT-SIPI-SIPI + AP trampoline) | ✅ Infrastructure complete; disabled at boot |
+| ATA PIO block driver (read-only) | ✅ Working |
+| Block device registry | ✅ Working |
+| Typed kernel-object tree (kobj, JSON RPC) | ✅ Working |
+| Compositor layer (per-task framebuffer routing) | ✅ Working |
 | UEFI Simple File System loader → ramfs | ✅ Working |
 | Ramfs (in-memory flat file table, read-only) | ✅ Working |
 | ELF64 + PE/COFF userspace loader | ✅ Working |
-| Kernel API (`vk_api_t`, ABI version 12) | ✅ Working |
+| Kernel API (`vk_api_t`, ABI version 28) | ✅ Working |
 | Userspace libc (newlib sysroot + CRT glue) | ✅ Working |
 | Unified input subsystem (PS/2 + COM1 serial) | ✅ Working |
+| Per-task I/O routing (console_interface) | ✅ Working |
 | Userspace shell | ✅ Working |
 | Panic handler (`vk_panic()` + halt) | ✅ Working |
 | IPC mechanism | ❌ Not yet implemented |
@@ -43,23 +50,25 @@ framework with SB16 and AC97 sound drivers, and ports of Doom and Dear ImGui.
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Userspace programs  (ring 0)                  │
-│  shell  hello  framebuffer  raytracer  rotozoom  MODPlay  doom   │
-│  framebuffer_text  ramfs_reader  vgui (Dear ImGui)               │
+│  shell  hello  framebuffer  framebuffer_text  raytracer          │
+│  rotozoom  MODPlay  doom  quake  clownmdemu  sr_cube             │
+│  vgui (Dear ImGui WM)                                            │
 │                   freestanding C/C++ · .vbin ELF64               │
 ├──────────────────────────────────────────────────────────────────┤
 │               Userspace libc  (newlib sysroot + CRT glue)        │
 │          crt0.c · syscalls.c · userspace/include/vk.h            │
 │     printf · FILE · fopen/fread · malloc · memcpy wrappers       │
 ├──────────────────────────────────────────────────────────────────┤
-│                    Kernel API  (vk_api_t v12)                    │
+│                    Kernel API  (vk_api_t v28)                    │
 │   console · input · memory · file I/O · process · sound ·        │
-│   framebuffer · raw key/mouse events · driver load/unload        │
+│   software mixer · framebuffer · compositor · key/mouse routing  │
+│   kobj JSON RPC · task snapshot · terminate · command line       │
 ├──────────────────────────────────────────────────────────────────┤
 │                      Microkernel Core  (ring 0)                  │
 │  ┌────────────┬──────────────┬──────────┬──────────────────────┐ │
-│  │ Scheduler  │ Memory       │ Input    │ Console / log        │ │
-│  │ PIT 100 Hz │ 64 MB heap   │ PS/2 +   │ serial + GOP fb      │ │
-│  │ round-robin│ phys alloc   │ COM1     │                      │ │
+│  │ Scheduler  │ Memory       │ Input    │ Console / vk::log    │ │
+│  │ PIT+LAPIC  │ 64 MB heap   │ PS/2 +   │ serial + GOP fb      │ │
+│  │ SMP 4 CPUs │ phys alloc   │ COM1     │ leveled logging      │ │
 │  ├────────────┴──────────────┴──────────┴──────────────────────┤ │
 │  │ Filesystem          │ Process loader  │ Panic               │ │
 │  │ ramfs + UEFI ESP    │ ELF64 · PE/COFF │ vk_panic() · halt   │ │
@@ -67,11 +76,16 @@ framework with SB16 and AC97 sound drivers, and ports of Doom and Dear ImGui.
 │  │ ACPI       │ PCI bus                                        │ │
 │  │ RSDP·MADT  │ I/O 0xCF8/0xCFC config space                   │ │
 │  ├────────────┴────────────────────────────────────────────────┤ │
-│  │ Driver framework                                            │ │
-│  │  SB16 · AC97 · Bochs VBE · (future: net, block)             │ │
+│  │ KObj tree (typed nodes, JSON RPC: ls/get/set/describe)      │ │
 │  ├──────────────────────────────┬──────────────────────────────┤ │
-│  │ SMP (infrastructure ready)   │ Sound subsystem (vtable)     │ │
-│  │ INIT-SIPI-SIPI · AP trampo.  │ active driver forwarding     │ │
+│  │ Block device registry        │ Sound subsystem (vtable)     │ │
+│  │ ATA PIO (read-only)          │ AC97 · software mixer        │ │
+│  ├──────────────────────────────┴──────────────────────────────┤ │
+│  │ Driver framework                                            │ │
+│  │  AC97 · Bochs VBE · ATA PIO                                 │ │
+│  ├──────────────────────────────┬──────────────────────────────┤ │
+│  │ SMP (4 APs online)           │ Compositor (per-task fb)     │ │
+│  │ INIT-SIPI-SIPI · LAPIC timer │ key/mouse routing to tasks   │ │
 │  └──────────────────────────────┴──────────────────────────────┘ │
 ├──────────────────────────────────────────────────────────────────┤
 │              x86_64 Hardware Abstraction                         │
@@ -88,7 +102,8 @@ framework with SB16 and AC97 sound drivers, and ports of Doom and Dear ImGui.
 include/vkernel/                — Public kernel headers
     config.h                    — Build config, version, feature flags
     types.h                     — Freestanding primitive types
-    console.h                   — Console + log:: namespace
+    console.h                   — Console output API
+    log.h                       — Leveled kernel logging (vk::log)
     memory.h                    — Heap, physical allocator, memory map
     elf.h                       — ELF64 loader / data structures
     pe.h                        — PE/COFF loader / data structures
@@ -101,13 +116,18 @@ include/vkernel/                — Public kernel headers
     pci.h                       — PCI bus enumeration API
     driver.h                    — Loadable driver framework
     sound.h                     — Sound subsystem vtable + management API
+    block.h                     — Block device registry + ops interface
+    kobj.h                      — Typed kernel-object tree (kobj)
     smp.h                       — SMP bringup API (cpu_info, init, queries)
     panic.h                     — vk_panic() declaration
     uefi.h                      — UEFI protocol bindings
-    vk.h                        — Canonical kernel/userspace ABI (vk_api_t v12)
+    spinlock.h                  — Spinlock primitive
+    resource_ptr.h              — RAII resource pointer helper
+    unique_ptr.h                — Freestanding unique_ptr helper
+    gcc_asm.h                   — GCC inline-asm helpers
+    msvc_asm.h                  — MSVC intrinsic helpers
+    vk.h                        — Canonical kernel/userspace ABI (vk_api_t v28)
     arch/x86_64/arch.h          — GDT/IDT/TSS/paging/port I/O/LAPIC
-    arch/x86_64/gcc_asm.h       — GCC inline-asm helpers
-    arch/x86_64/msvc_asm.h      — MSVC intrinsic helpers
 
 src/boot/
     efi_main.cpp                — UEFI entry point, 4-phase boot, self-relocator
@@ -115,24 +135,29 @@ src/boot/
     reloc_stub.cpp              — Empty .reloc PE section stub
 
 src/core/
-    console.cpp                 — Serial + framebuffer console, log levels
+    console.cpp                 — Serial + framebuffer console
+    log.cpp                     — Leveled kernel logging (vk::log)
     memory.cpp                  — Heap allocator, physical allocator, memory map
-    scheduler.cpp               — Round-robin preemptive scheduler, PIC/PIT init
+    scheduler.cpp               — Preemptive SMP scheduler, PIC/PIT/LAPIC init
     input.cpp                   — PS/2 keyboard driver + COM1 serial input
     fs.cpp                      — Ramfs + UEFI Simple File System loader
     elf.cpp                     — ELF64 binary loader
     pe.cpp                      — PE/COFF binary loader
-    kernel_api.cpp              — vk_api_t table, file streams, syscall stubs
+    kernel_api.cpp              — vk_api_t table, file streams, compositor
     process.cpp                 — ELF/PE process loader and task launch
     acpi.cpp                    — ACPI RSDP/RSDT/XSDT/MADT parser
     pci.cpp                     — PCI bus enumeration via I/O ports 0xCF8/0xCFC
     driver.cpp                  — Loadable driver registry (load/unload/list)
     sound.cpp                   — Sound subsystem management (active driver)
-    sound_sb16.cpp              — Sound Blaster 16 driver
-    sound_ac97.cpp              — AC97 audio driver
-    bochs_vbe.cpp               — Bochs VBE display driver
+    block.cpp                   — Block device registry
+    kobj.cpp                    — Typed kernel-object tree and JSON RPC handler
     panic.cpp                   — vk_panic() — dump context and halt
     uefi.cpp                    — UEFI protocol wrappers
+
+src/drivers/
+    ata_pio.cpp                 — Legacy ATA PIO read-only block driver
+    bochs_vbe.cpp               — Bochs VBE display driver
+    sound_ac97.cpp              — AC97 audio driver
 
 src/arch/x86_64/
     arch_init.cpp               — GDT, IDT, TSS, paging, interrupt dispatcher
@@ -157,10 +182,12 @@ userspace/framebuffer/          — Direct GOP pixel painting demo
 userspace/framebuffer_text/     — Text rendering into framebuffer demo
 userspace/raytracer/            — Realtime raytraced scene demo
 userspace/rotozoom/             — Rotate-zoom effect demo
-userspace/ramfs_reader/         — Inspect ramfs files, print ELF header bytes
+userspace/sr_cube/              — Software-rendered 3-D cube demo
 userspace/MODPlay/              — MOD tracker audio player (PCM via sound API)
 userspace/doom/                 — Chocolate Doom port (SDL shim → vk_api_t)
-userspace/vgui/                 — Dear ImGui frontend (imgui_impl_vk backend)
+userspace/quake/                — Quake port (SDL shim → vk_api_t)
+userspace/clownmdemu/           — Sega Mega Drive emulator (ClownMDEmu core)
+userspace/vgui/                 — Dear ImGui window manager (imgui_impl_vk backend)
 ```
 
 ## Boot Sequence
@@ -176,12 +203,13 @@ userspace/vgui/                 — Dear ImGui frontend (imgui_impl_vk backend)
 5. **Phase 3**: `arch::activate()` — load GDT/IDT/TSS, harden paging
    (WP + NXE), init kernel heap, init input subsystem.
 6. **Phase 4**: `acpi::init()` → `pci::init()` → `driver::init()` →
-   sound driver probe (SB16 or AC97) → `sched::init()` (PIC remap + PIT @
-   100 Hz) → create idle task → launch `shell.vbin` → `sched::start()`.
-   Does not return. SMP bringup (`smp::init()`) is implemented but currently
-   commented out in this phase.
+   sound driver probe (AC97) → `block::init()` (ATA PIO probe) →
+   `kobj::init()` → `sched::init()` (PIC remap + PIT @ 100 Hz) →
+   `smp::init()` (INIT-SIPI-SIPI, LAPIC timer per AP) →
+   create idle task → launch `shell.vbin` and `vgui.vbin` →
+   `sched::start()`. Does not return.
 
-## Kernel API (`vk_api_t`, ABI version 12)
+## Kernel API (`vk_api_t`, ABI version 28)
 
 Every userspace binary receives a `const vk_api_t*` as its first argument.
 There are no syscall instructions — it is a plain function-pointer table
@@ -191,26 +219,30 @@ populated once at boot by `kernel_api.cpp`.
 |---|---|
 | Console output | `vk_puts`, `vk_putc`, `vk_put_hex`, `vk_put_dec`, `vk_clear` |
 | Console input | `vk_getc` (blocking), `vk_try_getc` (non-blocking) |
-| Memory | `vk_malloc`, `vk_free`, `vk_realloc`, `vk_memset`, `vk_memcpy`, `vk_memmove`, `vk_memchr`, `vk_memcmp` |
-| File I/O (direct) | `vk_file_exists`, `vk_file_size`, `vk_file_read` |
-| File I/O (stream) | `vk_file_open`, `vk_file_close`, `vk_file_read_handle`, `vk_file_write_handle`, `vk_file_seek`, `vk_file_tell`, `vk_file_eof`, `vk_file_error`, `vk_file_flush` |
-| Process | `vk_exit`, `vk_yield`, `vk_sleep`, `vk_run`, `vk_wait_task`, `vk_tick_count`, `vk_ticks_per_sec`, `vk_reboot` |
-| Diagnostics | `vk_dump_memory`, `vk_dump_tasks`, `vk_dump_idt` |
-| Framebuffer | `vk_framebuffer_info` → base address, width, height, stride, pixel format |
+| Memory | `vk_malloc`, `vk_free`, `vk_memset`, `vk_memcpy`, `vk_memmove`, `vk_memcmp` |
+| File I/O (direct) | `vk_file_exists`, `vk_file_size` |
+| File I/O (stream) | `vk_file_open`, `vk_file_close`, `vk_file_read_handle`, `vk_file_write_handle`, `vk_file_seek`, `vk_file_tell`, `vk_file_remove` |
+| Process | `vk_exit`, `vk_yield`, `vk_sleep`, `vk_run`, `vk_run_auto`, `vk_run_with_fb`, `vk_run_cmdline`, `vk_wait_task`, `vk_terminate_task`, `vk_tick_count`, `vk_ticks_per_sec`, `vk_get_cmdline` |
+| Task info | `vk_task_snapshot` — fills `vk_task_info_t[]` with id, state, cpu, cpu_ticks, name |
+| Framebuffer | `vk_framebuffer_info` → base, width, height, stride, pixel format; `vk_set_task_framebuffer` |
+| Compositor | `vk_set_compositor_active`, `vk_set_compositor_default_fb` |
 | Raw input | `vk_poll_key` (scancode + modifier bits), `vk_poll_mouse` (Δx/Δy + buttons) |
+| Input routing | `vk_send_key` (inject key to task), `vk_send_mouse` (inject mouse to task) |
 | Sound | `vk_snd_play`, `vk_snd_stop`, `vk_snd_is_playing`, `vk_snd_set_sample_rate`, `vk_snd_set_volume` |
-| Drivers | `vk_drv_load`, `vk_drv_unload` |
+| Mixer | `vk_snd_mix_play`, `vk_snd_mix_stop`, `vk_snd_mix_is_playing`, `vk_snd_mix_update` (8 channels, formats: U8/S16/S16-stereo) |
+| KObj RPC | `vk_kobj_rpc` — JSON in/out; ops: `ls`, `get`, `set`, `describe` |
 
-Ramfs is read-only — `vk_file_write_handle`, `vk_file_remove`, and
-`vk_file_rename` are stubbed and always return `-1`. New fields may only be
-appended to the end of `vk_api_t`; `api_version` must be bumped on any
-breaking layout change.
+Ramfs is read-only — `vk_file_write_handle` and `vk_file_remove` are stubbed
+and always return `-1`. New fields may only be appended to the end of
+`vk_api_t`; `api_version` must be bumped on any breaking layout change.
 
 ## SMP
 
-The full SMP bringup infrastructure is implemented in
-`src/arch/x86_64/smp.cpp` and `src/arch/x86_64/ap_trampoline.S` but is
-currently disabled (commented out in `efi_main.cpp`).
+Full SMP is enabled and all APs run in parallel with the BSP. QEMU is
+configured with `-smp 4`. Boot tasks (shell, vgui) created before
+`g_scheduler_active` are BSP-only; post-boot tasks are pinned to the first
+CPU that dispatches them to avoid a context-switch race in the interrupt
+epilogue.
 
 **What is implemented:**
 
@@ -227,24 +259,47 @@ currently disabled (commented out in `efi_main.cpp`).
   `ap_init_secondary()`.
 - `ap_init_secondary()` calls `arch::ap_activate()` (reload real GDT/IDT),
   `lapic_init_local()` (enable LAPIC SVR), sets the ready flag, then enters
-  `sched::start_ap()` which arms the LAPIC timer and begins the `hlt` loop.
+  `sched::start_ap()` which calibrates and arms the LAPIC timer and loops in
+  `arch::cpu_halt()` until timer-driven dispatch finds AP-eligible work.
+- Per-CPU synthetic idle frames rebuilt before each idle switch so `iretq`
+  is always valid even after the idle trampoline reuses its own stack slots.
 - Public API: `smp::cpu_count()`, `smp::current_cpu_apic_id()`,
   `smp::get_cpu_info(idx)`, `smp::dump_cpus()`.
+- Online CPU count exposed via kobj at `sys/cpu/count`.
 
 ## Driver Framework
 
 Drivers are compiled into the kernel image and activated on demand. Each
-driver provides a `driver_descriptor` with a name (e.g. `"sb16"`), type
+driver provides a `driver_descriptor` with a name (e.g. `"ac97"`), type
 (`driver_type::sound`), and a vtable pointer (`sound_driver_t*`). Registration
 happens at boot via `driver::register_driver()`.
 
 Runtime management:
 
-- Shell command: `drvload <name>`
-- Kernel API: `vk_drv_load` / `vk_drv_unload`
-- Direct: `driver::load("sb16")` / `driver::unload("sb16")`
+- Shell command: `drvload <name>` / `drvunload <name>`
+- Direct: `driver::load("ac97")` / `driver::unload("ac97")`
 
-Currently registered drivers: `sb16`, `ac97`, `bochs_vbe`.
+Currently registered drivers: `ac97`, `bochs_vbe`, `ata_pio`.
+
+## KObj (Kernel Object Tree)
+
+`src/core/kobj.cpp` maintains a typed tree of named nodes exposed to userspace
+via a JSON RPC call (`vk_kobj_rpc`). Nodes carry a tag (bool, u64, i64, string,
+enum) and optional metadata (description, range, writable flag, enum labels).
+
+Supported operations (JSON `"op"` field):
+
+| Op | Description |
+|---|---|
+| `ls` | List children of a path |
+| `get` | Read value and type at a path |
+| `set` | Write a writable node |
+| `describe` | Return human-readable metadata for a path |
+
+Notable published nodes: `sys/cpu/count`, `sys/mem/*`, `sys/uptime`.
+The shell `get <path>`, `set <path> <value>`, `describe <path>`, and
+`watch <path>` commands use this interface. The vGUI **KObj Navigator** panel
+browses the tree interactively.
 
 ## Userspace Shell
 
@@ -258,7 +313,12 @@ vk> help
 | `version` | Kernel version and build info |
 | `mem` | Heap and physical allocator stats |
 | `tasks` | Scheduler task list |
+| `top` | Live CPU usage per task (one-shot) |
 | `ls` | List ramfs files |
+| `get <path>` | Read a kobj node value |
+| `set <path> <val>` | Write a writable kobj node |
+| `watch <path>` | Poll a kobj node value |
+| `describe <path>` | Print kobj node metadata |
 | `cat <file>` | Print a ramfs file |
 | `clear` | Clear the screen |
 | `uptime` | Tick count since scheduler start |
@@ -266,6 +326,7 @@ vk> help
 | `idt` | Dump interrupt descriptor table |
 | `alloc` | Allocate and free a test heap block |
 | `drvload <name>` | Load a kernel driver by name |
+| `drvunload <name>` | Unload a kernel driver by name |
 | `run <file>` | Launch a `.vbin` userspace program |
 | `panic` | Trigger a userspace fault |
 | `exit` | Exit the shell |
@@ -282,10 +343,12 @@ All programs are freestanding ELF64 binaries (`.vbin`) loaded from ramfs.
 | `framebuffer_text.vbin` | Text rendering into framebuffer |
 | `raytracer.vbin` | Realtime raytraced scene |
 | `rotozoom.vbin` | Rotate-zoom effect |
-| `ramfs_reader.vbin` | Inspect ramfs files and ELF headers |
+| `sr_cube.vbin` | Software-rendered 3-D spinning cube |
 | `modplay.vbin` | MOD tracker audio player (uses sound API) |
 | `doom.vbin` | Chocolate Doom port (SDL shim → vk_api_t) |
-| `vgui.vbin` | Dear ImGui frontend (run `setup_imgui.sh` first) |
+| `quake.vbin` | Quake port (SDL shim → vk_api_t) |
+| `clownmdemu.vbin` | Sega Mega Drive emulator (ClownMDEmu core) |
+| `vgui.vbin` | Dear ImGui window manager (run `setup_imgui.sh` first) |
 
 ## Building
 
