@@ -90,6 +90,9 @@
     <ClCompile Include="src\boot\reloc_stub.cpp" />
     <ClCompile Include="src\core\panic.cpp" />
     <ClCompile Include="src\core\fs.cpp" />
+    <ClCompile Include="src\fs\fat32.cpp" />
+    <ClCompile Include="src\fs\ramfs.cpp" />
+    <ClCompile Include="src\fs\uefi_loader.cpp" />
     <ClCompile Include="src\core\elf.cpp" />
     <ClCompile Include="src\core\kernel_api.cpp" />
     <ClCompile Include="src\core\kobj.cpp" />

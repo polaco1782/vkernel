@@ -14,6 +14,8 @@
 
 #pragma once
 
+#define ImDrawIdx unsigned int
+
 /* ---- Assertions ---- */
 #include <assert.h>
 #define IM_ASSERT(_EXPR) assert(_EXPR)

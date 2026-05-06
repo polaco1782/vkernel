@@ -1,0 +1,40 @@
+#pragma once
+
+#include "../resource_ptr.h"
+#include "../types.h"
+
+namespace vk {
+namespace fat32 {
+
+struct mount_info {
+    bool mounted = false;
+    bool writable = false;
+    static_string<16> filesystem_name;
+    static_string<32> block_device;
+    static_string<64> logical_root_path;
+    u64 partition_start_lba = 0;
+    u32 total_sectors = 0;
+    u32 bytes_per_sector = 0;
+    u8 sectors_per_cluster = 0;
+    u8 fat_count = 0;
+    u16 reserved_sector_count = 0;
+    u32 sectors_per_fat = 0;
+    u32 first_data_sector = 0;
+    u32 root_cluster = 0;
+    u32 logical_root_cluster = 0;
+    u32 fs_info_sector = 0;
+};
+
+void init();
+auto mount_first_available() -> status_code;
+auto is_mounted() -> bool;
+auto info() -> mount_info;
+
+auto file_exists(string_view path) -> bool;
+auto file_size(string_view path) -> usize;
+auto read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8*;
+auto write_file(string_view path, const u8* data, usize size) -> bool;
+auto remove_file(string_view path) -> bool;
+
+} // namespace fat32
+} // namespace vk

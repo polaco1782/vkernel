@@ -206,18 +206,19 @@ static auto run_impl(string_view filename,
                      string_view command_line,
                      console_interface interface,
                      const vk_framebuffer_info_t* fb_override) -> i64 {
-    /* Look up the file in ramfs */
-    const file_entry* f = ramfs::find(filename);
-    if (f == null) {
+    kernel_heap_ptr<u8> owned_file;
+    usize file_size = 0;
+    const u8* data = fs::load_file(filename, owned_file, file_size);
+    if (data == null) {
         static_string<128> filename_buf(filename);
         log::warn() << "process: file not found: " << filename_buf.c_str();
         return -1;
     }
 
-    log::info() << "Loading binary: " << f->name.c_str() << " (" << f->size << " bytes)";
+    static_string<128> filename_buf(filename);
+    log::info() << "Loading binary: " << filename_buf.c_str() << " (" << file_size << " bytes)";
 
-    const u8*  data = f->data;
-    const usize sz  = f->size;
+    const usize sz = file_size;
 
     u64   entry_addr      = 0;
     u8*   image_base_raw  = null;
@@ -306,7 +307,7 @@ static auto run_impl(string_view filename,
     (void)ctx.release();
     (void)image_base.release();
 
-    log::info() << "Spawned task id " << static_cast<unsigned long long>(task_id) << " for " << f->name.c_str();
+    log::info() << "Spawned task id " << static_cast<unsigned long long>(task_id) << " for " << filename_buf.c_str();
 
     return task_id;
 }

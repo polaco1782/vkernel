@@ -6,9 +6,7 @@
 
 BUILD_DIR="build"
 EFI_FILE="${BUILD_DIR}/vkernel.efi"
-ESP_ROOT="${BUILD_DIR}/esp"
-ESP_BOOT="${ESP_ROOT}/EFI/BOOT"
-ESP_VKERNEL="${ESP_ROOT}/EFI/vkernel"
+BOOT_IMG="${BUILD_DIR}/vkernel_boot.img"
 NVRAM_FILE="${BUILD_DIR}/ovmf_vars.fd"
 DEBUG_QEMU=0
 VERBOSE=0
@@ -25,17 +23,18 @@ for arg in "$@"; do
 done
 
 if [ "${DEBUG_QEMU}" -eq 1 ] || [ "${VERBOSE}" -eq 1 ]; then
-    make clean
-    make DEBUG=1
-    make userspace DEBUG=1
+    make DEBUG=1 disk
 else
-    make clean
-    make
-    make userspace
+    make disk
 fi
 
 if [ ! -f "${EFI_FILE}" ]; then
     echo "Error: EFI file not found. Run: make"
+    exit 1
+fi
+
+if [ ! -f "${BOOT_IMG}" ]; then
+    echo "Error: boot image not found. Run: make disk"
     exit 1
 fi
 
@@ -63,30 +62,6 @@ PFLASH_FMT="raw"
 case "${OVMF_CODE}" in
     *.qcow2) PFLASH_FMT="qcow2" ;;
 esac
-
-# Stage the ESP as a host directory and expose it to QEMU as a virtual FAT disk.
-rm -rf "${ESP_ROOT}"
-mkdir -p "${ESP_BOOT}"
-cp "${EFI_FILE}" "${ESP_BOOT}/bootx64.efi"
-
-mkdir -p "${ESP_VKERNEL}"
-find userspace -name "*.vbin" | while read -r vbin; do
-    echo "Found userspace binary: ${vbin}"
-    cp -va "${vbin}" "${ESP_VKERNEL}/"
-done
-find "${ESP_VKERNEL}" -maxdepth 1 -type f -name "*.vbin" -printf '%f\n' | sort > "${ESP_VKERNEL}/vgui_apps.txt"
-
-# Copy DOOM WAD file (check multiple search locations)
-cp -va "userspace/doom/doom1.wad" "${ESP_VKERNEL}/doom1.wad"
-cp -va "userspace/doom/doom2.wad" "${ESP_VKERNEL}/doom2.wad"
-cp -va "userspace/shell/shell_exec.txt" "${ESP_VKERNEL}/shell.txt"
-cp -va "userspace/MODPlay/makemove.mod" "${ESP_VKERNEL}/makemove.mod"
-cp -va "userspace/MODPlay/UNREALPM.S3M" "${ESP_VKERNEL}/UNREALPM.S3M"
-cp -va "userspace/rotozoom/head.bmp" "${ESP_VKERNEL}/head.bmp"
-cp -va "userspace/quake/pak0.pak" "${ESP_VKERNEL}/pak0.pak"
-if [ -f "userspace/clownmdemu/sonic1.bin" ]; then
-    cp -va "userspace/clownmdemu/sonic1.bin" "${ESP_VKERNEL}/sonic1.bin"
-fi
 
 # Writable OVMF_VARS
 cp "${OVMF_VARS}" "${NVRAM_FILE}"
@@ -122,7 +97,7 @@ exec ${QEMU} \
     -smp 4 \
     -drive if=pflash,format=${PFLASH_FMT},readonly=on,file="${OVMF_CODE}" \
     -drive if=pflash,format=${PFLASH_FMT},file="${NVRAM_FILE}" \
-    -drive if=ide,index=0,media=disk,format=raw,file="fat:rw:${ESP_ROOT}" \
+    -drive if=ide,index=0,media=disk,format=raw,file="${BOOT_IMG}" \
     -m 512M \
     -net none \
     -device AC97 \

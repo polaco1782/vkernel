@@ -68,6 +68,7 @@ LDFLAGS += -T src/boot/linker.ld
 # Source files
 CXX_SRCS := $(wildcard src/boot/*.cpp)
 CXX_SRCS += $(wildcard src/core/*.cpp)
+CXX_SRCS += $(wildcard src/fs/*.cpp)
 CXX_SRCS += $(wildcard src/drivers/*.cpp)
 CXX_SRCS += $(wildcard src/arch/x86_64/*.cpp)
 
@@ -84,17 +85,19 @@ ALL_OBJS := $(CXX_OBJS) $(ASM_OBJS)
 all: $(EFI_FILE)
 
 # Create build directories
-$(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64:
+$(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/fs $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64:
 	@mkdir -p $@
 
 # Compile C++ files
-$(BUILD_DIR)/obj/%.o: src/%.cpp | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
+$(BUILD_DIR)/obj/%.o: src/%.cpp | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/fs $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
 	@echo "  CXX     $<"
+	@mkdir -p $(dir $@)
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Compile assembly files
-$(BUILD_DIR)/obj/%.o: src/%.S | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
+$(BUILD_DIR)/obj/%.o: src/%.S | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/fs $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
 	@echo "  ASM     $<"
+	@mkdir -p $(dir $@)
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Link ELF kernel
@@ -225,33 +228,6 @@ distclean: clean
 	@$(MAKE) --no-print-directory -C $(LIBC_DIR) distclean
 	@bash scripts/setup_newlib.sh clean 2>/dev/null || true
 	@rm -rf $(SYSROOT_DIR)
-
-# QEMU test
-qemu: $(BOOT_IMG)
-	@echo "Running in QEMU..."
-	qemu-system-x86_64 \
-		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
-		-drive if=ide,format=raw,file=$(BOOT_IMG) \
-		-m 512M \
-		-net none \
-		-serial stdio \
-		-display default,show-cursor=off \
-		-no-reboot \
-		-no-shutdown
-
-# QEMU with debug
-qemu-debug: $(BOOT_IMG)
-	@echo "Running in QEMU with GDB server..."
-	qemu-system-x86_64 \
-		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
-		-drive if=ide,format=raw,file=$(BOOT_IMG) \
-		-m 512M \
-		-net none \
-		-serial stdio \
-		-display default,show-cursor=off \
-		-no-reboot \
-		-no-shutdown \
-		-s -S
 
 # Show build info
 info:

@@ -147,12 +147,11 @@ static void* stub_memcpy(void* dest, const void* src, vk_usize n) {
 /* ---- filesystem ---- */
 
 static int stub_file_exists(const char* name) {
-    return ramfs::find(name) != null ? 1 : 0;
+    return fs::file_exists(name) ? 1 : 0;
 }
 
 static vk_usize stub_file_size(const char* name) {
-    const auto* f = ramfs::find(name);
-    return f ? f->size : 0;
+    return fs::file_size(name);
 }
 
 /* ---- process ---- */
@@ -614,139 +613,32 @@ static int stub_memcmp(const void* lhs, const void* rhs, vk_usize n) {
     return 0;
 }
 
-struct kernel_file_stream {
-    const file_entry* entry = null;
-    vk_usize          position = 0;
-    bool              readable = false;
-    bool              writable = false;
-    bool              eof = false;
-    bool              error = false;
-    bool              in_use = false;
-};
-
-static constexpr usize k_max_kernel_file_streams = 16;
-static kernel_file_stream s_file_streams[k_max_kernel_file_streams];
-
-static auto parse_mode_flags(string_view mode) -> bool {
-    if (mode.data() == null) return false;
-
-    bool saw_read = false;
-    bool saw_write = false;
-    bool saw_append = false;
-    bool saw_plus = false;
-
-    for (usize i = 0; i < mode.size(); ++i) {
-        switch (mode[i]) {
-            case 'r': saw_read = true; break;
-            case 'w': saw_write = true; break;
-            case 'a': saw_append = true; break;
-            case '+': saw_plus = true; break;
-            default: break;
-        }
-    }
-
-    return saw_write || saw_append || saw_plus ? false : saw_read;
-}
-
-static auto handle_from_id(vk_file_handle_t handle) -> kernel_file_stream* {
-    if (handle == 0 || handle > k_max_kernel_file_streams) return null;
-    auto& stream = s_file_streams[static_cast<usize>(handle - 1)];
-    return stream.in_use ? &stream : null;
-}
-
 static vk_file_handle_t stub_file_open(const char* path, const char* mode) {
-    if (!parse_mode_flags(mode)) {
-        return 0;
-    }
-
-    const auto* entry = ramfs::find(path);
-    if (entry == null) {
-        return 0;
-    }
-
-    for (usize i = 0; i < k_max_kernel_file_streams; ++i) {
-        auto& stream = s_file_streams[i];
-        if (stream.in_use) continue;
-
-        stream.entry = entry;
-        stream.position = 0;
-        stream.readable = true;
-        stream.writable = false;
-        stream.eof = false;
-        stream.error = false;
-        stream.in_use = true;
-        return static_cast<vk_file_handle_t>(i + 1);
-    }
-
-    return 0;
+    return static_cast<vk_file_handle_t>(fs::file_open(path, mode));
 }
 
 static int stub_file_close(vk_file_handle_t handle) {
-    auto* stream = handle_from_id(handle);
-    if (stream == null) return -1;
-
-    *stream = {};
-    return 0;
+    return fs::file_close(static_cast<fs::file_handle>(handle));
 }
 
 static vk_usize stub_file_read_handle(vk_file_handle_t handle, void* buf, vk_usize buf_size) {
-    auto* stream = handle_from_id(handle);
-    if (stream == null || buf == null || !stream->readable) return 0;
-
-    if (stream->position >= stream->entry->size) {
-        stream->eof = true;
-        return 0;
-    }
-
-    vk_usize remaining = stream->entry->size - stream->position;
-    vk_usize to_copy = remaining < buf_size ? remaining : buf_size;
-    memory::copy(buf, stream->entry->data + stream->position, to_copy);
-    stream->position += to_copy;
-    stream->eof = stream->position >= stream->entry->size;
-    return to_copy;
+    return fs::file_read(static_cast<fs::file_handle>(handle), buf, buf_size);
 }
 
 static vk_usize stub_file_write_handle(vk_file_handle_t handle, const void* buf, vk_usize buf_size) {
-    auto* stream = handle_from_id(handle);
-    if (stream == null || buf == null) return 0;
-
-    stream->error = true;
-    stream->writable = false;
-    return 0;
+    return fs::file_write(static_cast<fs::file_handle>(handle), buf, buf_size);
 }
 
 static int stub_file_seek(vk_file_handle_t handle, vk_i64 offset, int whence) {
-    auto* stream = handle_from_id(handle);
-    if (stream == null) return -1;
-
-    vk_i64 base = 0;
-    switch (whence) {
-        case 0: base = 0; break;
-        case 1: base = static_cast<vk_i64>(stream->position); break;
-        case 2: base = static_cast<vk_i64>(stream->entry->size); break;
-        default: stream->error = true; return -1;
-    }
-
-    vk_i64 next = base + offset;
-    if (next < 0) {
-        stream->error = true;
-        return -1;
-    }
-
-    stream->position = static_cast<vk_usize>(next);
-    stream->eof = stream->position >= stream->entry->size;
-    return 0;
+    return fs::file_seek(static_cast<fs::file_handle>(handle), offset, whence);
 }
 
 static vk_i64 stub_file_tell(vk_file_handle_t handle) {
-    auto* stream = handle_from_id(handle);
-    if (stream == null) return -1;
-    return static_cast<vk_i64>(stream->position);
+    return fs::file_tell(static_cast<fs::file_handle>(handle));
 }
 
 static int stub_file_remove(const char* path) {
-    (void)path;
-    return -1;
+    return fs::file_remove(path);
 }
 
 /* ============================================================

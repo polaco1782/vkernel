@@ -20,6 +20,7 @@ struct block_device;
 
 struct block_ops {
     bool (*read_blocks)(block_device* dev, u64 lba, u32 count, void* buffer);
+    bool (*write_blocks)(block_device* dev, u64 lba, u32 count, const void* buffer);
 };
 
 struct block_device {
@@ -48,6 +49,7 @@ auto get_device(usize index) -> block_device*;
 auto find(const char* name) -> block_device*;
 
 bool read_blocks(block_device* dev, u64 lba, u32 count, void* buffer);
+bool write_blocks(block_device* dev, u64 lba, u32 count, const void* buffer);
 void list_devices();
 
 } // namespace block

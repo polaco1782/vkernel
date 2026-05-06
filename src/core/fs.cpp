@@ -2,468 +2,722 @@
  * vkernel - UEFI Microkernel
  * Copyright (C) 2026 vkernel authors
  *
- * fs.cpp - Ramfs + UEFI ESP file loader implementation
+ * fs.cpp - Filesystem facade and kernel stream table
  */
 
-#include "config.h"
-#include "types.h"
-#include "uefi.h"
-#include "memory.h"
-#include "console.h"
-#include "log.h"
 #include "fs.h"
-#include "resource_ptr.h"
+
+#include "fs/fat32.h"
+
+#include "log.h"
+#include "memory.h"
 
 namespace vk {
-
-/* ============================================================
- * Ramfs — flat in-memory file table
- * ============================================================ */
-
-static file_entry g_files[RAMFS_MAX_FILES];
-static usize      g_file_count = 0;
-
-auto ramfs::init() -> status_code {
-    g_file_count = 0;
-    memory::set(g_files, 0, sizeof(g_files));
-    return status_code::success;
-}
-
-auto ramfs::add_file(string_view name, const u8* data, usize size) -> status_code {
-    if (g_file_count >= RAMFS_MAX_FILES) return status_code::no_memory;
-    if (name.data() == null || data == null) return status_code::invalid_param;
-
-    auto& f = g_files[g_file_count];
-    if (!f.name.assign(name)) return status_code::invalid_param;
-    
-    /* Allocate a copy in kernel heap */
-    kernel_heap_ptr<u8> buf(static_cast<u8*>(g_kernel_heap.allocate(size)));
-    if (!buf) return status_code::no_memory;
-    memory::copy(buf.get(), data, size);
-
-    f.data  = buf.release();
-    f.size  = size;
-    f.valid = true;
-    ++g_file_count;
-
-    log::debug() << "ramfs: added '" << f.name.c_str() << "' at heap=" << reinterpret_cast<const void*>(f.data) << " (" << size << " bytes)";
-
-    return status_code::success;
-}
-
-auto ramfs::add_file(const char* name, const u8* data, usize size) -> status_code {
-    return add_file(string_view(name), data, size);
-}
-
-auto ramfs::add_file_nocopy(string_view name, u8* data, usize size) -> status_code {
-    if (g_file_count >= RAMFS_MAX_FILES) return status_code::no_memory;
-    if (name.data() == null || data == null) return status_code::invalid_param;
-
-    auto& f = g_files[g_file_count];
-    if (!f.name.assign(name)) return status_code::invalid_param;
-    f.data  = data;
-    f.size  = size;
-    f.valid = true;
-    ++g_file_count;
-
-    log::debug() << "ramfs: registered (nocopy) '" << f.name.c_str() << "' at " << reinterpret_cast<const void*>(data) << " (" << size << " bytes)";
-
-    return status_code::success;
-}
-
-auto ramfs::add_file_nocopy(const char* name, u8* data, usize size) -> status_code {
-    return add_file_nocopy(string_view(name), data, size);
-}
-
-auto ramfs::find(string_view name) -> const file_entry* {
-    /* Normalize: strip leading "./" so "./doom2.wad" matches "doom2.wad" */
-    if (name.starts_with("./")) {
-        name.remove_prefix(2);
-    }
-    for (usize i = 0; i < g_file_count; ++i) {
-        if (g_files[i].valid && g_files[i].name.view().equals(name))
-            return &g_files[i];
-    }
-    /* Flat-filesystem fallback: VK has no subdirectories.
-     * "id1/pak0.pak" should find "pak0.pak". Search for the last '/'
-     * and retry with just the basename component. */
-    const char* last_slash = null;
-    for (usize i = 0; i < name.size(); ++i) {
-        if (name[i] == '/') last_slash = name.data() + i;
-    }
-    if (last_slash != null) {
-        string_view base(last_slash + 1, name.size() - static_cast<usize>(last_slash + 1 - name.data()));
-        for (usize i = 0; i < g_file_count; ++i) {
-            if (g_files[i].valid && g_files[i].name.view().equals(base))
-                return &g_files[i];
-        }
-    }
-    return null;
-}
-
-auto ramfs::find(const char* name) -> const file_entry* {
-    return find(string_view(name));
-}
-
-auto ramfs::file_count() -> usize { return g_file_count; }
-
-auto ramfs::get_file(usize index) -> const file_entry* {
-    if (index >= g_file_count) return null;
-    return &g_files[index];
-}
-
-void ramfs::dump() {
-    log::info() << "RAMFS: " << g_file_count << " file(s)";
-    for (usize i = 0; i < g_file_count; ++i) {
-        if (g_files[i].valid) {
-            log::info() << "  [" << i << "] '" << g_files[i].name.c_str() << "' (" << g_files[i].size << " bytes)";
-        }
-    }
-}
-
 namespace {
 
-/* EFI_FILE_PROTOCOL — subset of function pointers we need */
-struct efi_file_protocol;
+static u8 s_empty_file_marker = 0;
 
-using efi_file_open_fn  = VK_MSABI uefi::status(*)(
-    efi_file_protocol* self, efi_file_protocol** new_handle,
-    const char16_t* file_name, u64 open_mode, u64 attributes);
-
-using efi_file_close_fn = VK_MSABI uefi::status(*)(efi_file_protocol* self);
-
-using efi_file_read_fn  = VK_MSABI uefi::status(*)(
-    efi_file_protocol* self, usize* buffer_size, void* buffer);
-
-using efi_file_write_fn = VK_MSABI uefi::status(*)(
-    efi_file_protocol* self, usize* buffer_size, const void* buffer);
-
-using efi_file_set_position_fn = VK_MSABI uefi::status(*)(
-    efi_file_protocol* self, u64 position);
-
-using efi_file_get_info_fn = VK_MSABI uefi::status(*)(
-    efi_file_protocol* self, const uefi::guid* info_type,
-    usize* buffer_size, void* buffer);
-
-struct efi_file_protocol {
-    u64                  revision;
-    efi_file_open_fn     open;       /* offset  8 */
-    efi_file_close_fn    close;      /* offset 16 */
-    void*                del;        /* offset 24 */
-    efi_file_read_fn     read;       /* offset 32 */
-    efi_file_write_fn    write;      /* offset 40 */
-    void*                get_position; /* offset 48 */
-    efi_file_set_position_fn set_position; /* offset 56 */
-    efi_file_get_info_fn get_info;   /* offset 64 */
-    /* ... more we don't need */
+struct open_mode {
+    bool valid = false;
+    bool readable = false;
+    bool writable = false;
+    bool create = false;
+    bool truncate = false;
+    bool append = false;
 };
 
-struct efi_file_handle_deleter {
-    void operator()(efi_file_protocol* file) const noexcept {
-        if (file != null && file->close != null) {
-            file->close(file);
+enum class stream_backend : u8 {
+    none,
+    ramfs,
+    fat32,
+};
+
+static auto stream_backend_name(stream_backend backend) -> const char* {
+    switch (backend) {
+        case stream_backend::none:
+            return "none";
+        case stream_backend::ramfs:
+            return "ramfs";
+        case stream_backend::fat32:
+            return "fat32";
+    }
+    return "unknown";
+}
+
+struct kernel_stream {
+    stream_backend backend = stream_backend::none;
+    const file_entry* ram_entry = null;
+    u8* owned_buffer = null;
+    static_string<256> path;
+    usize size = 0;
+    usize capacity = 0;
+    usize position = 0;
+    bool readable = false;
+    bool writable = false;
+    bool append = false;
+    bool dirty = false;
+    bool eof = false;
+    bool error = false;
+    bool in_use = false;
+};
+
+static constexpr usize MAX_STREAMS = 16;
+static kernel_stream s_streams[MAX_STREAMS];
+static bool s_initialised = false;
+
+static void reset_stream(kernel_stream& stream) {
+    if (stream.owned_buffer != null) {
+        g_kernel_heap.free(stream.owned_buffer);
+        stream.owned_buffer = null;
+    }
+    stream.backend = stream_backend::none;
+    stream.ram_entry = null;
+    stream.path.clear();
+    stream.size = 0;
+    stream.capacity = 0;
+    stream.position = 0;
+    stream.readable = false;
+    stream.writable = false;
+    stream.append = false;
+    stream.dirty = false;
+    stream.eof = false;
+    stream.error = false;
+    stream.in_use = false;
+}
+
+static auto parse_mode(const char* mode_string) -> open_mode {
+    open_mode mode {};
+    if (mode_string == null || mode_string[0] == '\0') {
+        return mode;
+    }
+
+    char first = '\0';
+    bool plus = false;
+    for (usize i = 0; mode_string[i] != '\0'; ++i) {
+        const char ch = mode_string[i];
+        if (first == '\0' && (ch == 'r' || ch == 'w' || ch == 'a')) {
+            first = ch;
+            continue;
         }
-    }
-};
-
-/* EFI_SIMPLE_FILE_SYSTEM_PROTOCOL */
-struct efi_sfs_protocol;
-
-using efi_sfs_open_volume_fn = VK_MSABI uefi::status(*)(
-    efi_sfs_protocol* self, efi_file_protocol** root);
-
-struct efi_sfs_protocol {
-    u64                     revision;
-    efi_sfs_open_volume_fn  open_volume;
-};
-
-/* File info structure (variable-length, but we only need size) */
-struct efi_time {
-    u16 Year;
-    u8  Month;
-    u8  Day;
-    u8  Hour;
-    u8  Minute;
-    u8  Second;
-    u8  Pad1;
-    u32 Nanosecond;
-    i16 TimeZone;
-    u8  Daylight;
-    u8  Reserved;
-};
-
-struct efi_file_info {
-    u64 size;         /* Size of this structure + filename */
-    u64 file_size;
-    u64 physical_size;
-    efi_time create_time;
-    efi_time last_access_time;
-    efi_time modification_time;
-    u64    attribute;
-    char16_t FileName[1]; /* variable-length UCS-2 filename */
-};
-
-// Open modes
-constexpr u64 EFI_FILE_MODE_READ = 0x0000000000000001ULL;
-constexpr u64 EFI_FILE_MODE_WRITE = 0x0000000000000002ULL;
-constexpr u64 EFI_FILE_MODE_CREATE = 0x8000000000000000ULL;
-
-// File attributes
-constexpr u64 EFI_FILE_READ_ONLY = 0x1;
-constexpr u64 EFI_FILE_HIDDEN = 0x2;
-constexpr u64 EFI_FILE_SYSTEM = 0x4;
-constexpr u64 EFI_FILE_RESERVED = 0x8;
-constexpr u64 EFI_FILE_DIRECTORY = 0x10;
-constexpr u64 EFI_FILE_ARCHIVE = 0x20;
-
-/* Convert ASCII path to UCS-2 in a static buffer */
-static char16_t s_ucs2_buf[256];
-
-static auto to_ucs2(const char* ascii) -> const char16_t* {
-    usize i = 0;
-    while (ascii[i] && i < 255) {
-        /* Convert forward slashes to backslashes for UEFI */
-        s_ucs2_buf[i] = (ascii[i] == '/') ? u'\\' : static_cast<char16_t>(ascii[i]);
-        ++i;
-    }
-    s_ucs2_buf[i] = 0;
-    return s_ucs2_buf;
-}
-
-static void ucs2_to_ascii(const char16_t* src, char* dst, usize max) {
-    usize i = 0;
-    while (i + 1 < max && src[i]) {
-        char16_t c = src[i];
-        if (c >= 32 && c < 127)
-            dst[i] = static_cast<char>(c);
-        else
-            dst[i] = '?';
-        ++i;
-    }
-    dst[i] = '\0';
-}
-
-static bool is_dot_entry(const char* name) {
-    return name[0] == '.'
-        && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
-}
-
-struct efi_pool_deleter {
-    uefi::boot_services_table* boot_services = null;
-
-    void operator()(u8* ptr) const noexcept {
-        if (ptr != null && boot_services != null) {
-            boot_services->free_pool(ptr);
+        if (ch == '+') {
+            plus = true;
+            continue;
         }
-    }
-};
-
-using efi_file_ptr = unique_ptr<efi_file_protocol, efi_file_handle_deleter>;
-using efi_pool_ptr = unique_ptr<u8, efi_pool_deleter>;
-
-static auto open_esp_root() -> efi_file_protocol* {
-    if (uefi::g_system_table == null || uefi::g_system_table->boot_services == null)
-        return null;
-
-    auto* bs = uefi::g_system_table->boot_services;
-
-    void* sfs_iface = null;
-    auto st = bs->locate_protocol(&uefi::SFS_GUID, null, &sfs_iface);
-    if (st != uefi::status::success || sfs_iface == null) {
-        log::warn() << "SFS protocol not found";
-        return null;
-    }
-
-    auto* sfs = static_cast<efi_sfs_protocol*>(sfs_iface);
-    efi_file_protocol* root = null;
-    st = sfs->open_volume(sfs, &root);
-    if (st != uefi::status::success || root == null) {
-        log::warn() << "Failed to open ESP volume";
-        return null;
-    }
-
-    return root;
-}
-
-template <typename Visitor>
-static auto for_each_directory_entry(
-    efi_file_protocol* directory,
-    Visitor&& visit
-) -> status_code {
-    if (directory == null) return status_code::invalid_param;
-
-    if (directory->set_position != null) {
-        auto st = directory->set_position(directory, 0);
-        if (st != uefi::status::success) {
-            log::error() << "Failed to rewind directory (status=" << static_cast<unsigned long long>(st) << ")";
-            return status_code::error;
+        if (ch == 'b' || ch == 't') {
+            continue;
+        }
+        if (ch == 'r' || ch == 'w' || ch == 'a') {
+            return mode;
         }
     }
 
-    u8 info_buf[1024];
-    while (true) {
-        usize info_size = sizeof(info_buf);
-        auto st = directory->read(directory, &info_size, info_buf);
-        if (st != uefi::status::success) {
-            log::error() << "Failed reading ESP directory (status=" << static_cast<unsigned long long>(st) << ")";
-            return status_code::error;
-        }
-
-        if (info_size == 0) break;
-
-        auto* fi = reinterpret_cast<efi_file_info*>(info_buf);
-        char name[256];
-        ucs2_to_ascii(fi->FileName, name, sizeof(name));
-
-        if (is_dot_entry(name)) continue;
-
-        auto rc = visit(*fi, name);
-        if (rc != status_code::success) return rc;
+    switch (first) {
+        case 'r':
+            mode.valid = true;
+            mode.readable = true;
+            mode.writable = plus;
+            break;
+        case 'w':
+            mode.valid = true;
+            mode.readable = plus;
+            mode.writable = true;
+            mode.create = true;
+            mode.truncate = true;
+            break;
+        case 'a':
+            mode.valid = true;
+            mode.readable = plus;
+            mode.writable = true;
+            mode.create = true;
+            mode.append = true;
+            break;
+        default:
+            break;
     }
 
-    return status_code::success;
+    return mode;
 }
 
-static auto build_esp_path(
-    char* dst,
-    usize max,
-    const char* directory,
-    const char* name
-) -> bool {
-    if (dst == null || directory == null || name == null || max == 0) return false;
+static auto is_separator(char ch) -> bool {
+    return ch == '/' || ch == '\\';
+}
 
-    usize out = 0;
-    for (usize i = 0; directory[i] != '\0'; ++i) {
-        if (out + 1 >= max) return false;
-        dst[out++] = directory[i];
+static auto is_absolute_path(string_view path) -> bool {
+    return path.size() > 0 && is_separator(path[0]);
+}
+
+static auto normalize_path(string_view path) -> string_view {
+    while (path.size() >= 2 && path[0] == '.' && is_separator(path[1])) {
+        path.remove_prefix(2);
+    }
+    return path;
+}
+
+static auto basename_view(string_view path) -> string_view {
+    usize start = 0;
+    for (usize i = 0; i < path.size(); ++i) {
+        if (is_separator(path[i])) {
+            start = i + 1;
+        }
+    }
+    return string_view(path.data() + start, path.size() - start);
+}
+
+static auto stream_data(const kernel_stream& stream) -> const u8* {
+    if (stream.backend == stream_backend::ramfs) {
+        if (stream.ram_entry == null) {
+            return null;
+        }
+        return stream.ram_entry->size > 0 ? stream.ram_entry->data : &s_empty_file_marker;
+    }
+    if (stream.size == 0) {
+        return &s_empty_file_marker;
+    }
+    return stream.owned_buffer;
+}
+
+static auto ensure_capacity(kernel_stream& stream, usize required) -> bool {
+    if (required <= stream.capacity) {
+        return true;
     }
 
-    if (out == 0 || (dst[out - 1] != '\\' && dst[out - 1] != '/')) {
-        if (out + 1 >= max) return false;
-        dst[out++] = '\\';
+    usize new_capacity = stream.capacity > 0 ? stream.capacity : 256;
+    while (new_capacity < required) {
+        const usize next_capacity = new_capacity * 2;
+        if (next_capacity <= new_capacity) {
+            new_capacity = required;
+            break;
+        }
+        new_capacity = next_capacity;
     }
 
-    for (usize i = 0; name[i] != '\0'; ++i) {
-        if (out + 1 >= max) return false;
-        dst[out++] = name[i];
+    auto* new_buffer = static_cast<u8*>(g_kernel_heap.allocate(new_capacity));
+    if (new_buffer == null) {
+        return false;
     }
 
-    dst[out] = '\0';
+    if (stream.size > 0) {
+        const u8* data = stream_data(stream);
+        if (data != null) {
+            memory::copy(new_buffer, data, stream.size);
+        }
+    }
+
+    if (stream.owned_buffer != null) {
+        g_kernel_heap.free(stream.owned_buffer);
+    }
+    stream.owned_buffer = new_buffer;
+    stream.capacity = new_capacity;
+    stream.backend = stream_backend::fat32;
+    stream.ram_entry = null;
     return true;
 }
 
-} // anonymous namespace
-
-auto loader::load_file_from_esp(const char* path) -> loaded_file {
-    efi_file_ptr root(open_esp_root());
-    if (!root)
-        return { null, 0 };
-
-    auto* bs = uefi::g_system_table->boot_services;
-
-    /* Open the requested file */
-    efi_file_protocol* file = null;
-    auto st = root->open(root.get(), &file, to_ucs2(path), EFI_FILE_MODE_READ, 0);
-    if (st != uefi::status::success || file == null) {
-        log::warn() << "ESP file not found: " << path;
-        return { null, 0 };
+static auto handle_from_id(fs::file_handle handle) -> kernel_stream* {
+    if (handle == 0 || handle > MAX_STREAMS) {
+        return null;
     }
-    efi_file_ptr file_handle(file);
-
-    /* Query file size via GetInfo */
-    u8 info_buf[256];
-    usize info_size = sizeof(info_buf);
-    st = file_handle->get_info(file_handle.get(), &uefi::FILE_INFO_GUID, &info_size, info_buf);
-    if (st != uefi::status::success) {
-        log::warn() << "GetInfo failed for " << path;
-        return { null, 0 };
-    }
-    auto* fi = reinterpret_cast<efi_file_info*>(info_buf);
-    usize file_size = static_cast<usize>(fi->file_size);
-
-    log::debug() << "ESP file '" << path << "': " << file_size << " bytes";
-
-    if (file_size == 0) {
-        return { null, 0 };
-    }
-
-    /* Allocate buffer via UEFI AllocatePool (EfiLoaderData = type 2) */
-    void* buf = null;
-    st = bs->allocate_pool(2 /* EfiLoaderData */, file_size, &buf);
-    if (st != uefi::status::success || buf == null) {
-        log::warn() << "AllocatePool failed for " << path;
-        return { null, 0 };
-    }
-    efi_pool_ptr pool_buf(
-        static_cast<u8*>(buf),
-        efi_pool_deleter { .boot_services = bs });
-
-    /* Read the file */
-    usize read_size = file_size;
-    st = file_handle->read(file_handle.get(), &read_size, pool_buf.get());
-
-    if (st != uefi::status::success || read_size != file_size) {
-        log::warn() << "Read failed for " << path;
-        return { null, 0 };
-    }
-
-    log::debug() << "ESP read OK: " << path << " -> " << reinterpret_cast<const void*>(pool_buf.get());
-
-    return { pool_buf.release(), file_size };
+    auto& stream = s_streams[static_cast<usize>(handle - 1)];
+    return stream.in_use ? &stream : null;
 }
 
-/* Load all regular files from the vkernel ESP directory into the ramfs. */
-auto loader::load_initrd() -> status_code {
-    log::info() << "Loading files from ESP...";
-
-    ramfs::init();
-
-    efi_file_ptr root(open_esp_root());
-    if (!root) return status_code::error;
-
-    constexpr const char* initrd_dir = "\\EFI\\vkernel";
-    efi_file_protocol* dir = null;
-    auto st = root->open(root.get(), &dir, to_ucs2(initrd_dir), EFI_FILE_MODE_READ, 0);
-    if (st != uefi::status::success || dir == null) {
-        log::error() << "Failed to open ESP directory: " << initrd_dir;
-        return status_code::error;
+static auto try_fat_file_exists(string_view path) -> bool {
+    if (!fat32::is_mounted()) {
+        return false;
     }
-    efi_file_ptr dir_handle(dir);
 
-    usize loaded = 0;
-    auto rc = for_each_directory_entry(dir_handle.get(), [&](const efi_file_info& fi, const char* name) {
-        if ((fi.attribute & EFI_FILE_DIRECTORY) != 0) {
-            log::debug() << "Skipping directory: " << name;
-            return status_code::success;
+    if (fat32::file_exists(path)) {
+        return true;
+    }
+
+    const auto base = basename_view(path);
+    if (!is_absolute_path(path) && !base.equals(path) && fat32::file_exists(base)) {
+        log::debug() << "fs: basename fallback exists '" << path << "' -> '" << base << "'";
+        return true;
+    }
+
+    return false;
+}
+
+static auto try_fat_file_size(string_view path) -> usize {
+    if (!fat32::is_mounted()) {
+        return 0;
+    }
+
+    usize size = fat32::file_size(path);
+    if (size > 0 || fat32::file_exists(path)) {
+        return size;
+    }
+
+    const auto base = basename_view(path);
+    if (!is_absolute_path(path) && !base.equals(path)) {
+        size = fat32::file_size(base);
+        if (size > 0 || fat32::file_exists(base)) {
+            log::debug() << "fs: basename fallback size '" << path << "' -> '" << base
+                         << "' size=" << static_cast<unsigned long long>(size);
+            return size;
         }
+    }
 
-        char path[256];
-        if (!build_esp_path(path, sizeof(path), initrd_dir, name)) {
-            log::warn() << "Skipping overlong ESP path: " << name;
-            return status_code::success;
+    return 0;
+}
+
+static auto try_fat_read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
+    if (!fat32::is_mounted()) {
+        return null;
+    }
+
+    owned_buffer.reset();
+    const u8* data = fat32::read_file(path, owned_buffer, size_out);
+    if (data != null) {
+        return data;
+    }
+
+    const auto base = basename_view(path);
+    if (!is_absolute_path(path) && !base.equals(path)) {
+        owned_buffer.reset();
+        data = fat32::read_file(base, owned_buffer, size_out);
+        if (data != null) {
+            log::debug() << "fs: basename fallback read '" << path << "' -> '" << base
+                         << "' size=" << static_cast<unsigned long long>(size_out);
+            return data;
         }
+    }
 
-        auto result = load_file_from_esp(path);
-        if (result.data != null && result.size > 0) {
-            efi_pool_ptr file_data(
-                result.data,
-                efi_pool_deleter { .boot_services = uefi::g_system_table->boot_services });
-            if (ramfs::add_file_nocopy(name, file_data.get(), result.size) == status_code::success) {
-                (void)file_data.release();
-                log::info() << "Loaded: " << name << " (" << result.size << " bytes)";
-                ++loaded;
-            } else {
-                log::warn() << "Failed to add to RAMFS: " << name;
-            }
-        } else {
-            log::warn() << "Failed to load: " << path;
-        }
-        return status_code::success;
-    });
+    return null;
+}
 
-    log::info() << loaded << " file(s) loaded from ESP";
+static auto try_fat_write_file(string_view path, const u8* data, usize size) -> bool {
+    if (!fat32::is_mounted()) {
+        return false;
+    }
+
+    if (fat32::write_file(path, data, size)) {
+        return true;
+    }
+
+    const auto base = basename_view(path);
+    if (!is_absolute_path(path) && !base.equals(path) && fat32::write_file(base, data, size)) {
+        log::debug() << "fs: basename fallback write '" << path << "' -> '" << base
+                     << "' size=" << static_cast<unsigned long long>(size);
+        return true;
+    }
+
+    return false;
+}
+
+static auto try_fat_remove_file(string_view path) -> bool {
+    if (!fat32::is_mounted()) {
+        return false;
+    }
+
+    if (fat32::remove_file(path)) {
+        return true;
+    }
+
+    const auto base = basename_view(path);
+    if (!is_absolute_path(path) && !base.equals(path) && fat32::remove_file(base)) {
+        log::debug() << "fs: basename fallback remove '" << path << "' -> '" << base << "'";
+        return true;
+    }
+
+    return false;
+}
+
+} // namespace
+
+void fs::init() {
+    if (s_initialised) {
+        return;
+    }
+
+    for (auto& stream : s_streams) {
+        reset_stream(stream);
+    }
+    fat32::init();
+    s_initialised = true;
+}
+
+auto fs::mount_boot_filesystem() -> status_code {
+    if (!s_initialised) {
+        init();
+    }
+
+    const auto rc = fat32::mount_first_available();
+    if (rc == status_code::success) {
+        const auto mounted = fat32::info();
+        log::info() << "fs: mounted " << mounted.filesystem_name.c_str()
+                    << " on " << mounted.block_device.c_str()
+                    << " root=" << mounted.logical_root_path.c_str();
+    } else {
+        log::warn() << "fs: FAT32 mount failed, keeping RAMFS fallback active";
+        log::debug() << "fs: FAT32 mount error code: " << static_cast<u32>(rc);
+    }
 
     return rc;
+}
+
+auto fs::query_info() -> runtime_info {
+    runtime_info info {};
+    info.fallback_ready = ramfs::is_ready();
+
+    if (fat32::is_mounted()) {
+        const auto mounted = fat32::info();
+        info.fat32_mounted = true;
+        info.writable = mounted.writable;
+        (void)info.active_backend.assign(mounted.filesystem_name.view());
+        (void)info.block_device.assign(mounted.block_device.view());
+        (void)info.logical_root_path.assign(mounted.logical_root_path.view());
+        info.bytes_per_sector = mounted.bytes_per_sector;
+        info.sectors_per_cluster = mounted.sectors_per_cluster;
+        info.cluster_size = mounted.bytes_per_sector * static_cast<u32>(mounted.sectors_per_cluster);
+        info.first_data_sector = mounted.first_data_sector;
+        info.root_cluster = mounted.logical_root_cluster;
+        return info;
+    }
+
+    if (info.fallback_ready) {
+        (void)info.active_backend.assign("ramfs");
+        (void)info.logical_root_path.assign("/");
+    } else {
+        (void)info.active_backend.assign("none");
+    }
+
+    return info;
+}
+
+auto fs::file_exists(const char* path) -> bool {
+    if (path == null) {
+        return false;
+    }
+
+    const auto normalized = normalize_path(string_view(path));
+    if (try_fat_file_exists(normalized)) {
+        return true;
+    }
+    return ramfs::find(normalized) != null;
+}
+
+auto fs::file_size(const char* path) -> usize {
+    if (path == null) {
+        return 0;
+    }
+
+    const auto normalized = normalize_path(string_view(path));
+    const usize fat_size = try_fat_file_size(normalized);
+    if (fat_size > 0 || try_fat_file_exists(normalized)) {
+        return fat_size;
+    }
+
+    const auto* entry = ramfs::find(normalized);
+    return entry != null ? entry->size : 0;
+}
+
+auto fs::load_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
+    const auto normalized = normalize_path(path);
+    log::debug() << "fs: loading file '" << normalized << "'";
+    const u8* fat_data = try_fat_read_file(normalized, owned_buffer, size_out);
+    if (fat_data != null) {
+        log::debug() << "fs: load_file '" << normalized << "' resolved via fat32 size="
+                     << static_cast<unsigned long long>(size_out);
+        return fat_data;
+    }
+
+    owned_buffer.reset();
+    const auto* entry = ramfs::find(normalized);
+    if (entry == null) {
+        size_out = 0;
+        log::debug() << "fs: load_file miss '" << normalized << "'";
+        return null;
+    }
+
+    size_out = entry->size;
+    log::debug() << "fs: load_file '" << normalized << "' resolved via ramfs size="
+                 << static_cast<unsigned long long>(size_out);
+    return entry->size > 0 ? entry->data : &s_empty_file_marker;
+}
+
+auto fs::file_open(const char* path, const char* mode_string) -> file_handle {
+    if (!s_initialised) {
+        init();
+    }
+
+    const auto mode = parse_mode(mode_string);
+    if (!mode.valid || path == null) {
+        log::debug() << "fs: file_open rejected invalid request path="
+                     << (path != null ? path : "<null>") << " mode="
+                     << (mode_string != null ? mode_string : "<null>");
+        return 0;
+    }
+
+    const auto normalized = normalize_path(string_view(path));
+    if (normalized.empty()) {
+        log::debug() << "fs: file_open rejected empty normalized path from '" << path << "'";
+        return 0;
+    }
+
+    log::debug() << "fs: file_open path='" << normalized << "' mode='" << mode_string
+                 << "' readable=" << (mode.readable ? "yes" : "no")
+                 << " writable=" << (mode.writable ? "yes" : "no")
+                 << " create=" << (mode.create ? "yes" : "no")
+                 << " truncate=" << (mode.truncate ? "yes" : "no")
+                 << " append=" << (mode.append ? "yes" : "no");
+
+    for (usize i = 0; i < MAX_STREAMS; ++i) {
+        auto& stream = s_streams[i];
+        if (stream.in_use) {
+            continue;
+        }
+
+        reset_stream(stream);
+        stream.in_use = true;
+        stream.readable = mode.readable;
+        stream.writable = mode.writable;
+        stream.append = mode.append;
+        stream.eof = false;
+        stream.error = false;
+        if (!stream.path.assign(normalized)) {
+            reset_stream(stream);
+            return 0;
+        }
+
+        if (mode.writable) {
+            if (!fat32::is_mounted()) {
+                log::debug() << "fs: file_open denied writable open without mounted fat32 path='"
+                             << normalized << "'";
+                reset_stream(stream);
+                return 0;
+            }
+
+            stream.backend = stream_backend::fat32;
+            kernel_heap_ptr<u8> owned_buffer;
+            usize size = 0;
+            const u8* file_data = try_fat_read_file(normalized, owned_buffer, size);
+            const bool file_exists = file_data != null;
+
+            if (!file_exists && !mode.create) {
+                log::debug() << "fs: file_open miss for existing writable path='" << normalized << "'";
+                reset_stream(stream);
+                return 0;
+            }
+
+            if (file_exists && !mode.truncate) {
+                stream.owned_buffer = owned_buffer.release();
+                stream.size = size;
+                stream.capacity = size;
+                if (stream.size > 0 && stream.owned_buffer == null) {
+                    if (!ensure_capacity(stream, stream.size)) {
+                        reset_stream(stream);
+                        return 0;
+                    }
+                    memory::copy(stream.owned_buffer, file_data, stream.size);
+                }
+            }
+
+            if (mode.truncate) {
+                if (stream.owned_buffer != null) {
+                    g_kernel_heap.free(stream.owned_buffer);
+                    stream.owned_buffer = null;
+                }
+                stream.size = 0;
+                stream.capacity = 0;
+            }
+
+            stream.position = mode.append ? stream.size : 0;
+            log::debug() << "fs: file_open handle=" << static_cast<unsigned long long>(i + 1)
+                         << " backend=" << stream_backend_name(stream.backend)
+                         << " path='" << normalized << "' size="
+                         << static_cast<unsigned long long>(stream.size)
+                         << " position=" << static_cast<unsigned long long>(stream.position);
+            return static_cast<file_handle>(i + 1);
+        }
+
+        kernel_heap_ptr<u8> owned_buffer;
+        usize size = 0;
+        const u8* file_data = try_fat_read_file(normalized, owned_buffer, size);
+        if (file_data != null) {
+            stream.backend = stream_backend::fat32;
+            stream.owned_buffer = owned_buffer.release();
+            stream.size = size;
+            stream.capacity = size;
+            stream.position = 0;
+            stream.eof = stream.size == 0;
+            log::debug() << "fs: file_open handle=" << static_cast<unsigned long long>(i + 1)
+                         << " backend=" << stream_backend_name(stream.backend)
+                         << " path='" << normalized << "' size="
+                         << static_cast<unsigned long long>(stream.size);
+            return static_cast<file_handle>(i + 1);
+        }
+
+        const auto* entry = ramfs::find(normalized);
+        if (entry == null) {
+            log::debug() << "fs: file_open miss path='" << normalized << "'";
+            reset_stream(stream);
+            return 0;
+        }
+
+        stream.backend = stream_backend::ramfs;
+        stream.ram_entry = entry;
+        stream.size = entry->size;
+        stream.capacity = entry->size;
+        stream.position = 0;
+        stream.eof = stream.size == 0;
+        log::debug() << "fs: file_open handle=" << static_cast<unsigned long long>(i + 1)
+                     << " backend=" << stream_backend_name(stream.backend)
+                     << " path='" << normalized << "' size="
+                     << static_cast<unsigned long long>(stream.size);
+        return static_cast<file_handle>(i + 1);
+    }
+
+    log::debug() << "fs: file_open failed, no free stream for path='" << normalized << "'";
+    return 0;
+}
+
+auto fs::file_close(file_handle handle) -> int {
+    auto* stream = handle_from_id(handle);
+    if (stream == null) {
+        log::debug() << "fs: file_close invalid handle=" << static_cast<unsigned long long>(handle);
+        return -1;
+    }
+
+    log::debug() << "fs: file_close handle=" << static_cast<unsigned long long>(handle)
+                 << " backend=" << stream_backend_name(stream->backend)
+                 << " path='" << stream->path.view() << "' dirty="
+                 << (stream->dirty ? "yes" : "no") << " size="
+                 << static_cast<unsigned long long>(stream->size);
+
+    if (stream->backend == stream_backend::fat32 && stream->dirty) {
+        const u8* data = stream->size > 0 ? stream_data(*stream) : null;
+        if (!try_fat_write_file(stream->path.view(), data, stream->size)) {
+            stream->error = true;
+            log::debug() << "fs: file_close flush failed handle=" << static_cast<unsigned long long>(handle)
+                         << " path='" << stream->path.view() << "'";
+            return -1;
+        }
+        log::debug() << "fs: file_close flushed fat32 file path='" << stream->path.view()
+                     << "' size=" << static_cast<unsigned long long>(stream->size);
+    }
+
+    reset_stream(*stream);
+    return 0;
+}
+
+auto fs::file_read(file_handle handle, void* buf, usize buf_size) -> usize {
+    auto* stream = handle_from_id(handle);
+    if (stream == null || buf == null || !stream->readable) {
+        return 0;
+    }
+    if (stream->position >= stream->size) {
+        stream->eof = true;
+        return 0;
+    }
+
+    const usize remaining = stream->size - stream->position;
+    const usize to_copy = remaining < buf_size ? remaining : buf_size;
+    const u8* data = stream_data(*stream);
+    if (to_copy > 0 && data != null) {
+        memory::copy(buf, data + stream->position, to_copy);
+    }
+    stream->position += to_copy;
+    stream->eof = stream->position >= stream->size;
+    return to_copy;
+}
+
+auto fs::file_write(file_handle handle, const void* buf, usize buf_size) -> usize {
+    auto* stream = handle_from_id(handle);
+    if (stream == null || buf == null || !stream->writable) {
+        return 0;
+    }
+
+    if (stream->append) {
+        stream->position = stream->size;
+    }
+
+    if (stream->position > stream->size) {
+        if (!ensure_capacity(*stream, stream->position)) {
+            stream->error = true;
+            return 0;
+        }
+        memory::set(stream->owned_buffer + stream->size, 0, stream->position - stream->size);
+        stream->size = stream->position;
+    }
+
+    const usize end_position = stream->position + buf_size;
+    if (end_position < stream->position || !ensure_capacity(*stream, end_position)) {
+        stream->error = true;
+        return 0;
+    }
+
+    memory::copy(stream->owned_buffer + stream->position, buf, buf_size);
+    stream->position = end_position;
+    if (stream->position > stream->size) {
+        stream->size = stream->position;
+    }
+    stream->dirty = true;
+    stream->eof = stream->position >= stream->size;
+    return buf_size;
+}
+
+auto fs::file_seek(file_handle handle, i64 offset, int whence) -> int {
+    auto* stream = handle_from_id(handle);
+    if (stream == null) {
+        log::debug() << "fs: file_seek invalid handle=" << static_cast<unsigned long long>(handle);
+        return -1;
+    }
+
+    i64 base = 0;
+    switch (whence) {
+        case 0:
+            base = 0;
+            break;
+        case 1:
+            base = static_cast<i64>(stream->position);
+            break;
+        case 2:
+            base = static_cast<i64>(stream->size);
+            break;
+        default:
+            stream->error = true;
+            return -1;
+    }
+
+    const i64 next = base + offset;
+    if (next < 0) {
+        stream->error = true;
+        log::debug() << "fs: file_seek rejected negative target handle="
+                     << static_cast<unsigned long long>(handle) << " base=" << base
+                     << " offset=" << offset;
+        return -1;
+    }
+
+    stream->position = static_cast<usize>(next);
+    stream->eof = stream->position >= stream->size;
+    log::debug() << "fs: file_seek handle=" << static_cast<unsigned long long>(handle)
+                 << " path='" << stream->path.view() << "' whence=" << whence
+                 << " offset=" << offset << " -> position="
+                 << static_cast<unsigned long long>(stream->position);
+    return 0;
+}
+
+auto fs::file_tell(file_handle handle) -> i64 {
+    auto* stream = handle_from_id(handle);
+    if (stream == null) {
+        return -1;
+    }
+    return static_cast<i64>(stream->position);
+}
+
+auto fs::file_remove(const char* path) -> int {
+    if (path == null) {
+        log::debug() << "fs: file_remove rejected null path";
+        return -1;
+    }
+
+    const auto normalized = normalize_path(string_view(path));
+    const bool removed = try_fat_remove_file(normalized);
+    log::debug() << "fs: file_remove path='" << normalized << "' result="
+                 << (removed ? "removed" : "not-found-or-failed");
+    return removed ? 0 : -1;
 }
 
 } // namespace vk

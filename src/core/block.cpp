@@ -15,6 +15,62 @@
 namespace vk {
 namespace block {
 
+namespace {
+
+static constexpr u32 TRACE_SMALL_REQUEST_MAX_BLOCKS = 16;
+static constexpr u32 TRACE_MEDIUM_REQUEST_MAX_BLOCKS = 256;
+
+static auto sample_lba(u64 lba, u32 count, u32 numerator, u32 denominator) -> u64 {
+    if (count <= 1) {
+        return lba;
+    }
+    return lba + ((static_cast<u64>(count - 1) * numerator) / denominator);
+}
+
+static void trace_request(const char* operation, const block_device* dev, u64 lba, u32 count, const void* buffer) {
+    if (dev == null || count == 0) {
+        return;
+    }
+
+    const u64 end_lba = lba + static_cast<u64>(count - 1);
+    const u64 total_bytes = static_cast<u64>(count) * dev->block_size;
+
+    if (count <= TRACE_SMALL_REQUEST_MAX_BLOCKS) {
+        log::debug() << "block: " << operation << " "
+                     << static_cast<unsigned long long>(count) << " block(s) from "
+                     << dev->name.c_str() << " at LBA "
+                     << static_cast<unsigned long long>(lba) << " into/from buffer "
+                     << buffer;
+        return;
+    }
+
+    if (count <= TRACE_MEDIUM_REQUEST_MAX_BLOCKS) {
+        log::debug() << "block: " << operation << " "
+                     << static_cast<unsigned long long>(count) << " block(s) from "
+                     << dev->name.c_str() << " range=["
+                     << static_cast<unsigned long long>(lba) << ".."
+                     << static_cast<unsigned long long>(end_lba) << "] bytes="
+                     << static_cast<unsigned long long>(total_bytes) << " buffer="
+                     << buffer;
+        return;
+    }
+
+    log::debug() << "block: " << operation << " sampled large range from "
+                 << dev->name.c_str() << " blocks="
+                 << static_cast<unsigned long long>(count) << " lba=["
+                 << static_cast<unsigned long long>(lba) << ".."
+                 << static_cast<unsigned long long>(end_lba) << "] sample_lba={"
+                 << static_cast<unsigned long long>(lba) << ","
+                 << static_cast<unsigned long long>(sample_lba(lba, count, 1, 4)) << ","
+                 << static_cast<unsigned long long>(sample_lba(lba, count, 2, 4)) << ","
+                 << static_cast<unsigned long long>(sample_lba(lba, count, 3, 4)) << ","
+                 << static_cast<unsigned long long>(end_lba) << "} bytes="
+                 << static_cast<unsigned long long>(total_bytes) << " buffer="
+                 << buffer;
+}
+
+} // namespace
+
 static block_device s_devices[MAX_BLOCK_DEVICES];
 static usize        s_device_count = 0;
 static bool         s_initialised = false;
@@ -71,7 +127,24 @@ bool read_blocks(block_device* dev, u64 lba, u32 count, void* buffer) {
     if (lba >= dev->block_count || count > dev->block_count - lba) {
         return false;
     }
+
+    trace_request("reading", dev, lba, count, buffer);
+
     return dev->ops->read_blocks(dev, lba, count, buffer);
+}
+
+bool write_blocks(block_device* dev, u64 lba, u32 count, const void* buffer) {
+    if (dev == null || dev->ops == null || dev->ops->write_blocks == null ||
+        buffer == null || count == 0) {
+        return false;
+    }
+    if (lba >= dev->block_count || count > dev->block_count - lba) {
+        return false;
+    }
+
+    trace_request("writing", dev, lba, count, buffer);
+
+    return dev->ops->write_blocks(dev, lba, count, buffer);
 }
 
 void list_devices() {

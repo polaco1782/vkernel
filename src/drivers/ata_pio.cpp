@@ -4,7 +4,7 @@
  *
  * ata_pio.cpp - Legacy ATA PIO block driver
  *
- * Synchronous, read-only ATA PIO driver for early filesystem bring-up.
+ * Synchronous ATA PIO driver for early filesystem bring-up.
  */
 
 #include "config.h"
@@ -35,6 +35,8 @@ constexpr u16 ATA_REG_ALTSTATUS  = 0x00;
 constexpr u16 ATA_REG_CONTROL    = 0x00;
 
 constexpr u8 ATA_CMD_READ_PIO    = 0x20;
+constexpr u8 ATA_CMD_WRITE_PIO   = 0x30;
+constexpr u8 ATA_CMD_CACHE_FLUSH = 0xE7;
 constexpr u8 ATA_CMD_IDENTIFY    = 0xEC;
 
 constexpr u8 ATA_SR_ERR          = 0x01;
@@ -117,6 +119,14 @@ static void read_data_sector_bytes(const ata_channel& ch, u8* out) {
         u16 w = arch::inw(static_cast<u16>(ch.io_base + ATA_REG_DATA));
         out[i * 2] = static_cast<u8>(w & 0xFF);
         out[i * 2 + 1] = static_cast<u8>(w >> 8);
+    }
+}
+
+static void write_data_sector_bytes(const ata_channel& ch, const u8* in) {
+    for (u32 i = 0; i < ATA_SECTOR_SIZE / 2; ++i) {
+        const u16 word = static_cast<u16>(in[i * 2])
+            | static_cast<u16>(static_cast<u16>(in[i * 2 + 1]) << 8);
+        arch::outw(static_cast<u16>(ch.io_base + ATA_REG_DATA), word);
     }
 }
 
@@ -210,22 +220,131 @@ static bool ata_read_one_lba28(ata_drive* drive, u64 lba, u8* out) {
     return true;
 }
 
+static bool ata_read_lba28(ata_drive* drive, u64 lba, u8 sector_count, u8* out) {
+    if (drive == null || out == null || sector_count == 0) return false;
+    if (lba > 0x0FFFFFFFULL || (lba + sector_count - 1) > 0x0FFFFFFFULL) return false;
+    if (sector_count == 1) return ata_read_one_lba28(drive, lba, out);
+
+    auto& ch = drive->channel;
+    if (!wait_not_busy(ch)) return false;
+
+    ata_write8(ch, ATA_REG_HDDEVSEL,
+               static_cast<u8>(0xE0 | (drive->drive << 4) | ((lba >> 24) & 0x0F)));
+    ata_io_wait(ch);
+    ata_write8(ch, ATA_REG_FEATURES, 0);
+    ata_write8(ch, ATA_REG_SECCOUNT0, sector_count);
+    ata_write8(ch, ATA_REG_LBA0, static_cast<u8>(lba));
+    ata_write8(ch, ATA_REG_LBA1, static_cast<u8>(lba >> 8));
+    ata_write8(ch, ATA_REG_LBA2, static_cast<u8>(lba >> 16));
+    ata_write8(ch, ATA_REG_COMMAND, ATA_CMD_READ_PIO);
+
+    for (u8 sector_index = 0; sector_index < sector_count; ++sector_index) {
+        if (!wait_drq(ch)) return false;
+        read_data_sector_bytes(ch, out + static_cast<u32>(sector_index) * ATA_SECTOR_SIZE);
+        ata_io_wait(ch);
+    }
+
+    return true;
+}
+
 static bool ata_block_read(block_device* dev, u64 lba, u32 count, void* buffer) {
     if (dev == null || buffer == null || count == 0) return false;
 
     auto* drive = static_cast<ata_drive*>(dev->driver_data);
     auto* out = static_cast<u8*>(buffer);
-    for (u32 i = 0; i < count; ++i) {
-        if (!ata_read_one_lba28(drive, lba + i, out + i * ATA_SECTOR_SIZE)) {
-            log::warn() << "ata_pio: read failed dev=" << dev->name.c_str() << " lba=" << static_cast<unsigned long long>(lba + i);
+    u64 current_lba = lba;
+    u32 remaining = count;
+    while (remaining > 0) {
+        const u8 chunk = remaining > 255 ? 255 : static_cast<u8>(remaining);
+        if (!ata_read_lba28(drive, current_lba, chunk, out)) {
+            log::warn() << "ata_pio: read failed dev=" << dev->name.c_str() << " lba="
+                        << static_cast<unsigned long long>(current_lba);
             return false;
         }
+        current_lba += chunk;
+        out += static_cast<u32>(chunk) * ATA_SECTOR_SIZE;
+        remaining -= chunk;
+    }
+    return true;
+}
+
+static bool ata_write_one_lba28(ata_drive* drive, u64 lba, const u8* in) {
+    if (drive == null || in == null) return false;
+    if (lba > 0x0FFFFFFFULL) return false;
+
+    auto& ch = drive->channel;
+    if (!wait_not_busy(ch)) return false;
+
+    ata_write8(ch, ATA_REG_HDDEVSEL,
+               static_cast<u8>(0xE0 | (drive->drive << 4) | ((lba >> 24) & 0x0F)));
+    ata_io_wait(ch);
+    ata_write8(ch, ATA_REG_FEATURES, 0);
+    ata_write8(ch, ATA_REG_SECCOUNT0, 1);
+    ata_write8(ch, ATA_REG_LBA0, static_cast<u8>(lba));
+    ata_write8(ch, ATA_REG_LBA1, static_cast<u8>(lba >> 8));
+    ata_write8(ch, ATA_REG_LBA2, static_cast<u8>(lba >> 16));
+    ata_write8(ch, ATA_REG_COMMAND, ATA_CMD_WRITE_PIO);
+
+    if (!wait_drq(ch)) return false;
+    write_data_sector_bytes(ch, in);
+    ata_io_wait(ch);
+
+    ata_write8(ch, ATA_REG_COMMAND, ATA_CMD_CACHE_FLUSH);
+    return wait_not_busy(ch);
+}
+
+static bool ata_write_lba28(ata_drive* drive, u64 lba, u8 sector_count, const u8* in) {
+    if (drive == null || in == null || sector_count == 0) return false;
+    if (lba > 0x0FFFFFFFULL || (lba + sector_count - 1) > 0x0FFFFFFFULL) return false;
+    if (sector_count == 1) return ata_write_one_lba28(drive, lba, in);
+
+    auto& ch = drive->channel;
+    if (!wait_not_busy(ch)) return false;
+
+    ata_write8(ch, ATA_REG_HDDEVSEL,
+               static_cast<u8>(0xE0 | (drive->drive << 4) | ((lba >> 24) & 0x0F)));
+    ata_io_wait(ch);
+    ata_write8(ch, ATA_REG_FEATURES, 0);
+    ata_write8(ch, ATA_REG_SECCOUNT0, sector_count);
+    ata_write8(ch, ATA_REG_LBA0, static_cast<u8>(lba));
+    ata_write8(ch, ATA_REG_LBA1, static_cast<u8>(lba >> 8));
+    ata_write8(ch, ATA_REG_LBA2, static_cast<u8>(lba >> 16));
+    ata_write8(ch, ATA_REG_COMMAND, ATA_CMD_WRITE_PIO);
+
+    for (u8 sector_index = 0; sector_index < sector_count; ++sector_index) {
+        if (!wait_drq(ch)) return false;
+        write_data_sector_bytes(ch, in + static_cast<u32>(sector_index) * ATA_SECTOR_SIZE);
+        ata_io_wait(ch);
+    }
+
+    ata_write8(ch, ATA_REG_COMMAND, ATA_CMD_CACHE_FLUSH);
+    return wait_not_busy(ch);
+}
+
+static bool ata_block_write(block_device* dev, u64 lba, u32 count, const void* buffer) {
+    if (dev == null || buffer == null || count == 0) return false;
+
+    auto* drive = static_cast<ata_drive*>(dev->driver_data);
+    const auto* in = static_cast<const u8*>(buffer);
+    u64 current_lba = lba;
+    u32 remaining = count;
+    while (remaining > 0) {
+        const u8 chunk = remaining > 255 ? 255 : static_cast<u8>(remaining);
+        if (!ata_write_lba28(drive, current_lba, chunk, in)) {
+            log::warn() << "ata_pio: write failed dev=" << dev->name.c_str() << " lba="
+                        << static_cast<unsigned long long>(current_lba);
+            return false;
+        }
+        current_lba += chunk;
+        in += static_cast<u32>(chunk) * ATA_SECTOR_SIZE;
+        remaining -= chunk;
     }
     return true;
 }
 
 static const block_ops s_ata_block_ops = {
     .read_blocks = ata_block_read,
+    .write_blocks = ata_block_write,
 };
 
 static bool register_ata_drive(ata_drive& drive) {

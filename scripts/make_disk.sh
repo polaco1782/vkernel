@@ -4,9 +4,9 @@
 #
 # make_disk.sh - Create a bootable UEFI disk image
 #
-# Creates a 64 MiB raw disk image with:
+# Creates a raw disk image with:
 #   - GPT partition table
-#   - EFI System Partition (62 MiB, FAT32)
+#   - EFI System Partition (126 MiB, FAT32)
 #   - EFI/BOOT/bootx64.efi at the default removable-media boot path
 #
 # Usage: make_disk.sh <efi_file> <output_image> [elf_file ...]
@@ -30,28 +30,28 @@ if [ ! -f "${EFI_FILE}" ]; then
     exit 1
 fi
 
-for tool in truncate parted mformat mmd mcopy; do
+for tool in truncate parted mformat mmd mcopy objcopy; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
         echo "Error: '${tool}' not found."
-        echo "Install with: dnf install parted mtools  # or: apt install parted mtools"
+        echo "Install with: dnf install parted mtools binutils  # or: apt install parted mtools binutils"
         exit 1
     fi
 done
 
 # ── Disk layout ────────────────────────────────────────────────────────────
-#  Total disk  : 64 MiB = 131072 sectors
-#  ESP         : 1 MiB → 63 MiB  (62 MiB, starts at sector 2048)
+#  Total disk  : 128 MiB = 262144 sectors
+#  ESP         : 1 MiB → 127 MiB (126 MiB, starts at sector 2048)
 #  GPT backup  : last 33 sectors
 #
-#  FAT32 geometry for 62 MiB partition (62 × 64 × 32 = 126 976 sectors):
-#    tracks=62  heads=64  sectors/track=32
+#  FAT32 geometry for 126 MiB partition (126 × 64 × 32 = 258 048 sectors):
+#    tracks=126  heads=64  sectors/track=32
 # ───────────────────────────────────────────────────────────────────────────
 
-DISK_MB=64
+DISK_MB=128
 ESP_START_MiB=1
-ESP_END_MiB=63
+ESP_END_MiB=127
 ESP_BYTE_OFFSET=$((ESP_START_MiB * 1024 * 1024))   # 1 048 576
-ESP_TRACKS=62
+ESP_TRACKS=126
 ESP_HEADS=64
 ESP_SECS=32
 
@@ -65,6 +65,26 @@ copy_into_esp() {
 
     echo "    ${dest_name}"
     mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${src}" "::/EFI/vkernel/${dest_name}"
+}
+
+copy_binary_into_esp() {
+    local src="$1"
+    local dest_name="$2"
+    local stripped_file
+
+    if [ ! -f "${src}" ]; then
+        return 0
+    fi
+
+    stripped_file=$(mktemp)
+    if objcopy --strip-debug "${src}" "${stripped_file}" >/dev/null 2>&1; then
+        copy_into_esp "${stripped_file}" "${dest_name}"
+        rm -f "${stripped_file}"
+        return 0
+    fi
+
+    rm -f "${stripped_file}"
+    copy_into_esp "${src}" "${dest_name}"
 }
 
 rm -f "${OUTPUT}"
@@ -91,7 +111,7 @@ mmd -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/vkernel
 manifest_file=$(mktemp)
 while IFS= read -r -d '' vbin; do
     name=$(basename "${vbin}")
-    copy_into_esp "${vbin}" "${name}"
+    copy_binary_into_esp "${vbin}" "${name}"
     printf '%s\n' "${name}" >> "${manifest_file}"
 done < <(find userspace -name "*.vbin" -print0)
 

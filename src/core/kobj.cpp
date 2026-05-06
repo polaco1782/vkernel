@@ -10,6 +10,7 @@
 #include "block.h"
 #include "console.h"
 #include "driver.h"
+#include "fs.h"
 #include "log.h"
 #include "memory.h"
 #include "panic.h"
@@ -46,6 +47,16 @@ static KNode s_proc_pid_state;
 static KNode s_proc_pid_cpu;
 static KNode s_proc_pid_cpu_ticks;
 static KNode s_proc_pid_name;
+
+static KNode s_fs;
+static KNode s_fs_active_backend;
+static KNode s_fs_fallback_ready;
+static KNode s_fs_fat32_mounted;
+static KNode s_fs_writable;
+static KNode s_fs_block_device;
+static KNode s_fs_root_path;
+static KNode s_fs_cluster_size;
+static KNode s_fs_root_cluster;
 
 static KNode s_dev;
 static KNode s_dev_block;
@@ -375,6 +386,41 @@ static auto get_proc_pid_name(KNode*) -> KVal {
     return KVal::from_str(s_proc_virtual_name.c_str());
 }
 
+static auto get_fs_active_backend(KNode*) -> KVal {
+    auto info = fs::query_info();
+    return KVal::from_str(info.active_backend.c_str());
+}
+
+static auto get_fs_fallback_ready(KNode*) -> KVal {
+    return KVal::from_bool(fs::query_info().fallback_ready);
+}
+
+static auto get_fs_fat32_mounted(KNode*) -> KVal {
+    return KVal::from_bool(fs::query_info().fat32_mounted);
+}
+
+static auto get_fs_writable(KNode*) -> KVal {
+    return KVal::from_bool(fs::query_info().writable);
+}
+
+static auto get_fs_block_device(KNode*) -> KVal {
+    auto info = fs::query_info();
+    return KVal::from_str(info.block_device.c_str());
+}
+
+static auto get_fs_root_path(KNode*) -> KVal {
+    auto info = fs::query_info();
+    return KVal::from_str(info.logical_root_path.c_str());
+}
+
+static auto get_fs_cluster_size(KNode*) -> KVal {
+    return KVal::from_u64(fs::query_info().cluster_size);
+}
+
+static auto get_fs_root_cluster(KNode*) -> KVal {
+    return KVal::from_u64(fs::query_info().root_cluster);
+}
+
 static auto get_dev_block_count(KNode*) -> KVal {
     return KVal::from_u64(static_cast<u64>(block::device_count()));
 }
@@ -607,6 +653,69 @@ void init() {
     s_proc_pid_name.schema.writable = false;
     s_proc_pid_name.schema.cap_mask = 0x01;
     s_proc_pid_name.get_fn = get_proc_pid_name;
+
+    s_fs = {};
+    s_fs.schema.name = "fs";
+    s_fs.schema.type = KTag::Struct;
+    s_fs.schema.cap_mask = 0x01;
+    add_child(&s_root, &s_fs);
+
+    s_fs_active_backend = {};
+    s_fs_active_backend.schema.name = "active_backend";
+    s_fs_active_backend.schema.type = KTag::Str;
+    s_fs_active_backend.schema.cap_mask = 0x01;
+    s_fs_active_backend.get_fn = get_fs_active_backend;
+    add_child(&s_fs, &s_fs_active_backend);
+
+    s_fs_fallback_ready = {};
+    s_fs_fallback_ready.schema.name = "fallback_ready";
+    s_fs_fallback_ready.schema.type = KTag::Bool;
+    s_fs_fallback_ready.schema.cap_mask = 0x01;
+    s_fs_fallback_ready.get_fn = get_fs_fallback_ready;
+    add_child(&s_fs, &s_fs_fallback_ready);
+
+    s_fs_fat32_mounted = {};
+    s_fs_fat32_mounted.schema.name = "fat32_mounted";
+    s_fs_fat32_mounted.schema.type = KTag::Bool;
+    s_fs_fat32_mounted.schema.cap_mask = 0x01;
+    s_fs_fat32_mounted.get_fn = get_fs_fat32_mounted;
+    add_child(&s_fs, &s_fs_fat32_mounted);
+
+    s_fs_writable = {};
+    s_fs_writable.schema.name = "writable";
+    s_fs_writable.schema.type = KTag::Bool;
+    s_fs_writable.schema.cap_mask = 0x01;
+    s_fs_writable.get_fn = get_fs_writable;
+    add_child(&s_fs, &s_fs_writable);
+
+    s_fs_block_device = {};
+    s_fs_block_device.schema.name = "block_device";
+    s_fs_block_device.schema.type = KTag::Str;
+    s_fs_block_device.schema.cap_mask = 0x01;
+    s_fs_block_device.get_fn = get_fs_block_device;
+    add_child(&s_fs, &s_fs_block_device);
+
+    s_fs_root_path = {};
+    s_fs_root_path.schema.name = "root_path";
+    s_fs_root_path.schema.type = KTag::Str;
+    s_fs_root_path.schema.cap_mask = 0x01;
+    s_fs_root_path.get_fn = get_fs_root_path;
+    add_child(&s_fs, &s_fs_root_path);
+
+    s_fs_cluster_size = {};
+    s_fs_cluster_size.schema.name = "cluster_size";
+    s_fs_cluster_size.schema.type = KTag::U64;
+    s_fs_cluster_size.schema.unit = "bytes";
+    s_fs_cluster_size.schema.cap_mask = 0x01;
+    s_fs_cluster_size.get_fn = get_fs_cluster_size;
+    add_child(&s_fs, &s_fs_cluster_size);
+
+    s_fs_root_cluster = {};
+    s_fs_root_cluster.schema.name = "root_cluster";
+    s_fs_root_cluster.schema.type = KTag::U64;
+    s_fs_root_cluster.schema.cap_mask = 0x01;
+    s_fs_root_cluster.get_fn = get_fs_root_cluster;
+    add_child(&s_fs, &s_fs_root_cluster);
 
     s_dev = {};
     s_dev.schema.name = "dev";
