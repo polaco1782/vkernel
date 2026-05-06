@@ -7,6 +7,7 @@
 #   1.  Run  scripts/setup_newlib.sh   from the project root.
 #   2.  Run  make -C ../libc           to build crt0 + libvksys.
 #   3.  Run  bash setup_imgui.sh       to download Dear ImGui sources.
+#   4.  Run  bash setup_implot.sh      to download ImPlot sources.
 #
 # Then just:   make          (release)
 #              make DEBUG=1  (debug, keeps symbols and -Og)
@@ -22,10 +23,13 @@ LIBC_DIR        := ../libc
 CPP_INCLUDE     := ../cpp/include
 KERNEL_INCLUDE  := $(ROOT_DIR)/include
 IMGUI_DIR       := ./imgui
+IMPLOT_DIR      := ./implot
 
 # ---- Common flags -------------------------------------------------------
 
-CXXFLAGS  := -std=c++17
+DEPFLAGS := -MMD -MP
+
+CXXFLAGS  := -std=c++20
 CXXFLAGS  += -ffreestanding
 CXXFLAGS  += -fno-builtin
 CXXFLAGS  += -fno-stack-protector
@@ -46,6 +50,7 @@ CXXFLAGS  += -I$(USER_INCLUDE)
 CXXFLAGS  += -I$(CPP_INCLUDE)
 CXXFLAGS  += -I$(KERNEL_INCLUDE)
 CXXFLAGS  += -I$(IMGUI_DIR)
+CXXFLAGS  += -I$(IMPLOT_DIR)
 CXXFLAGS  += -I.
 # Tell every TU (including ImGui) to pick up our config header
 CXXFLAGS  += -DIMGUI_USER_CONFIG=\"imgui_config.h\"
@@ -59,6 +64,10 @@ IMGUI_CXXFLAGS  += -Wno-type-limits
 # Disable the default shell opener — it references execvp/waitpid which
 # are not available in our newlib/vkernel syscall stubs.
 IMGUI_CXXFLAGS  += -DIMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS
+
+# ImPlot is another third-party Dear ImGui extension; build it with the
+# same relaxed warning profile we use for vendored ImGui sources.
+IMPLOT_CXXFLAGS := $(IMGUI_CXXFLAGS)
 
 # ---- Linker flags -------------------------------------------------------
 
@@ -74,7 +83,13 @@ LDFLAGS  += -L$(LIBC_DIR)
 # No -lstdc++ — cxxabi_stubs.cpp provides all the C++ ABI we need
 # without pulling in the host's glibc-dependent libstdc++.a.
 CRT0     := $(LIBC_DIR)/crt0.o
+LIBVKSYS := $(LIBC_DIR)/libvksys.a
 LIBS     := -Wl,--start-group -lvksys -lc -lm -lgcc -Wl,--end-group
+
+LIBC_MAKE_ARGS :=
+ifdef DEBUG
+LIBC_MAKE_ARGS += DEBUG=$(DEBUG)
+endif
 
 # ---- Sources & objects --------------------------------------------------
 
@@ -86,19 +101,37 @@ IMGUI_SRCS :=                          \
     $(IMGUI_DIR)/imgui_demo.cpp
 
 IMGUI_OBJS := $(IMGUI_SRCS:.cpp=.o)
+IMGUI_DEPS := $(IMGUI_OBJS:.o=.d)
 
-OUR_SRCS   := cxxabi_stubs.cpp imgui_impl_vk.cpp main.cpp
+IMPLOT_SRCS :=                         \
+	$(IMPLOT_DIR)/implot.cpp          \
+	$(IMPLOT_DIR)/implot_items.cpp
+
+IMPLOT_OBJS := $(IMPLOT_SRCS:.cpp=.o)
+IMPLOT_DEPS := $(IMPLOT_OBJS:.o=.d)
+
+OUR_SRCS   := cxxabi_stubs.cpp      \
+			  console_log.cpp       \
+			  imgui_impl_vk.cpp     \
+			  kobj_panel.cpp        \
+			  launch_registry.cpp   \
+			  main.cpp              \
+			  shell_ui.cpp          \
+			  task_manager_panel.cpp \
+			  window_manager.cpp
 OUR_OBJS   := $(OUR_SRCS:.cpp=.o)
+OUR_DEPS   := $(OUR_OBJS:.o=.d)
 
-ALL_OBJS   := $(IMGUI_OBJS) $(OUR_OBJS)
+ALL_OBJS   := $(IMGUI_OBJS) $(IMPLOT_OBJS) $(OUR_OBJS)
+ALL_DEPS   := $(IMGUI_DEPS) $(IMPLOT_DEPS) $(OUR_DEPS)
 
 TARGET     := vgui.vbin
 
 # ---- Phony targets ------------------------------------------------------
 
-.PHONY: all clean distclean help
+.PHONY: all clean distclean help libc_build
 
-all: _check_imgui _check_sysroot $(TARGET)
+all: _check_imgui _check_implot _check_sysroot $(TARGET)
 
 help:
 	@echo "vgui build targets:"
@@ -108,7 +141,8 @@ help:
 	@echo "  make distclean    – also remove downloaded ImGui sources"
 	@echo ""
 	@echo "First-time setup:"
-	@echo "  bash setup_imgui.sh   – download Dear ImGui $(IMGUI_TAG)"
+	@echo "  bash setup_imgui.sh   – download Dear ImGui sources"
+	@echo "  bash setup_implot.sh  – download ImPlot sources"
 	@echo "  make -C ../libc       – build newlib glue (crt0, libvksys)"
 
 # ---- Dependency guards --------------------------------------------------
@@ -118,6 +152,13 @@ _check_imgui:
 	    { echo ""; \
 	      echo "  ERROR: ImGui sources not found in $(IMGUI_DIR)/"; \
 	      echo "  Run:  bash setup_imgui.sh"; \
+	      echo ""; exit 1; }
+
+_check_implot:
+	@test -f $(IMPLOT_DIR)/implot.h || \
+	    { echo ""; \
+	      echo "  ERROR: ImPlot sources not found in $(IMPLOT_DIR)/"; \
+	      echo "  Run:  bash setup_implot.sh"; \
 	      echo ""; exit 1; }
 
 _check_sysroot:
@@ -131,15 +172,25 @@ _check_sysroot:
 
 $(IMGUI_DIR)/%.o: $(IMGUI_DIR)/%.cpp
 	@echo "  CXX [imgui] $(<F)"
-	@$(CXX) $(IMGUI_CXXFLAGS) -c $< -o $@
+	@$(CXX) $(IMGUI_CXXFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(IMPLOT_DIR)/%.o: $(IMPLOT_DIR)/%.cpp
+	@echo "  CXX [implot] $(<F)"
+	@$(CXX) $(IMPLOT_CXXFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
 
 %.o: %.cpp
 	@echo "  CXX         $<"
-	@$(CXX) $(CXXFLAGS) -c $< -o $@
+	@$(CXX) $(CXXFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+libc_build:
+	@$(MAKE) -C $(LIBC_DIR) $(LIBC_MAKE_ARGS)
+
+$(CRT0) $(LIBVKSYS): libc_build
+	@:
 
 # ---- Link ---------------------------------------------------------------
 
-$(TARGET): $(CRT0) $(ALL_OBJS)
+$(TARGET): $(CRT0) $(LIBVKSYS) $(ALL_OBJS)
 	@echo "  LD          $@"
 	@$(CXX) $(LDFLAGS) -o $@ $(CRT0) $(ALL_OBJS) $(LIBS)
 ifndef DEBUG
@@ -153,9 +204,12 @@ endif
 # ---- Cleanup ------------------------------------------------------------
 
 clean:
-	@rm -f $(TARGET) $(ALL_OBJS)
+	@rm -f $(TARGET) $(ALL_OBJS) $(ALL_DEPS)
 	@echo "  cleaned."
 
 distclean: clean
 	@rm -rf imgui/
-	@echo "  imgui/ removed."
+	@rm -rf implot/
+	@echo "  imgui/ and implot/ removed."
+
+-include $(ALL_DEPS)

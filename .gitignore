@@ -18,6 +18,11 @@ build_vs/
 *.dll
 *.exe
 
+# Generated dependency files
+userspace/vgui/*.d
+userspace/vgui/imgui/*.d
+userspace/vgui/implot/*.d
+
 # Visual Studio
 .vs/
 *.suo
