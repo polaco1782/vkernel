@@ -26,7 +26,7 @@ namespace vk {
 
 /* Forward declarations for built-in driver registration */
 namespace ac97_driver { void register_builtin(); }
-namespace ata_pio_driver { void register_builtin(); }
+namespace virtio_blk_driver { void register_builtin(); }
 
 /* ============================================================
  * Self-relocator for the GOT
@@ -249,14 +249,14 @@ auto efi_main(
 
     /* Initialize the driver framework and register built-in drivers */
     driver::init();
-    ata_pio_driver::register_builtin();
+    virtio_blk_driver::register_builtin();
     ac97_driver::register_builtin();
     log::info() << "Driver framework initialised (2 built-in drivers registered)";
 
-    /* Bring up the first block backend while keeping the RAMFS boot path
+    /* Bring up the virtio block backend while keeping the RAMFS boot path
      * active.  FAT32/VFS will start consuming block devices in the next
      * layer. */
-    (void)driver::load("ata_pio");
+    (void)driver::load("virtio_blk");
     (void)fs::mount_boot_filesystem();
     (void)driver::load("ac97");
 

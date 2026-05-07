@@ -8,9 +8,11 @@
 #include "fs.h"
 
 #include "fs/fat32.h"
+#include "fs/ramfs.h"
 
 #include "log.h"
 #include "memory.h"
+#include "scheduler.h"
 
 namespace vk {
 namespace {
@@ -28,7 +30,6 @@ struct open_mode {
 
 enum class stream_backend : u8 {
     none,
-    ramfs,
     fat32,
 };
 
@@ -36,8 +37,6 @@ static auto stream_backend_name(stream_backend backend) -> const char* {
     switch (backend) {
         case stream_backend::none:
             return "none";
-        case stream_backend::ramfs:
-            return "ramfs";
         case stream_backend::fat32:
             return "fat32";
     }
@@ -46,9 +45,10 @@ static auto stream_backend_name(stream_backend backend) -> const char* {
 
 struct kernel_stream {
     stream_backend backend = stream_backend::none;
-    const file_entry* ram_entry = null;
+    fat32::file_descriptor fat_file {};
     u8* owned_buffer = null;
     static_string<256> path;
+    u64 owner_task_id = 0;
     usize size = 0;
     usize capacity = 0;
     usize position = 0;
@@ -56,12 +56,14 @@ struct kernel_stream {
     bool writable = false;
     bool append = false;
     bool dirty = false;
+    bool direct_fat = false;
     bool eof = false;
     bool error = false;
     bool in_use = false;
 };
 
-static constexpr usize MAX_STREAMS = 16;
+static constexpr usize MAX_STREAMS = 64;
+static constexpr usize MAX_DIRECT_FAT_READ_BYTES = 128 * 1024;
 static kernel_stream s_streams[MAX_STREAMS];
 static bool s_initialised = false;
 
@@ -71,8 +73,9 @@ static void reset_stream(kernel_stream& stream) {
         stream.owned_buffer = null;
     }
     stream.backend = stream_backend::none;
-    stream.ram_entry = null;
+    stream.fat_file = {};
     stream.path.clear();
+    stream.owner_task_id = 0;
     stream.size = 0;
     stream.capacity = 0;
     stream.position = 0;
@@ -80,6 +83,7 @@ static void reset_stream(kernel_stream& stream) {
     stream.writable = false;
     stream.append = false;
     stream.dirty = false;
+    stream.direct_fat = false;
     stream.eof = false;
     stream.error = false;
     stream.in_use = false;
@@ -164,11 +168,8 @@ static auto basename_view(string_view path) -> string_view {
 }
 
 static auto stream_data(const kernel_stream& stream) -> const u8* {
-    if (stream.backend == stream_backend::ramfs) {
-        if (stream.ram_entry == null) {
-            return null;
-        }
-        return stream.ram_entry->size > 0 ? stream.ram_entry->data : &s_empty_file_marker;
+    if (stream.direct_fat) {
+        return null;
     }
     if (stream.size == 0) {
         return &s_empty_file_marker;
@@ -209,8 +210,13 @@ static auto ensure_capacity(kernel_stream& stream, usize required) -> bool {
     stream.owned_buffer = new_buffer;
     stream.capacity = new_capacity;
     stream.backend = stream_backend::fat32;
-    stream.ram_entry = null;
+    stream.direct_fat = false;
     return true;
+}
+
+static auto stream_accessible_to_current_task(const kernel_stream& stream) -> bool {
+    const u64 current_task_id = sched::current_task_id();
+    return stream.owner_task_id == 0 || current_task_id == 0 || stream.owner_task_id == current_task_id;
 }
 
 static auto handle_from_id(fs::file_handle handle) -> kernel_stream* {
@@ -218,7 +224,10 @@ static auto handle_from_id(fs::file_handle handle) -> kernel_stream* {
         return null;
     }
     auto& stream = s_streams[static_cast<usize>(handle - 1)];
-    return stream.in_use ? &stream : null;
+    if (!stream.in_use || !stream_accessible_to_current_task(stream)) {
+        return null;
+    }
+    return &stream;
 }
 
 static auto try_fat_file_exists(string_view path) -> bool {
@@ -260,6 +269,25 @@ static auto try_fat_file_size(string_view path) -> usize {
     }
 
     return 0;
+}
+
+static auto try_fat_open_file(string_view path, fat32::file_descriptor& file_out) -> bool {
+    if (!fat32::is_mounted()) {
+        return false;
+    }
+
+    if (fat32::open_file(path, file_out)) {
+        return true;
+    }
+
+    const auto base = basename_view(path);
+    if (!is_absolute_path(path) && !base.equals(path) && fat32::open_file(base, file_out)) {
+        log::debug() << "fs: basename fallback open '" << path << "' -> '" << base
+                     << "' size=" << static_cast<unsigned long long>(file_out.size);
+        return true;
+    }
+
+    return false;
 }
 
 static auto try_fat_read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
@@ -324,6 +352,42 @@ static auto try_fat_remove_file(string_view path) -> bool {
     return false;
 }
 
+static auto is_backup_shell_request(string_view path) -> bool {
+    return basename_view(path).equals(string_view("shell.vbin"));
+}
+
+static auto find_backup_shell(string_view path) -> const file_entry* {
+    if (!is_backup_shell_request(path)) {
+        return null;
+    }
+    return ramfs::find(string_view("shell.vbin"));
+}
+
+static auto close_stream(fs::file_handle handle, kernel_stream& stream, const char* reason) -> int {
+    log::debug() << "fs: file_close handle=" << static_cast<unsigned long long>(handle)
+                 << " backend=" << stream_backend_name(stream.backend)
+                 << " owner=" << static_cast<unsigned long long>(stream.owner_task_id)
+                 << " path='" << stream.path.view() << "' dirty="
+                 << (stream.dirty ? "yes" : "no") << " size="
+                 << static_cast<unsigned long long>(stream.size)
+                 << " reason=" << reason;
+
+    if (stream.backend == stream_backend::fat32 && stream.dirty) {
+        const u8* data = stream.size > 0 ? stream_data(stream) : null;
+        if (!try_fat_write_file(stream.path.view(), data, stream.size)) {
+            stream.error = true;
+            log::debug() << "fs: file_close flush failed handle=" << static_cast<unsigned long long>(handle)
+                         << " path='" << stream.path.view() << "'";
+            return -1;
+        }
+        log::debug() << "fs: file_close flushed fat32 file path='" << stream.path.view()
+                     << "' size=" << static_cast<unsigned long long>(stream.size);
+    }
+
+    reset_stream(stream);
+    return 0;
+}
+
 } // namespace
 
 void fs::init() {
@@ -350,7 +414,7 @@ auto fs::mount_boot_filesystem() -> status_code {
                     << " on " << mounted.block_device.c_str()
                     << " root=" << mounted.logical_root_path.c_str();
     } else {
-        log::warn() << "fs: FAT32 mount failed, keeping RAMFS fallback active";
+        log::warn() << "fs: FAT32 mount failed; only RAMFS backup shell remains available";
         log::debug() << "fs: FAT32 mount error code: " << static_cast<u32>(rc);
     }
 
@@ -376,12 +440,7 @@ auto fs::query_info() -> runtime_info {
         return info;
     }
 
-    if (info.fallback_ready) {
-        (void)info.active_backend.assign("ramfs");
-        (void)info.logical_root_path.assign("/");
-    } else {
-        (void)info.active_backend.assign("none");
-    }
+    (void)info.active_backend.assign("none");
 
     return info;
 }
@@ -395,7 +454,7 @@ auto fs::file_exists(const char* path) -> bool {
     if (try_fat_file_exists(normalized)) {
         return true;
     }
-    return ramfs::find(normalized) != null;
+    return false;
 }
 
 auto fs::file_size(const char* path) -> usize {
@@ -409,8 +468,7 @@ auto fs::file_size(const char* path) -> usize {
         return fat_size;
     }
 
-    const auto* entry = ramfs::find(normalized);
-    return entry != null ? entry->size : 0;
+    return 0;
 }
 
 auto fs::load_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
@@ -424,7 +482,7 @@ auto fs::load_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& s
     }
 
     owned_buffer.reset();
-    const auto* entry = ramfs::find(normalized);
+    const auto* entry = find_backup_shell(normalized);
     if (entry == null) {
         size_out = 0;
         log::debug() << "fs: load_file miss '" << normalized << "'";
@@ -432,7 +490,7 @@ auto fs::load_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& s
     }
 
     size_out = entry->size;
-    log::debug() << "fs: load_file '" << normalized << "' resolved via ramfs size="
+    log::debug() << "fs: load_file '" << normalized << "' resolved via backup shell size="
                  << static_cast<unsigned long long>(size_out);
     return entry->size > 0 ? entry->data : &s_empty_file_marker;
 }
@@ -471,6 +529,7 @@ auto fs::file_open(const char* path, const char* mode_string) -> file_handle {
 
         reset_stream(stream);
         stream.in_use = true;
+        stream.owner_task_id = sched::current_task_id();
         stream.readable = mode.readable;
         stream.writable = mode.writable;
         stream.append = mode.append;
@@ -532,14 +591,13 @@ auto fs::file_open(const char* path, const char* mode_string) -> file_handle {
             return static_cast<file_handle>(i + 1);
         }
 
-        kernel_heap_ptr<u8> owned_buffer;
-        usize size = 0;
-        const u8* file_data = try_fat_read_file(normalized, owned_buffer, size);
-        if (file_data != null) {
+        fat32::file_descriptor fat_file {};
+        if (try_fat_open_file(normalized, fat_file)) {
             stream.backend = stream_backend::fat32;
-            stream.owned_buffer = owned_buffer.release();
-            stream.size = size;
-            stream.capacity = size;
+            stream.fat_file = fat_file;
+            stream.direct_fat = true;
+            stream.size = fat_file.size;
+            stream.capacity = fat_file.size;
             stream.position = 0;
             stream.eof = stream.size == 0;
             log::debug() << "fs: file_open handle=" << static_cast<unsigned long long>(i + 1)
@@ -549,24 +607,9 @@ auto fs::file_open(const char* path, const char* mode_string) -> file_handle {
             return static_cast<file_handle>(i + 1);
         }
 
-        const auto* entry = ramfs::find(normalized);
-        if (entry == null) {
-            log::debug() << "fs: file_open miss path='" << normalized << "'";
-            reset_stream(stream);
-            return 0;
-        }
-
-        stream.backend = stream_backend::ramfs;
-        stream.ram_entry = entry;
-        stream.size = entry->size;
-        stream.capacity = entry->size;
-        stream.position = 0;
-        stream.eof = stream.size == 0;
-        log::debug() << "fs: file_open handle=" << static_cast<unsigned long long>(i + 1)
-                     << " backend=" << stream_backend_name(stream.backend)
-                     << " path='" << normalized << "' size="
-                     << static_cast<unsigned long long>(stream.size);
-        return static_cast<file_handle>(i + 1);
+        log::debug() << "fs: file_open miss path='" << normalized << "'";
+        reset_stream(stream);
+        return 0;
     }
 
     log::debug() << "fs: file_open failed, no free stream for path='" << normalized << "'";
@@ -580,26 +623,32 @@ auto fs::file_close(file_handle handle) -> int {
         return -1;
     }
 
-    log::debug() << "fs: file_close handle=" << static_cast<unsigned long long>(handle)
-                 << " backend=" << stream_backend_name(stream->backend)
-                 << " path='" << stream->path.view() << "' dirty="
-                 << (stream->dirty ? "yes" : "no") << " size="
-                 << static_cast<unsigned long long>(stream->size);
+    return close_stream(handle, *stream, "explicit");
+}
 
-    if (stream->backend == stream_backend::fat32 && stream->dirty) {
-        const u8* data = stream->size > 0 ? stream_data(*stream) : null;
-        if (!try_fat_write_file(stream->path.view(), data, stream->size)) {
-            stream->error = true;
-            log::debug() << "fs: file_close flush failed handle=" << static_cast<unsigned long long>(handle)
-                         << " path='" << stream->path.view() << "'";
-            return -1;
-        }
-        log::debug() << "fs: file_close flushed fat32 file path='" << stream->path.view()
-                     << "' size=" << static_cast<unsigned long long>(stream->size);
+void fs::close_all_for_task(u64 task_id) {
+    if (task_id == 0) {
+        return;
     }
 
-    reset_stream(*stream);
-    return 0;
+    usize closed_count = 0;
+    for (usize i = 0; i < MAX_STREAMS; ++i) {
+        auto& stream = s_streams[i];
+        if (!stream.in_use || stream.owner_task_id != task_id) {
+            continue;
+        }
+
+        if (close_stream(static_cast<file_handle>(i + 1), stream, "task-exit") != 0) {
+            reset_stream(stream);
+        }
+        ++closed_count;
+    }
+
+    if (closed_count > 0) {
+        log::debug() << "fs: closed " << static_cast<unsigned long long>(closed_count)
+                     << " leaked stream(s) for task "
+                     << static_cast<unsigned long long>(task_id);
+    }
 }
 
 auto fs::file_read(file_handle handle, void* buf, usize buf_size) -> usize {
@@ -613,7 +662,21 @@ auto fs::file_read(file_handle handle, void* buf, usize buf_size) -> usize {
     }
 
     const usize remaining = stream->size - stream->position;
-    const usize to_copy = remaining < buf_size ? remaining : buf_size;
+    usize to_copy = remaining < buf_size ? remaining : buf_size;
+    if (stream->backend == stream_backend::fat32 && stream->direct_fat) {
+        if (to_copy > MAX_DIRECT_FAT_READ_BYTES) {
+            to_copy = MAX_DIRECT_FAT_READ_BYTES;
+        }
+        usize read_count = 0;
+        if (!fat32::read_file(stream->fat_file, stream->position, buf, to_copy, read_count)) {
+            stream->error = true;
+            return 0;
+        }
+        stream->position += read_count;
+        stream->eof = stream->position >= stream->size;
+        return read_count;
+    }
+
     const u8* data = stream_data(*stream);
     if (to_copy > 0 && data != null) {
         memory::copy(buf, data + stream->position, to_copy);

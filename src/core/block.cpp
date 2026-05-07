@@ -17,17 +17,18 @@ namespace block {
 
 namespace {
 
-static constexpr u32 TRACE_SMALL_REQUEST_MAX_BLOCKS = 16;
-static constexpr u32 TRACE_MEDIUM_REQUEST_MAX_BLOCKS = 256;
+static constexpr bool TRACE_BLOCK_REQUESTS = false;
+[[maybe_unused]] static constexpr u32 TRACE_SMALL_REQUEST_MAX_BLOCKS = 16;
+[[maybe_unused]] static constexpr u32 TRACE_MEDIUM_REQUEST_MAX_BLOCKS = 256;
 
-static auto sample_lba(u64 lba, u32 count, u32 numerator, u32 denominator) -> u64 {
+[[maybe_unused]] static auto sample_lba(u64 lba, u32 count, u32 numerator, u32 denominator) -> u64 {
     if (count <= 1) {
         return lba;
     }
     return lba + ((static_cast<u64>(count - 1) * numerator) / denominator);
 }
 
-static void trace_request(const char* operation, const block_device* dev, u64 lba, u32 count, const void* buffer) {
+[[maybe_unused]] static void trace_request(const char* operation, const block_device* dev, u64 lba, u32 count, const void* buffer) {
     if (dev == null || count == 0) {
         return;
     }
@@ -128,7 +129,9 @@ bool read_blocks(block_device* dev, u64 lba, u32 count, void* buffer) {
         return false;
     }
 
-    trace_request("reading", dev, lba, count, buffer);
+    if constexpr (TRACE_BLOCK_REQUESTS) {
+        trace_request("reading", dev, lba, count, buffer);
+    }
 
     return dev->ops->read_blocks(dev, lba, count, buffer);
 }
@@ -142,7 +145,9 @@ bool write_blocks(block_device* dev, u64 lba, u32 count, const void* buffer) {
         return false;
     }
 
-    trace_request("writing", dev, lba, count, buffer);
+    if constexpr (TRACE_BLOCK_REQUESTS) {
+        trace_request("writing", dev, lba, count, buffer);
+    }
 
     return dev->ops->write_blocks(dev, lba, count, buffer);
 }

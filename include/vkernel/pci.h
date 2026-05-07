@@ -49,15 +49,16 @@ struct pci_device {
 
 namespace pci_ids {
     inline constexpr u16 VENDOR_INTEL   = 0x8086;
+    inline constexpr u16 VENDOR_VIRTIO  = 0x1AF4;
     inline constexpr u16 DEVICE_AC97    = 0x2415;   /* 82801AA AC'97 Audio */
     inline constexpr u16 DEVICE_ICH4    = 0x24C5;   /* ICH4 AC'97 Audio   */
     inline constexpr u16 DEVICE_ICH6    = 0x2668;   /* ICH6 HD Audio      */
+    inline constexpr u16 DEVICE_VIRTIO_BLK_LEGACY = 0x1001;
 
     /* PCI class codes */
     inline constexpr u8 CLASS_MULTIMEDIA = 0x04;
     inline constexpr u8 SUBCLASS_AUDIO   = 0x01;
     inline constexpr u8 CLASS_STORAGE    = 0x01;
-    inline constexpr u8 SUBCLASS_IDE     = 0x01;
 }
 
 /* ============================================================

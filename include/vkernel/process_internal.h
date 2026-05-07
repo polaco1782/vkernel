@@ -43,6 +43,7 @@ struct process_task_context {
     usize command_line_len;
     vk_framebuffer_info_t fb_override;
     bool fb_override_valid;
+    u64 task_id;
     vk_u32 fb_text_col;
     vk_u32 fb_text_row;
     process_allocation* allocations;

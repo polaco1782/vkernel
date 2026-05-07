@@ -7,7 +7,7 @@
 
 #include "config.h"
 #include "console.h"
-#include "fs.h"
+#include "fs/ramfs.h"
 #include "log.h"
 #include "memory.h"
 #include "resource_ptr.h"

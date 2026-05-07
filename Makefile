@@ -233,8 +233,10 @@ distclean: clean
 qemu: $(BOOT_IMG)
 	@echo "Running in QEMU..."
 	qemu-system-x86_64 \
+		-cpu max \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
-		-drive if=ide,format=raw,file=$(BOOT_IMG) \
+		-drive if=none,id=bootdisk,format=raw,file=$(BOOT_IMG) \
+		-device virtio-blk-pci,drive=bootdisk,bootindex=0,disable-modern=off,disable-legacy=off \
 		-m 512M \
 		-net none \
 		-serial stdio \
@@ -246,8 +248,10 @@ qemu: $(BOOT_IMG)
 qemu-debug: $(BOOT_IMG)
 	@echo "Running in QEMU with GDB server..."
 	qemu-system-x86_64 \
+		-cpu max \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
-		-drive if=ide,format=raw,file=$(BOOT_IMG) \
+		-drive if=none,id=bootdisk,format=raw,file=$(BOOT_IMG) \
+		-device virtio-blk-pci,drive=bootdisk,bootindex=0,disable-modern=off,disable-legacy=off \
 		-m 512M \
 		-net none \
 		-serial stdio \

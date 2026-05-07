@@ -455,6 +455,9 @@ auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) 
     t.affinity_cpu = SCHED_CPU_NONE;
     t.current_cpu = SCHED_CPU_NONE;
     t.cpu_ticks = 0;
+    if (user_data != null) {
+        static_cast<process::process_task_context*>(user_data)->task_id = t.id;
+    }
     if (slot == g_task_count) {
         ++g_task_count;
     }

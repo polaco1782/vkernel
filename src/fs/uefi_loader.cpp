@@ -8,6 +8,7 @@
 #include "config.h"
 #include "console.h"
 #include "fs.h"
+#include "fs/ramfs.h"
 #include "log.h"
 #include "memory.h"
 #include "resource_ptr.h"
@@ -84,6 +85,10 @@ struct efi_file_info {
     u64 attribute;
     char16_t file_name[1];
 };
+
+static auto is_backup_shell_name(const char* name) -> bool {
+    return string_view(name).equals(string_view("shell.vbin"));
+}
 
 constexpr u64 EFI_FILE_MODE_READ = 0x0000000000000001ULL;
 constexpr u64 EFI_FILE_DIRECTORY = 0x10;
@@ -287,6 +292,9 @@ auto loader::load_initrd() -> status_code {
     auto rc = for_each_directory_entry(directory_handle.get(), [&](const efi_file_info& info, const char* name) {
         if ((info.attribute & EFI_FILE_DIRECTORY) != 0) {
             log::debug() << "Skipping directory: " << name;
+            return status_code::success;
+        }
+        if (!is_backup_shell_name(name)) {
             return status_code::success;
         }
 

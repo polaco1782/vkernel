@@ -97,7 +97,8 @@ exec ${QEMU} \
     -smp 4 \
     -drive if=pflash,format=${PFLASH_FMT},readonly=on,file="${OVMF_CODE}" \
     -drive if=pflash,format=${PFLASH_FMT},file="${NVRAM_FILE}" \
-    -drive if=ide,index=0,media=disk,format=raw,file="${BOOT_IMG}" \
+    -drive if=none,id=bootdisk,format=raw,file="${BOOT_IMG}" \
+    -device virtio-blk-pci,drive=bootdisk,bootindex=0,disable-modern=off,disable-legacy=off \
     -m 512M \
     -net none \
     -device AC97 \

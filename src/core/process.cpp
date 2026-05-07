@@ -108,6 +108,8 @@ void cleanup_process_context(process_task_context* ctx, int exit_code) {
     log::printk() << "Process exited with code " << exit_code << "\n";
     log::debug() << "Cleaning up process context: entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(ctx->entry)), 1, true, false) << ", image_base=" << reinterpret_cast<const void*>(ctx->image_base) << ", image_size=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(ctx->image_size)), 1, true, false);
 
+    fs::close_all_for_task(ctx->task_id);
+
     sound::mix_stop_range(ctx->image_base, ctx->image_size);
     for (auto* alloc = ctx->allocations; alloc != null; alloc = alloc->next) {
         sound::mix_stop_range(alloc->user_ptr, alloc->allocated_size);
@@ -293,6 +295,7 @@ static auto run_impl(string_view filename,
         && fb_override->base != 0u
         && fb_override->width > 0u
         && fb_override->height > 0u;
+    ctx->task_id = 0;
     ctx->fb_text_col = 0;
     ctx->fb_text_row = 0;
     ctx->allocations = null;

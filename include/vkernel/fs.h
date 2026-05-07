@@ -14,36 +14,6 @@
 
 namespace vk {
 
-struct file_entry {
-    static_string<128> name;
-    u8* data;
-    usize size;
-    bool valid;
-};
-
-inline constexpr usize RAMFS_MAX_FILES = 32;
-
-namespace ramfs {
-
-auto init() -> status_code;
-auto is_ready() -> bool;
-
-auto add_file(string_view name, const u8* data, usize size) -> status_code;
-auto add_file(const char* name, const u8* data, usize size) -> status_code;
-
-auto add_file_nocopy(string_view name, u8* data, usize size) -> status_code;
-auto add_file_nocopy(const char* name, u8* data, usize size) -> status_code;
-
-auto find(string_view name) -> const file_entry*;
-auto find(const char* name) -> const file_entry*;
-
-auto file_count() -> usize;
-auto get_file(usize index) -> const file_entry*;
-
-void dump();
-
-} // namespace ramfs
-
 /* ============================================================
  * UEFI ESP loader — uses Simple File System Protocol
  * Must be called BEFORE ExitBootServices.
@@ -93,6 +63,7 @@ auto file_write(file_handle handle, const void* buf, usize buf_size) -> usize;
 auto file_seek(file_handle handle, i64 offset, int whence) -> int;
 auto file_tell(file_handle handle) -> i64;
 auto file_remove(const char* path) -> int;
+void close_all_for_task(u64 task_id);
 
 auto load_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8*;
 

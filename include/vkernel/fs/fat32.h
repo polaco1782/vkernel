@@ -25,6 +25,15 @@ struct mount_info {
     u32 fs_info_sector = 0;
 };
 
+struct file_descriptor {
+    bool valid = false;
+    u32 first_cluster = 0;
+    usize size = 0;
+    mutable bool cluster_cache_valid = false;
+    mutable usize cluster_cache_index = 0;
+    mutable u32 cluster_cache_value = 0;
+};
+
 void init();
 auto mount_first_available() -> status_code;
 auto is_mounted() -> bool;
@@ -32,6 +41,8 @@ auto info() -> mount_info;
 
 auto file_exists(string_view path) -> bool;
 auto file_size(string_view path) -> usize;
+auto open_file(string_view path, file_descriptor& file_out) -> bool;
+auto read_file(file_descriptor& file, usize offset, void* buffer, usize size, usize& size_out) -> bool;
 auto read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8*;
 auto write_file(string_view path, const u8* data, usize size) -> bool;
 auto remove_file(string_view path) -> bool;
