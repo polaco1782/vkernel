@@ -118,6 +118,7 @@ OUR_SRCS   := cxxabi_stubs.cpp      \
 			  main.cpp              \
 			  shell_ui.cpp          \
 			  task_manager_panel.cpp \
+			  vkfm_panel.cpp        \
 			  window_manager.cpp
 OUR_OBJS   := $(OUR_SRCS:.cpp=.o)
 OUR_DEPS   := $(OUR_OBJS:.o=.d)

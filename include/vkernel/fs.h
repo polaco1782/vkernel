@@ -35,6 +35,14 @@ namespace fs {
 
 using file_handle = u64;
 
+struct directory_entry_info {
+    static_string<256> name;
+    bool is_directory = false;
+    usize size = 0;
+};
+
+using directory_visit_callback = bool (*)(const directory_entry_info& entry, void* context);
+
 struct runtime_info {
     bool fallback_ready = false;
     bool fat32_mounted = false;
@@ -55,6 +63,8 @@ auto query_info() -> runtime_info;
 
 auto file_exists(const char* path) -> bool;
 auto file_size(const char* path) -> usize;
+auto directory_exists(const char* path) -> bool;
+auto list_directory(const char* path, directory_visit_callback callback, void* context) -> bool;
 
 auto file_open(const char* path, const char* mode) -> file_handle;
 auto file_close(file_handle handle) -> int;

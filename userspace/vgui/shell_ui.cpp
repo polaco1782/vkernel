@@ -4,6 +4,7 @@
 #include "kobj_panel.h"
 #include "launch_registry.h"
 #include "task_manager_panel.h"
+#include "vkfm_panel.h"
 #include "window_manager.h"
 
 #include <stdio.h>
@@ -129,6 +130,7 @@ void ShellUi::draw_menu_bar(LaunchRegistry& launch_registry, WindowManager& wind
         ImGui::MenuItem("Console", nullptr, &show_console_);
         ImGui::MenuItem("Task Manager", nullptr, &show_task_manager_);
         ImGui::MenuItem("KObj Navigator", nullptr, &show_kobj_);
+        ImGui::MenuItem("vkfm", nullptr, &show_vkfm_);
         ImGui::Separator();
         ImGui::MenuItem("ImGui Demo", nullptr, &show_demo_);
         ImGui::EndMenu();
@@ -312,13 +314,15 @@ void ShellUi::draw(const vk_framebuffer_info_t& framebuffer,
                    WindowManager& window_manager,
                    ConsoleLog& log,
                    TaskManagerPanel& task_manager,
-                   KobjNavigator& kobj_navigator)
+                   KobjNavigator& kobj_navigator,
+                   VkfmPanel& vkfm_panel)
 {
     draw_menu_bar(launch_registry, window_manager, log);
     draw_info_window(framebuffer, window_manager, log);
     log.draw_window(show_console_, window_manager);
     task_manager.draw_window(show_task_manager_, window_manager);
     kobj_navigator.draw_window(show_kobj_, window_manager);
+    vkfm_panel.draw_window(show_vkfm_, window_manager, log);
     window_manager.draw_windows();
     draw_settings_window(window_manager, log);
     draw_about_modal();

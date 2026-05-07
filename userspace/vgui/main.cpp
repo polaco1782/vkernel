@@ -9,6 +9,7 @@
 #include "launch_registry.h"
 #include "shell_ui.h"
 #include "task_manager_panel.h"
+#include "vkfm_panel.h"
 #include "window_manager.h"
 
 namespace {
@@ -49,6 +50,7 @@ int main(int /*argc*/, char** /*argv*/)
         vgui::LaunchRegistry launch_registry;
         vgui::TaskManagerPanel task_manager;
         vgui::KobjNavigator kobj_navigator;
+        vgui::VkfmPanel vkfm_panel;
         vgui::WindowManager window_manager(log);
         vgui::ShellUi ui;
 
@@ -122,7 +124,8 @@ int main(int /*argc*/, char** /*argv*/)
                     window_manager,
                     log,
                     task_manager,
-                    kobj_navigator);
+                    kobj_navigator,
+                    vkfm_panel);
 
             ImGui::Render();
             ImGui_ImplVK_RenderDrawData(ImGui::GetDrawData(), &framebuffer);

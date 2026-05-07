@@ -177,17 +177,19 @@ static auto parse_u64_segment(const char* s, usize n, u64* out) -> bool {
     return true;
 }
 
-static auto json_extract_string(const char* json, const char* key, KStr* out) -> bool {
-    if (json == null || key == null || out == null) return false;
+static auto json_extract_string_buffer(const char* json, const char* key, char* out, usize out_cap) -> bool {
+    if (json == null || key == null || out == null || out_cap == 0) return false;
+
+    out[0] = '\0';
 
     char pattern[32];
     usize klen = cstrlen(key);
     if (klen + 3 >= sizeof(pattern)) return false;
 
     usize p = 0;
-    pattern[p++] = '\"';
+    pattern[p++] = '"';
     for (usize i = 0; i < klen; ++i) pattern[p++] = key[i];
-    pattern[p++] = '\"';
+    pattern[p++] = '"';
     pattern[p] = '\0';
 
     for (usize i = 0; json[i] != '\0'; ++i) {
@@ -205,28 +207,65 @@ static auto json_extract_string(const char* json, const char* key, KStr* out) ->
         if (json[pos] != ':') continue;
         ++pos;
         while (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r') ++pos;
-        if (json[pos] != '\"') continue;
+        if (json[pos] != '"') continue;
         ++pos;
 
-        char tmp[KSTR_MAX];
-        usize t = 0;
-        while (json[pos] != '\0' && json[pos] != '\"' && t < KSTR_MAX - 1) {
+        usize written = 0;
+        while (json[pos] != '\0' && json[pos] != '"' && written + 1 < out_cap) {
             if (json[pos] == '\\' && json[pos + 1] != '\0') {
                 ++pos;
                 char esc = json[pos];
-                if (esc == 'n') tmp[t++] = '\n';
-                else if (esc == 'r') tmp[t++] = '\r';
-                else if (esc == 't') tmp[t++] = '\t';
-                else tmp[t++] = esc;
+                if (esc == 'n') out[written++] = '\n';
+                else if (esc == 'r') out[written++] = '\r';
+                else if (esc == 't') out[written++] = '\t';
+                else out[written++] = esc;
                 ++pos;
                 continue;
             }
-            tmp[t++] = json[pos++];
+            out[written++] = json[pos++];
         }
-        tmp[t] = '\0';
-        out->set(tmp);
+        out[written] = '\0';
         return true;
     }
+
+    return false;
+}
+
+static auto json_extract_string(const char* json, const char* key, KStr* out) -> bool {
+    if (json == null || key == null || out == null) return false;
+
+    char tmp[KSTR_MAX];
+    if (!json_extract_string_buffer(json, key, tmp, sizeof(tmp))) {
+        return false;
+    }
+    out->set(tmp);
+    return true;
+}
+
+struct fs_list_json_context {
+    char* out = null;
+    usize out_cap = 0;
+    usize pos = 0;
+    bool first = true;
+};
+
+static auto append_fs_list_item(const fs::directory_entry_info& entry, void* raw_context) -> bool {
+    auto* context = static_cast<fs_list_json_context*>(raw_context);
+    if (context == null) {
+        return true;
+    }
+
+    if (!context->first) {
+        context->pos = append_ch(context->out, context->out_cap, context->pos, ',');
+    }
+    context->pos = append_ch(context->out, context->out_cap, context->pos, '"');
+    context->pos = append_ch(context->out, context->out_cap, context->pos, entry.is_directory ? 'D' : 'F');
+    context->pos = append_str(context->out, context->out_cap, context->pos, "\\t");
+    context->pos = append_json_escaped(context->out, context->out_cap, context->pos, entry.name.c_str());
+    context->pos = append_str(context->out, context->out_cap, context->pos, "\\t");
+    context->pos = render_u64(context->out, context->out_cap, context->pos, static_cast<u64>(entry.size));
+    context->pos = append_ch(context->out, context->out_cap, context->pos, '"');
+    context->first = false;
     return false;
 }
 
@@ -1154,6 +1193,27 @@ void krpc(const char* req_json, char* out, usize out_cap) {
         pos = append_str(out, out_cap, pos, ",\"op\":\"drvunload\",\"name\":\"");
         pos = append_json_escaped(out, out_cap, pos, name.c_str());
         pos = append_str(out, out_cap, pos, "\"}");
+        return;
+    }
+
+    if (op.eq("fs_list")) {
+        char fs_path[256];
+        if (!json_extract_string_buffer(req_json, "path", fs_path, sizeof(fs_path))) {
+            append_str(out, out_cap, 0, "{\"ok\":false,\"error\":\"missing path\"}");
+            return;
+        }
+
+        pos = append_str(out, out_cap, pos, "{\"ok\":true,\"op\":\"fs_list\",\"path\":\"");
+        pos = append_json_escaped(out, out_cap, pos, fs_path);
+        pos = append_str(out, out_cap, pos, "\",\"items\":[");
+
+        fs_list_json_context context { out, out_cap, pos, true };
+        if (!fs::list_directory(fs_path, append_fs_list_item, &context)) {
+            append_str(out, out_cap, 0, "{\"ok\":false,\"error\":\"directory not found\"}");
+            return;
+        }
+
+        pos = append_str(out, out_cap, context.pos, "]}");
         return;
     }
 

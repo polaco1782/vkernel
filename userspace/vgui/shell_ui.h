@@ -9,6 +9,7 @@ class ConsoleLog;
 class KobjNavigator;
 class LaunchRegistry;
 class TaskManagerPanel;
+class VkfmPanel;
 class WindowManager;
 
 class ShellUi {
@@ -24,7 +25,8 @@ public:
               WindowManager& window_manager,
               ConsoleLog& log,
               TaskManagerPanel& task_manager,
-              KobjNavigator& kobj_navigator);
+              KobjNavigator& kobj_navigator,
+              VkfmPanel& vkfm_panel);
 
 private:
     void apply_style();
@@ -40,6 +42,7 @@ private:
     bool show_demo_ = false;
     bool show_task_manager_ = true;
     bool show_kobj_ = true;
+    bool show_vkfm_ = true;
     bool open_about_ = false;
     vk_u32 default_app_width_ = 320;
     vk_u32 default_app_height_ = 200;

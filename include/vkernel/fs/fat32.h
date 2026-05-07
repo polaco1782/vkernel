@@ -34,6 +34,15 @@ struct file_descriptor {
     mutable u32 cluster_cache_value = 0;
 };
 
+struct directory_entry_info {
+    static_string<256> name;
+    bool is_directory = false;
+    usize size = 0;
+    u32 first_cluster = 0;
+};
+
+using directory_visit_callback = bool (*)(const directory_entry_info& entry, void* context);
+
 void init();
 auto mount_first_available() -> status_code;
 auto is_mounted() -> bool;
@@ -41,6 +50,8 @@ auto info() -> mount_info;
 
 auto file_exists(string_view path) -> bool;
 auto file_size(string_view path) -> usize;
+auto directory_exists(string_view path) -> bool;
+auto list_directory(string_view path, directory_visit_callback callback, void* context) -> bool;
 auto open_file(string_view path, file_descriptor& file_out) -> bool;
 auto read_file(file_descriptor& file, usize offset, void* buffer, usize size, usize& size_out) -> bool;
 auto read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8*;

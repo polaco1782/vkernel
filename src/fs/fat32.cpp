@@ -834,6 +834,33 @@ static auto resolve_path(const mount_state& state, string_view raw_path, directo
     return resolve_path_from_cluster(state, state.info.logical_root_cluster, path, entry_out);
 }
 
+static auto resolve_directory_cluster(const mount_state& state, string_view raw_path, u32& cluster_out) -> bool {
+    string_view path = trim_trailing_separators(normalize_path(raw_path));
+
+    if (path.empty() || path.equals(".")) {
+        cluster_out = state.info.logical_root_cluster;
+        return cluster_out >= 2;
+    }
+
+    if (is_absolute_path(path)) {
+        while (!path.empty() && is_separator(path[0])) {
+            path.remove_prefix(1);
+        }
+        if (path.empty()) {
+            cluster_out = state.volume_root_cluster;
+            return cluster_out >= 2;
+        }
+    }
+
+    directory_entry_ref entry {};
+    if (!resolve_path(state, raw_path, entry) || !is_directory(entry.entry)) {
+        return false;
+    }
+
+    cluster_out = first_cluster(entry.entry);
+    return cluster_out >= 2;
+}
+
 static auto resolve_parent_directory(const mount_state& state, string_view raw_path, u32& directory_cluster_out, static_string<256>& leaf_name_out) -> bool {
     string_view path = trim_trailing_separators(normalize_path(raw_path));
     if (path.empty()) {
@@ -1854,6 +1881,49 @@ auto file_size(string_view path) -> usize {
         return 0;
     }
     return static_cast<usize>(entry.entry.file_size);
+}
+
+auto directory_exists(string_view path) -> bool {
+    if (!s_state.mounted) {
+        return false;
+    }
+
+    u32 directory_cluster = 0;
+    return resolve_directory_cluster(s_state, path, directory_cluster);
+}
+
+auto list_directory(string_view path, directory_visit_callback callback, void* context) -> bool {
+    if (!s_state.mounted || callback == null) {
+        return false;
+    }
+
+    u32 directory_cluster = 0;
+    if (!resolve_directory_cluster(s_state, path, directory_cluster)) {
+        log::debug() << "fat32: list_directory resolve failed path='" << path << "'";
+        return false;
+    }
+
+    log::debug() << "fat32: list_directory path='" << path << "' cluster=" << directory_cluster;
+    const bool ok = scan_directory(s_state, directory_cluster, [&](const directory_entry_ref& entry) {
+        const auto name = entry.name.view();
+        if (name.equals(".") || name.equals("..")) {
+            return false;
+        }
+
+        directory_entry_info info {};
+        if (!info.name.assign(name)) {
+            return false;
+        }
+        info.is_directory = is_directory(entry.entry);
+        info.size = static_cast<usize>(entry.entry.file_size);
+        info.first_cluster = first_cluster(entry.entry);
+        return callback(info, context);
+    });
+
+    if (!ok) {
+        log::debug() << "fat32: list_directory scan failed path='" << path << "'";
+    }
+    return ok;
 }
 
 auto open_file(string_view path, file_descriptor& file_out) -> bool {

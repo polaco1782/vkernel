@@ -271,6 +271,24 @@ static auto try_fat_file_size(string_view path) -> usize {
     return 0;
 }
 
+static auto try_fat_directory_exists(string_view path) -> bool {
+    if (!fat32::is_mounted()) {
+        return false;
+    }
+
+    if (fat32::directory_exists(path)) {
+        return true;
+    }
+
+    const auto base = basename_view(path);
+    if (!is_absolute_path(path) && !base.equals(path) && fat32::directory_exists(base)) {
+        log::debug() << "fs: basename fallback directory '" << path << "' -> '" << base << "'";
+        return true;
+    }
+
+    return false;
+}
+
 static auto try_fat_open_file(string_view path, fat32::file_descriptor& file_out) -> bool {
     if (!fat32::is_mounted()) {
         return false;
@@ -346,6 +364,46 @@ static auto try_fat_remove_file(string_view path) -> bool {
     const auto base = basename_view(path);
     if (!is_absolute_path(path) && !base.equals(path) && fat32::remove_file(base)) {
         log::debug() << "fs: basename fallback remove '" << path << "' -> '" << base << "'";
+        return true;
+    }
+
+    return false;
+}
+
+struct directory_list_forwarder {
+    fs::directory_visit_callback callback = null;
+    void* context = null;
+};
+
+static auto forward_directory_entry(const fat32::directory_entry_info& entry, void* raw_context) -> bool {
+    auto* context = static_cast<directory_list_forwarder*>(raw_context);
+    if (context == null || context->callback == null) {
+        return true;
+    }
+
+    fs::directory_entry_info forwarded {};
+    if (!forwarded.name.assign(entry.name.view())) {
+        return false;
+    }
+    forwarded.is_directory = entry.is_directory;
+    forwarded.size = entry.size;
+    return context->callback(forwarded, context->context);
+}
+
+static auto try_fat_list_directory(string_view path, fs::directory_visit_callback callback, void* context) -> bool {
+    if (!fat32::is_mounted() || callback == null) {
+        return false;
+    }
+
+    directory_list_forwarder forwarder { callback, context };
+    if (fat32::list_directory(path, forward_directory_entry, &forwarder)) {
+        return true;
+    }
+
+    const auto base = basename_view(path);
+    if (!is_absolute_path(path) && !base.equals(path)
+            && fat32::list_directory(base, forward_directory_entry, &forwarder)) {
+        log::debug() << "fs: basename fallback list '" << path << "' -> '" << base << "'";
         return true;
     }
 
@@ -469,6 +527,29 @@ auto fs::file_size(const char* path) -> usize {
     }
 
     return 0;
+}
+
+auto fs::directory_exists(const char* path) -> bool {
+    if (path == null) {
+        return false;
+    }
+
+    const auto normalized = normalize_path(string_view(path));
+    return try_fat_directory_exists(normalized);
+}
+
+auto fs::list_directory(const char* path, directory_visit_callback callback, void* context) -> bool {
+    if (!s_initialised) {
+        init();
+    }
+    if (path == null || callback == null) {
+        return false;
+    }
+
+    const auto normalized = normalize_path(string_view(path));
+    const bool ok = try_fat_list_directory(normalized, callback, context);
+    log::debug() << "fs: list_directory path='" << normalized << "' result=" << (ok ? "ok" : "fail");
+    return ok;
 }
 
 auto fs::load_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
