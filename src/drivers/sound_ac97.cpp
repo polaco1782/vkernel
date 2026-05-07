@@ -98,6 +98,7 @@ inline constexpr u16 BD_BUP = (1u << 15);
 
 inline constexpr u32 BDL_COUNT       = 32;   /* Max 32 entries in BDL */
 inline constexpr u32 DMA_BUFFER_SIZE = 65536; /* 64 KB DMA buffer */
+inline constexpr u64 PLAYBACK_WATCHDOG_SLACK_TICKS = 2; /* 20 ms at 100 Hz */
 
 /* ============================================================
  * Driver state
@@ -346,12 +347,16 @@ static bool ac97_play(const u8* samples, u32 length, sound_format fmt) {
     /* Set Last Valid Index = 0 (only one buffer entry) */
     nabm_write8(PO_LVI, 0);
 
-    /* Calculate duration for tick-based fallback.
+    /* Keep a coarse watchdog only as a last resort.  The scheduler tick is
+     * 10 ms, so treating the nominal end tick as exact completion truncates
+     * streamed buffers and causes audible clicks at block boundaries.
      * sample_count is always total 16-bit words; frames = sample_count / 2
      * because AC97 is always stereo (2 words per frame). */
     u32 frames = sample_count / 2;
     u64 dur_ticks = ((u64)frames * SCHED_TICK_HZ + s_sample_rate - 1u) / s_sample_rate;
-    s_play_end_tick = sched::tick_count() + (dur_ticks < 1u ? 1u : dur_ticks);
+    s_play_end_tick = sched::tick_count()
+                    + (dur_ticks < 1u ? 1u : dur_ticks)
+                    + PLAYBACK_WATCHDOG_SLACK_TICKS;
     s_current_length = transfer;
 
     /* Start DMA playback */
@@ -380,14 +385,17 @@ static bool ac97_is_playing() {
         /* Clear status bits */
         nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
         s_playing = false;
+        s_play_end_tick = 0;
         return false;
     }
 
-    /* Tick-based fallback */
-    if (sched::tick_count() >= s_play_end_tick) {
+    /* Last-resort watchdog: only force-stop playback if the hardware never
+     * reports completion after a generous margin beyond the expected end. */
+    if (s_play_end_tick != 0 && sched::tick_count() >= s_play_end_tick) {
         nabm_write8(PO_CR, 0);
         nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
         s_playing = false;
+        s_play_end_tick = 0;
         return false;
     }
 

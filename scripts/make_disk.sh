@@ -67,6 +67,25 @@ copy_into_esp() {
     mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${src}" "::/EFI/vkernel/${dest_name}"
 }
 
+stage_clownmdemu_roms() {
+    local rom
+    for rom in userspace/clownmdemu/roms/*; do
+        local base
+        local ext
+
+        [ -f "${rom}" ] || continue
+        base=$(basename "${rom}")
+        ext="${base##*.}"
+        ext="${ext,,}"
+
+        case "${ext}" in
+            bin|gen|smd|32x|md)
+                copy_into_esp "${rom}" "${base}"
+                ;;
+        esac
+    done
+}
+
 rm -f "${OUTPUT}"
 
 echo "  Creating ${DISK_MB} MiB blank disk..."
@@ -106,7 +125,7 @@ copy_into_esp "userspace/MODPlay/makemove.mod" "makemove.mod"
 copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "UNREALPM.S3M"
 copy_into_esp "userspace/rotozoom/head.bmp" "head.bmp"
 copy_into_esp "userspace/quake/pak0.pak" "pak0.pak"
-copy_into_esp "userspace/clownmdemu/sonic1.bin" "sonic1.bin"
+stage_clownmdemu_roms
 
 echo "  Done: ${OUTPUT}"
 mdir -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/BOOT 2>/dev/null || true

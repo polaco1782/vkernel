@@ -12,9 +12,17 @@ Controls:
 - `Escape`: quit
 
 ROM staging:
-- Put the ROM at `userspace/clownmdemu/sonic1.bin`
-- `run_qemu.sh` copies it into the ESP as `sonic1.bin`
-- The app always loads `sonic1.bin`
+- Put one or more ROMs in `userspace/clownmdemu/`
+- Supported picker extensions: `.bin`, `.md`, `.gen`, `.smd`, `.32x`
+- `run_qemu.sh` stages every matching ROM into the ESP root alongside the userspace binaries
+- The app opens with a simple ROM picker backed by `kobj fs_list`
+
+Picker controls:
+- `Up` `Down`: move selection
+- `Enter` or `Right`: open directory / load ROM
+- `Backspace` or `Left`: parent directory
+- `Tab`: refresh listing
+- `Escape`: quit
 
 Notes:
 - The vendored core is AGPL-3.0-or-later. See `vendor/clownmdemu-core/LICENCE.txt`.
