@@ -7,7 +7,7 @@
 BUILD_DIR="build"
 EFI_FILE="${BUILD_DIR}/vkernel.efi"
 BOOT_IMG="${BUILD_DIR}/vkernel_boot.img"
-NVRAM_FILE="${BUILD_DIR}/ovmf_vars.fd"
+NVRAM_FILE="ovmf_vars.fd"
 DEBUG_QEMU=0
 VERBOSE=0
 
@@ -92,7 +92,8 @@ echo ""
 
 exec ${QEMU} \
     -display sdl \
-    -machine pc \
+    -machine q35 \
+    -vga virtio \
     -cpu host \
     -smp 4 \
     -drive if=pflash,format=${PFLASH_FMT},readonly=on,file="${OVMF_CODE}" \
