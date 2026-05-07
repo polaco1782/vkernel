@@ -368,12 +368,12 @@ static void cmd_help(const char* arg)
     VK_CALL(puts, "  mem          - Show memory info\n");
     VK_CALL(puts, "  tasks        - Show scheduler tasks\n");
     VK_CALL(puts, "  top          - Show live CPU usage per task\n");
-    VK_CALL(puts, "  ls           - List kobj children\n");
+    VK_CALL(puts, "  ls           - Show staged files\n");
     VK_CALL(puts, "  get <p>      - Read kobj value by path\n");
     VK_CALL(puts, "  set <p> <v>  - Write kobj value by path\n");
     VK_CALL(puts, "  watch <p> [ms]- Poll kobj value until keypress\n");
     VK_CALL(puts, "  describe <p> - Show kobj node schema\n");
-    VK_CALL(puts, "  cat <f>      - Print a file\n");
+    VK_CALL(puts, "  cat <f>      - Print a ramfs file\n");
     VK_CALL(puts, "  clear        - Clear the screen\n");
     VK_CALL(puts, "  uptime       - Show tick count\n");
     VK_CALL(puts, "  reboot       - Reboot the machine\n");

@@ -1,12 +1,11 @@
 # vkernel — UEFI Microkernel (C++26)
 
 A minimal UEFI microkernel for x86_64, written in C++26 as a hobby project.
-Boots directly from UEFI firmware, runs freestanding userspace binaries from
-the boot filesystem, and includes a working preemptive SMP scheduler, PCI bus
-enumeration, ACPI table parsing, SMP bringup, a loadable driver framework with
-AC97 sound, a software audio mixer, a typed kernel-object tree (kobj), a block
-device subsystem, ATA PIO driver, and ports of Doom, Quake, ClownMDEmu, and
-Dear ImGui.
+Boots directly from UEFI firmware, runs freestanding userspace binaries out of
+a ramfs, and includes a working preemptive SMP scheduler, PCI bus enumeration,
+ACPI table parsing, SMP bringup, a loadable driver framework with AC97 sound,
+a software audio mixer, a typed kernel-object tree (kobj), a block device
+subsystem, ATA PIO driver, and ports of Doom, Quake, ClownMDEmu, and Dear ImGui.
 
 ## Current Status
 
@@ -30,13 +29,12 @@ Dear ImGui.
 | Software audio mixer (8 channels) | ✅ Working |
 | AC97 sound driver | ✅ Working |
 | Bochs VBE display driver | ✅ Working |
-| ATA PIO block driver (read/write) | ✅ Working |
+| ATA PIO block driver (read-only) | ✅ Working |
 | Block device registry | ✅ Working |
 | Typed kernel-object tree (kobj, JSON RPC) | ✅ Working |
 | Compositor layer (per-task framebuffer routing) | ✅ Working |
-| FAT32 boot filesystem (default R/W backend) | ✅ Working |
-| UEFI Simple File System loader → ramfs fallback | ✅ Working |
-| Ramfs (in-memory flat file table, read-only fallback) | ✅ Working |
+| UEFI Simple File System loader → ramfs | ✅ Working |
+| Ramfs (in-memory flat file table, read-only) | ✅ Working |
 | ELF64 + PE/COFF userspace loader | ✅ Working |
 | Kernel API (`vk_api_t`, ABI version 28) | ✅ Working |
 | Userspace libc (newlib sysroot + CRT glue) | ✅ Working |
@@ -75,7 +73,7 @@ Dear ImGui.
 │  │            │ phys alloc   │          │                      │ │
 │  ├────────────┴──────────────┴──────────┴──────────────────────┤ │
 │  │ Filesystem          │ Process loader  │ Panic               │ │
-│  │ FAT32 + RAMFS fallback │ ELF64 · PE/COFF │ vk_panic() · halt │ │
+│  │ ramfs + UEFI ESP    │ ELF64 · PE/COFF │ vk_panic() · halt   │ │
 │  ├────────────┬────────┴───────────────────────────────────────┤ │
 │  │ ACPI       │ PCI bus                                        │ │
 │  │ RSDP·MADT  │ I/O 0xCF8/0xCFC config space                   │ │
@@ -113,8 +111,7 @@ include/vkernel/                — Public kernel headers
     pe.h                        — PE/COFF loader / data structures
     scheduler.h                 — Task scheduler API
     input.h                     — Unified input (PS/2 + serial)
-    fs.h                        — Filesystem facade + loader interfaces
-    fs/fat32.h                  — FAT32 driver interface
+    fs.h                        — Ramfs + UEFI ESP loader
     process.h                   — ELF/PE loader entry point
     process_internal.h          — Shared loader internals
     acpi.h                      — ACPI RSDP/RSDT/XSDT/MADT structures + API
@@ -145,7 +142,7 @@ src/core/
     memory.cpp                  — Heap allocator, physical allocator, memory map
     scheduler.cpp               — Preemptive SMP scheduler, PIC/PIT/LAPIC init
     input.cpp                   — PS/2 keyboard driver + COM1 serial input
-    fs.cpp                      — Filesystem facade and kernel stream table
+    fs.cpp                      — Ramfs + UEFI Simple File System loader
     elf.cpp                     — ELF64 binary loader
     pe.cpp                      — PE/COFF binary loader
     kernel_api.cpp              — vk_api_t table, file streams, compositor
@@ -160,14 +157,9 @@ src/core/
     uefi.cpp                    — UEFI protocol wrappers
 
 src/drivers/
-  ata_pio.cpp                 — Legacy ATA PIO block driver
+    ata_pio.cpp                 — Legacy ATA PIO read-only block driver
     bochs_vbe.cpp               — Bochs VBE display driver
     sound_ac97.cpp              — AC97 audio driver
-
-src/fs/
-  fat32.cpp                   — FAT32 boot filesystem driver
-  ramfs.cpp                   — In-memory flat fallback filesystem
-  uefi_loader.cpp             — UEFI Simple FS fallback loader
 
 src/arch/x86_64/
     arch_init.cpp               — GDT, IDT, TSS, paging, interrupt dispatcher
@@ -207,15 +199,14 @@ userspace/vgui/                 — Dear ImGui window manager (imgui_impl_vk bac
    link-time absolute pointers by adding the load delta (GOT + data pointer
    tables). No `.reloc` fixups are used.
 3. **Phase 1** (boot services active): query memory map, query GOP
-  framebuffer, locate ACPI RSDP via UEFI configuration table, load
-  `\EFI\vkernel\*` files from the ESP into the RAMFS fallback.
+   framebuffer, locate ACPI RSDP via UEFI configuration table, load
+   `\EFI\vkernel\*` files from the ESP into ramfs.
 4. **Phase 2**: `ExitBootServices` — switches console to serial + framebuffer.
 5. **Phase 3**: `arch::activate()` — load GDT/IDT/TSS, harden paging
    (WP + NXE), init kernel heap, init input subsystem.
 6. **Phase 4**: `acpi::init()` → `pci::init()` → `driver::init()` →
-  sound driver probe (AC97) → `block::init()` (ATA PIO probe) →
-  mount FAT32 boot filesystem → `kobj::init()` →
-  `sched::init()` (PIC remap + PIT @ 100 Hz) →
+   sound driver probe (AC97) → `block::init()` (ATA PIO probe) →
+   `kobj::init()` → `sched::init()` (PIC remap + PIT @ 100 Hz) →
    `smp::init()` (INIT-SIPI-SIPI, LAPIC timer per AP) →
    create idle task → launch `shell.vbin` and `vgui.vbin` →
    `sched::start()`. Does not return.
@@ -243,10 +234,9 @@ populated once at boot by `kernel_api.cpp`.
 | Mixer | `vk_snd_mix_play`, `vk_snd_mix_stop`, `vk_snd_mix_is_playing`, `vk_snd_mix_update` (8 channels, formats: U8/S16/S16-stereo) |
 | KObj RPC | `vk_kobj_rpc` — JSON in/out; ops: `ls`, `get`, `set`, `describe` |
 
-FAT32 becomes the default file backend after ATA bring-up, while the UEFI
-loader-populated RAMFS remains available as a read-only fallback. New fields
-may only be appended to the end of `vk_api_t`; `api_version` must be bumped on
-any breaking layout change.
+Ramfs is read-only — `vk_file_write_handle` and `vk_file_remove` are stubbed
+and always return `-1`. New fields may only be appended to the end of
+`vk_api_t`; `api_version` must be bumped on any breaking layout change.
 
 ## SMP
 
@@ -326,12 +316,12 @@ vk> help
 | `mem` | Heap and physical allocator stats |
 | `tasks` | Scheduler task list |
 | `top` | Live CPU usage per task (one-shot) |
-| `ls` | List kobj children |
+| `ls` | List ramfs files |
 | `get <path>` | Read a kobj node value |
 | `set <path> <val>` | Write a writable kobj node |
 | `watch <path>` | Poll a kobj node value |
 | `describe <path>` | Print kobj node metadata |
-| `cat <file>` | Print a file |
+| `cat <file>` | Print a ramfs file |
 | `clear` | Clear the screen |
 | `uptime` | Tick count since scheduler start |
 | `reboot` | Reboot the machine |
@@ -345,13 +335,12 @@ vk> help
 
 ### Userspace Programs
 
-All programs are freestanding ELF64 binaries (`.vbin`) loaded from the boot
-filesystem, with the early RAMFS copy kept as a fallback.
+All programs are freestanding ELF64 binaries (`.vbin`) loaded from ramfs.
 
 | Binary | Description |
 |---|---|
 | `shell.vbin` | Interactive shell (launched automatically at boot) |
-| `hello.vbin` | Runtime info, filesystem test, stdio demo |
+| `hello.vbin` | Runtime info, ramfs test, stdio demo |
 | `framebuffer.vbin` | Direct GOP pixel painting |
 | `framebuffer_text.vbin` | Text rendering into framebuffer |
 | `raytracer.vbin` | Realtime raytraced scene |
@@ -428,7 +417,7 @@ ESP image and launches QEMU.
 ## Running
 
 ```bash
-# Build the GPT/FAT32 boot image and launch QEMU (SDL display + serial stdio)
+# Build disk image and launch QEMU (GTK display + serial stdio)
 ./run_qemu.sh
 
 # Pause at startup for GDB
@@ -438,7 +427,7 @@ gdb build/vkernel.elf -ex 'target remote localhost:1234'
 ```
 
 QEMU is configured with:
-- IDE disk — `build/vkernel_boot.img` with a GPT/FAT32 ESP and `\EFI\BOOT\bootx64.efi`
+- IDE disk — GPT/FAT32 ESP with `\EFI\BOOT\bootx64.efi`
 - OVMF firmware (4 M or 2 M variant, auto-detected)
 - 512 MB RAM
 - VGA + GTK display (keyboard input works)
@@ -446,10 +435,8 @@ QEMU is configured with:
 
 ### ESP data files
 
-Files placed under `\EFI\vkernel\` on the ESP are loaded into the RAMFS
-fallback before `ExitBootServices`. After ATA bring-up, FAT32 on the boot
-volume becomes the default filesystem and those same paths remain readable via
-the shell `cat` command:
+Files placed under `\EFI\vkernel\` on the ESP are loaded into ramfs before
+`ExitBootServices` and can be read via the shell `cat` command:
 
 ```
 \EFI\vkernel\motd.txt
@@ -526,9 +513,8 @@ automatically goes to the right output sink.
 are `interrupts.S` (256 macro-generated ISR stubs + common save/restore path)
 and `ap_trampoline.S` (AP 16-bit startup blob).
 
-**Filesystem routing is layered.** FAT32 is the default backend once block
-devices are online. The UEFI-populated RAMFS stays mounted as a read-only
-fallback so early boot assets remain accessible even if FAT32 is unavailable.
+**Ramfs is read-only.** Stream write, remove, and rename calls in `vk_api_t`
+are stubbed and always return `-1`.
 
 ## C++26 Compiler Requirements
 

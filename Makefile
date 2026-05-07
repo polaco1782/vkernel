@@ -229,6 +229,33 @@ distclean: clean
 	@bash scripts/setup_newlib.sh clean 2>/dev/null || true
 	@rm -rf $(SYSROOT_DIR)
 
+# QEMU test
+qemu: $(BOOT_IMG)
+	@echo "Running in QEMU..."
+	qemu-system-x86_64 \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+		-drive if=ide,format=raw,file=$(BOOT_IMG) \
+		-m 512M \
+		-net none \
+		-serial stdio \
+		-display default,show-cursor=off \
+		-no-reboot \
+		-no-shutdown
+
+# QEMU with debug
+qemu-debug: $(BOOT_IMG)
+	@echo "Running in QEMU with GDB server..."
+	qemu-system-x86_64 \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+		-drive if=ide,format=raw,file=$(BOOT_IMG) \
+		-m 512M \
+		-net none \
+		-serial stdio \
+		-display default,show-cursor=off \
+		-no-reboot \
+		-no-shutdown \
+		-s -S
+
 # Show build info
 info:
 	@echo "Build Configuration:"

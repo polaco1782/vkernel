@@ -1379,9 +1379,15 @@ static auto probe_volume(block_device* device, u64 start_lba, mount_state& state
 
     u8 boot_sector[512];
     if (!read_sectors(state_out, start_lba, 1, boot_sector)) {
+        log::debug() << "fat32: probe failed at start_lba="
+                     << static_cast<unsigned long long>(start_lba)
+                     << " because boot sector read failed";
         return false;
     }
     if (boot_sector[510] != 0x55 || boot_sector[511] != 0xAA) {
+        log::debug() << "fat32: probe failed at start_lba="
+                     << static_cast<unsigned long long>(start_lba)
+                     << " because boot signature is missing";
         return false;
     }
 
@@ -1389,12 +1395,24 @@ static auto probe_volume(block_device* device, u64 start_lba, mount_state& state
     const auto* dos7 = reinterpret_cast<const DOS7BIOSParameterBlock*>(boot_sector + 0x24);
 
     if (common->bytes_per_sector != device->block_size || common->bytes_per_sector != 512) {
+        log::debug() << "fat32: probe failed at start_lba="
+                     << static_cast<unsigned long long>(start_lba)
+                     << " bytes_per_sector=" << static_cast<unsigned long long>(common->bytes_per_sector)
+                     << " device_block_size=" << static_cast<unsigned long long>(device->block_size);
         return false;
     }
     if (common->sectors_per_cluster == 0 || (common->sectors_per_cluster & (common->sectors_per_cluster - 1)) != 0) {
+        log::debug() << "fat32: probe failed at start_lba="
+                     << static_cast<unsigned long long>(start_lba)
+                     << " invalid sectors_per_cluster="
+                     << static_cast<unsigned long long>(common->sectors_per_cluster);
         return false;
     }
     if (common->reserved_sector_count == 0 || common->fat_count == 0) {
+        log::debug() << "fat32: probe failed at start_lba="
+                     << static_cast<unsigned long long>(start_lba)
+                     << " reserved=" << static_cast<unsigned long long>(common->reserved_sector_count)
+                     << " fats=" << static_cast<unsigned long long>(common->fat_count);
         return false;
     }
 
@@ -1425,6 +1443,13 @@ static auto probe_volume(block_device* device, u64 start_lba, mount_state& state
     const u32 data_sectors = total_sectors - non_data_sectors;
     const u32 total_clusters = data_sectors / common->sectors_per_cluster;
     if (total_clusters < FAT32_MIN_CLUSTER_COUNT) {
+        log::debug() << "fat32: probe failed at start_lba="
+                     << static_cast<unsigned long long>(start_lba)
+                     << " cluster_count=" << static_cast<unsigned long long>(total_clusters)
+                     << " minimum=" << static_cast<unsigned long long>(FAT32_MIN_CLUSTER_COUNT)
+                     << " total_sectors=" << static_cast<unsigned long long>(total_sectors)
+                     << " sectors_per_cluster="
+                     << static_cast<unsigned long long>(common->sectors_per_cluster);
         return false;
     }
     if (dos7->signature != 0x28 && dos7->signature != 0x29) {

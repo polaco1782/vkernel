@@ -672,8 +672,6 @@ void kernel_heap::free(void* ptr) {
     }
 
     lock_.acquire();
-
-    log::debug() << "heap: freeing block at " << reinterpret_cast<const void*>(ptr);
     
     /* Find the block header */
     auto block = reinterpret_cast<heap_block*>(

@@ -4,7 +4,7 @@
 #
 # make_disk.sh - Create a bootable UEFI disk image
 #
-# Creates a raw disk image with:
+# Creates a 128 MiB raw disk image with:
 #   - GPT partition table
 #   - EFI System Partition (126 MiB, FAT32)
 #   - EFI/BOOT/bootx64.efi at the default removable-media boot path
@@ -30,10 +30,10 @@ if [ ! -f "${EFI_FILE}" ]; then
     exit 1
 fi
 
-for tool in truncate parted mformat mmd mcopy objcopy; do
+for tool in truncate parted mformat mmd mcopy; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
         echo "Error: '${tool}' not found."
-        echo "Install with: dnf install parted mtools binutils  # or: apt install parted mtools binutils"
+        echo "Install with: dnf install parted mtools  # or: apt install parted mtools"
         exit 1
     fi
 done
@@ -67,26 +67,6 @@ copy_into_esp() {
     mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${src}" "::/EFI/vkernel/${dest_name}"
 }
 
-copy_binary_into_esp() {
-    local src="$1"
-    local dest_name="$2"
-    local stripped_file
-
-    if [ ! -f "${src}" ]; then
-        return 0
-    fi
-
-    stripped_file=$(mktemp)
-    if objcopy --strip-debug "${src}" "${stripped_file}" >/dev/null 2>&1; then
-        copy_into_esp "${stripped_file}" "${dest_name}"
-        rm -f "${stripped_file}"
-        return 0
-    fi
-
-    rm -f "${stripped_file}"
-    copy_into_esp "${src}" "${dest_name}"
-}
-
 rm -f "${OUTPUT}"
 
 echo "  Creating ${DISK_MB} MiB blank disk..."
@@ -111,7 +91,7 @@ mmd -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/vkernel
 manifest_file=$(mktemp)
 while IFS= read -r -d '' vbin; do
     name=$(basename "${vbin}")
-    copy_binary_into_esp "${vbin}" "${name}"
+    copy_into_esp "${vbin}" "${name}"
     printf '%s\n' "${name}" >> "${manifest_file}"
 done < <(find userspace -name "*.vbin" -print0)
 

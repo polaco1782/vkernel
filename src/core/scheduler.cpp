@@ -28,6 +28,7 @@ namespace vk {
 
 static task   g_tasks[MAX_TASKS];
 static usize  g_task_count       = 0;
+static u64    g_next_task_id     = 1;
 static volatile bool g_scheduler_active = false;
 static volatile u64  g_tick_count       = 0;
 static constexpr usize CPU_IDLE_STACK_SIZE = 4096;
@@ -75,6 +76,21 @@ static void sanitize_fxsave_area(u8* area) {
     }
 
     *mxcsr &= valid_mask;
+}
+
+static auto find_available_task_slot() -> usize {
+    for (usize i = 0; i < g_task_count; ++i) {
+        if (g_tasks[i].state == task_state::terminated &&
+            g_tasks[i].current_cpu == SCHED_CPU_NONE) {
+            return i;
+        }
+    }
+
+    if (g_task_count < MAX_TASKS) {
+        return g_task_count;
+    }
+
+    return SCHED_NO_TASK;
 }
 
 /* ============================================================
@@ -398,6 +414,7 @@ auto sched::init() -> status_code {
     for (usize i = 0; i < MAX_APIC_IDS; ++i)
         init_cpu_idle_frame(static_cast<u8>(i));
     g_task_count       = 0;
+    g_next_task_id     = 1;
     g_scheduler_active = false;
     g_tick_count       = 0;
     g_sched_lock.locked = 0;
@@ -415,13 +432,20 @@ auto sched::init() -> status_code {
 
 auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) -> i64 {
     g_sched_lock.acquire();
-    if (g_task_count >= MAX_TASKS) {
+    const usize slot = find_available_task_slot();
+    if (slot >= MAX_TASKS) {
         g_sched_lock.release();
         return -1;
     }
 
-    auto& t = g_tasks[g_task_count];
-    t.id    = g_task_count;
+    auto& t = g_tasks[slot];
+    t.name.clear();
+    if (!t.name.assign(name)) {
+        g_sched_lock.release();
+        return -1;
+    }
+
+    t.id    = g_next_task_id++;
     t.state = task_state::ready;
     t.wake_tick = 0;
     t.entry = entry;
@@ -431,9 +455,8 @@ auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) 
     t.affinity_cpu = SCHED_CPU_NONE;
     t.current_cpu = SCHED_CPU_NONE;
     t.cpu_ticks = 0;
-    if (!t.name.assign(name)) {
-        g_sched_lock.release();
-        return -1;
+    if (slot == g_task_count) {
+        ++g_task_count;
     }
 
     /*
@@ -499,8 +522,7 @@ auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) 
         log::debug() << "Initial frame @" << log::hex(static_cast<u64>(static_cast<unsigned long long>(t.rsp)), 1, true, false) << ": RIP=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[19])), 1, true, false) << " CS=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[20])), 1, true, false) << " RFLAGS=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[21])), 1, true, false) << " entry_rsp=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[22])), 1, true, false) << " RCX=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(frame[16])), 1, true, false);
     }
 
-    i64 id = static_cast<i64>(g_task_count);
-    ++g_task_count;
+    i64 id = static_cast<i64>(t.id);
     g_sched_lock.release();
 
     log::info() << "Task created: " << t.name.c_str() << " (id=" << static_cast<unsigned long long>(id) << ")";

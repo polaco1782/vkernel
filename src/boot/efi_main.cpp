@@ -172,7 +172,7 @@ auto efi_main(
     }
 
     /* Load files from ESP into ramfs (must happen before ExitBootServices) */
-    //loader::load_initrd();
+    loader::load_initrd();
 
     /* Locate ACPI tables via UEFI configuration table while boot services
      * are still active.  The RSDP and all referenced SDTs reside in
