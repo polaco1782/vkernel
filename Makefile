@@ -25,11 +25,12 @@ SHELL_VBIN      := $(USERSPACE_DIR)/shell/shell.vbin
 DOOM_VBIN       := $(USERSPACE_DIR)/doom/doom.vbin
 MODPLAY_VBIN    := $(USERSPACE_DIR)/MODPlay/modplay.vbin
 CLOWNMDEMU_VBIN := $(USERSPACE_DIR)/clownmdemu/clownmdemu.vbin
+MINIMP3_VBIN    := $(USERSPACE_DIR)/minimp3/minimp3.vbin
 ROTOZOOM_VBIN    := $(USERSPACE_DIR)/rotozoom/rotozoom.vbin
 VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
 SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
 CPPCOMPAT_VBIN   := $(USERSPACE_DIR)/cppcompat/cppcompat.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN)
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -183,6 +184,9 @@ $(MODPLAY_VBIN): $(USERSPACE_DIR)/MODPlay/Makefile libc-glue
 $(CLOWNMDEMU_VBIN): $(USERSPACE_DIR)/clownmdemu/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/clownmdemu CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
 
+$(MINIMP3_VBIN): $(USERSPACE_DIR)/minimp3/Makefile libc-glue
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/minimp3 CC=$(CROSS_PREFIX)gcc CXX=$(CROSS_PREFIX)g++ $(_DEBUG_FLAG)
+
 $(ROTOZOOM_VBIN): $(USERSPACE_DIR)/rotozoom/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/rotozoom CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
 
@@ -217,6 +221,7 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/clownmdemu clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/minimp3 clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cpp clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui clean

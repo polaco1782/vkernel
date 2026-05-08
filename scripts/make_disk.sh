@@ -86,6 +86,25 @@ stage_clownmdemu_roms() {
     done
 }
 
+stage_minimp3_tracks() {
+    local track
+    for track in userspace/minimp3/tracks/*; do
+        local base
+        local ext
+
+        [ -f "${track}" ] || continue
+        base=$(basename "${track}")
+        ext="${base##*.}"
+        ext="${ext,,}"
+
+        case "${ext}" in
+            mp3)
+                copy_into_esp "${track}" "${base}"
+                ;;
+        esac
+    done
+}
+
 rm -f "${OUTPUT}"
 
 echo "  Creating ${DISK_MB} MiB blank disk..."
@@ -126,6 +145,7 @@ copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "UNREALPM.S3M"
 copy_into_esp "userspace/rotozoom/head.bmp" "head.bmp"
 copy_into_esp "userspace/quake/pak0.pak" "pak0.pak"
 stage_clownmdemu_roms
+stage_minimp3_tracks
 
 echo "  Done: ${OUTPUT}"
 mdir -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/BOOT 2>/dev/null || true
