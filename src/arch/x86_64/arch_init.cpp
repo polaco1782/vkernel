@@ -405,9 +405,9 @@ static void activate_fpu_state() {
     log::debug() << "FPU: fldcw...";
     asm_fldcw(0x037F);
 
-    if (err != 0) {
+    if (err == 1) {
         log::info() << "FPU: initialized (x87 only)";
-        //return;
+        return;
     }
 
     log::debug() << "FPU: writing CR4 OSFXSR+OSXMMEXCPT...";
@@ -415,6 +415,15 @@ static void activate_fpu_state() {
 
     log::debug() << "FPU: ldmxcsr...";
     asm_ldmxcsr(0x1F80u);
+
+    if (err == 2) {
+        log::info() << "FPU: initialized (x87 + SSE, no XSAVE)";
+        return;
+    }
+    if (err == 3) {
+        log::info() << "FPU: initialized (x87 + SSE, no AVX)";
+        return;
+    }
 
     log::debug() << "FPU: writing CR4 OSXSAVE...";
     {

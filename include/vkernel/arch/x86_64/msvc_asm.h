@@ -31,6 +31,7 @@ void asm_ltr(unsigned short selector);
 void asm_reload_segments(unsigned long long code_sel, unsigned long long data_sel);
 void asm_int_0xff();
 [[noreturn]] void asm_sched_switch_to(unsigned long long rsp);
+int asm_call_process_entry(unsigned long long entry, const void* api);
 
 /* ---- Port I/O ---- */
 unsigned char  asm_inb(unsigned short port);
@@ -86,9 +87,6 @@ unsigned long long asm_get_data_end();
 unsigned long long asm_get_got_start();
 unsigned long long asm_get_got_end();
 unsigned long long asm_get_end();
-
-/* ---- Symbol address helper ---- */
-unsigned long long asm_get_isr_stub_base();
 
 /* ---- FPU / SSE / AVX ---- */
 void asm_fninit();

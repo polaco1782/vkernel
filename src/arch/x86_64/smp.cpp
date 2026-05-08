@@ -181,8 +181,13 @@ static void write_trampoline_gdt() {
  * AP trampoline blob symbols (from ap_trampoline.S)
  * ============================================================ */
 
+#if defined(_MSC_VER)
+extern "C" const u8 g_ap_trampoline_blob[];
+extern "C" const usize g_ap_trampoline_blob_size;
+#else
 extern "C" u8 ap_trampoline_start[];
 extern "C" u8 ap_trampoline_end[];
+#endif
 
 /* ap_entry_64 is defined in gcc_asm.S; it sets up RSP then calls
  * ap_init_secondary().                                              */
@@ -198,8 +203,11 @@ static u8       s_bsp_apic_id = 0;
 
 /* Per-AP kernel stacks */
 static constexpr usize AP_STACK_SIZE = 65536;  /* 64 KB per AP */
-static u8 s_ap_stacks[MAX_CPUS][AP_STACK_SIZE]
-    __attribute__((aligned(16)));
+#if defined(_MSC_VER)
+static __declspec(align(16)) u8 s_ap_stacks[MAX_CPUS][AP_STACK_SIZE];
+#else
+static u8 s_ap_stacks[MAX_CPUS][AP_STACK_SIZE] __attribute__((aligned(16)));
+#endif
 
 /* ============================================================
  * I/O delay used for INIT/SIPI timing
@@ -351,10 +359,16 @@ void init() {
     /* ── Prepare the AP trampoline page ── */
 
     /* Copy the blob to physical 0x8000 */
+    #if defined(_MSC_VER)
+    const u8* trampoline_blob = g_ap_trampoline_blob;
+    const usize blob_size = g_ap_trampoline_blob_size;
+    #else
+    const u8* trampoline_blob = ap_trampoline_start;
     const usize blob_size =
         static_cast<usize>(ap_trampoline_end - ap_trampoline_start);
+    #endif
     memory::copy(phys_ptr<void>(TRAM_PHYS_BASE),
-                        ap_trampoline_start, blob_size);
+                        trampoline_blob, blob_size);
     log::debug() << "SMP: trampoline blob (" << blob_size << " bytes) copied to " << log::hex(static_cast<u64>(static_cast<unsigned long long>(TRAM_PHYS_BASE)), 1, true, false);
 
     /* Write the temporary GDT into the data area */

@@ -392,9 +392,11 @@ static auto pick_next_task(usize cur) -> usize {
 [[maybe_unused]] static void dump_entry_bytes(u64 entry_va, usize count = 32) {
     const u8* bytes = reinterpret_cast<const u8*>(entry_va);
 
-    char bytes_buf[count * 3 + 1];
-    log::hex_bytes(bytes_buf, sizeof(bytes_buf), bytes, count);
-    log::debug() << "Dumping " << count << " bytes at entry point " << log::hex(static_cast<u64>(static_cast<unsigned long long>(entry_va)), 1, true, false) << ": " << bytes_buf;
+    constexpr usize max_dump_bytes = 32;
+    char bytes_buf[max_dump_bytes * 3 + 1];
+    usize dump_count = count <= max_dump_bytes ? count : max_dump_bytes;
+    log::hex_bytes(bytes_buf, sizeof(bytes_buf), bytes, dump_count);
+    log::debug() << "Dumping " << dump_count << " bytes at entry point " << log::hex(static_cast<u64>(static_cast<unsigned long long>(entry_va)), 1, true, false) << ": " << bytes_buf;
 }
 
 /* ============================================================

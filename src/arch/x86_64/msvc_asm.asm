@@ -108,6 +108,21 @@ asm_sched_switch_to PROC
     iretq
 asm_sched_switch_to ENDP
 
+; int asm_call_process_entry(u64 entry, const void* api)
+;   RCX = process entry address
+;   RDX = vk_api_t pointer passed to the process as arg0 (MSVC x64 in RCX)
+asm_call_process_entry PROC
+    push rbp
+    mov  rbp, rsp
+    mov  rax, rcx
+    mov  rcx, rdx
+    and  rsp, -16
+    call rax
+    mov  rsp, rbp
+    pop  rbp
+    ret
+asm_call_process_entry ENDP
+
 ; u64 asm_lea_symbol(void* sym_addr)
 ;   Returns the address passed in RCX (identity, used as a helper).
 ;   For MSVC the linker handles relocations, so we just return the address.
@@ -462,8 +477,10 @@ asm_cpuid ENDP
 
 ; ==============================================================
 ; Missing GCC parity helpers
-; These return linker-defined symbol addresses or provide simple
-; instruction wrappers that exist in the gcc_asm.S implementation.
+; These provide simple instruction wrappers and compatibility
+; stubs for helpers that depend on GNU ld linker-script symbols.
+; Under MSVC/PE, self-relocation is handled by PE base relocations,
+; so the linker-script symbol helpers are intentionally no-ops.
 ; ==============================================================
 
 ; void asm_pause() — PAUSE hint for spin-wait loops
@@ -474,37 +491,37 @@ asm_pause ENDP
 
 ; u64 asm_get_image_base()
 asm_get_image_base PROC
-    lea rax, ImageBase
+    xor eax, eax
     ret
 asm_get_image_base ENDP
 
 ; u64 asm_get_data_start()
 asm_get_data_start PROC
-    lea rax, _data
+    xor eax, eax
     ret
 asm_get_data_start ENDP
 
 ; u64 asm_get_data_end()
 asm_get_data_end PROC
-    lea rax, _edata
+    xor eax, eax
     ret
 asm_get_data_end ENDP
 
 ; u64 asm_get_end()
 asm_get_end PROC
-    lea rax, _end
+    xor eax, eax
     ret
 asm_get_end ENDP
 
 ; u64 asm_get_got_start()
 asm_get_got_start PROC
-    lea rax, _got_start
+    xor eax, eax
     ret
 asm_get_got_start ENDP
 
 ; u64 asm_get_got_end()
 asm_get_got_end PROC
-    lea rax, _got_end
+    xor eax, eax
     ret
 asm_get_got_end ENDP
 
