@@ -22,6 +22,8 @@ constexpr vk_u32 kQueueCapacityFrames = 32768;
 constexpr vk_u32 kQueuePrimeFrames = kPlayBlockFrames * 2;
 constexpr vk_u32 kMaxFrameAudioFrames = 2048;
 constexpr vk_u32 kMaxCatchupFrames = 8;
+constexpr vk_u32 kOutputGainNumerator = 3;
+constexpr vk_u32 kOutputGainDenominator = 2;
 constexpr vk_u32 kMaxLogMessage = 512;
 constexpr vk_u32 kDefaultScreenWidth = VDP_H40_SCREEN_WIDTH_IN_TILES * VDP_TILE_WIDTH;
 constexpr vk_u32 kDefaultScreenHeight = VDP_V28_SCANLINES_IN_TILES * VDP_STANDARD_TILE_HEIGHT;
@@ -108,6 +110,7 @@ struct AppState {
     bool buttons[CLOWNMDEMU_BUTTON_MAX];
     bool quit_requested;
     bool reset_requested;
+    bool loadrom_requested;
     FILE* save_file;
     ClownMDEmu_TVStandard tv_standard;
     ClownMDEmu_Region region;
@@ -485,8 +488,13 @@ static void audio_commit_frame(AppState* app) {
         max_u32(app->audio.fm.frame_cursor, app->audio.psg.frame_cursor));
 
     for (vk_u32 frame = 0; frame < source_frames; ++frame) {
-        const int16_t left = static_cast<int16_t>(clamp_i16_range(app->audio.frame_mix[frame * 2]));
-        const int16_t right = static_cast<int16_t>(clamp_i16_range(app->audio.frame_mix[frame * 2 + 1]));
+        const int32_t mixed_left = static_cast<int32_t>((static_cast<int64_t>(app->audio.frame_mix[frame * 2])
+            * static_cast<int64_t>(kOutputGainNumerator)) / static_cast<int64_t>(kOutputGainDenominator));
+        const int32_t mixed_right = static_cast<int32_t>((static_cast<int64_t>(app->audio.frame_mix[frame * 2 + 1])
+            * static_cast<int64_t>(kOutputGainNumerator)) / static_cast<int64_t>(kOutputGainDenominator));
+
+        const int16_t left = static_cast<int16_t>(clamp_i16_range(mixed_left));
+        const int16_t right = static_cast<int16_t>(clamp_i16_range(mixed_right));
         audio_queue_push(app, left, right);
     }
 }
@@ -1412,6 +1420,10 @@ static void pump_input(AppState* app) {
                 if (pressed)
                     app->reset_requested = true;
                 break;
+            case 0x0E:
+                if (pressed)
+                    app->loadrom_requested = true;
+                break;
             case 0xC8:
             case 0x48:
                 app->buttons[CLOWNMDEMU_BUTTON_UP] = pressed;
@@ -1449,9 +1461,9 @@ static void pump_input(AppState* app) {
             case 0x1C:
                 app->buttons[CLOWNMDEMU_BUTTON_START] = pressed;
                 break;
-            case 0x0E:
-                app->buttons[CLOWNMDEMU_BUTTON_MODE] = pressed;
-                break;
+            //case 0x0F:
+            //    app->buttons[CLOWNMDEMU_BUTTON_MODE] = pressed;
+            //    break;
             default:
                 break;
         }
@@ -1532,10 +1544,20 @@ int main(int argc, char** argv) {
     while (!app->quit_requested) {
         pump_input(app);
 
+        // tab for reset, shift+tab for load ROM, escape for quit
         if (app->reset_requested) {
             app->reset_requested = false;
             reset_emulator(app);
             schedule_next_frame(app);
+            continue;
+        }
+
+        if (app->loadrom_requested) {
+            app->loadrom_requested = false;
+            if (browse_and_load_rom(app)) {
+                reset_emulator(app);
+                schedule_next_frame(app);
+            }
             continue;
         }
 
