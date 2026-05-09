@@ -276,6 +276,31 @@ inline auto imgui_input_text_multiline(const char* label,
                                      &callback_data);
 }
 
+inline auto imgui_title_should_use_light_text() -> bool
+{
+    const ImVec4& title_bg = ImGui::GetStyle().Colors[ImGuiCol_TitleBgActive];
+    const float luminance = (title_bg.x * 0.2126f) + (title_bg.y * 0.7152f) + (title_bg.z * 0.0722f);
+    return luminance < 0.45f;
+}
+
+inline auto imgui_begin_window_readable_caption(const char* name,
+                                                bool* p_open = nullptr,
+                                                ImGuiWindowFlags flags = 0) -> bool
+{
+    const bool use_light_title = imgui_title_should_use_light_text();
+    if (use_light_title) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    }
+
+    const bool open = ImGui::Begin(name, p_open, flags);
+
+    if (use_light_title) {
+        ImGui::PopStyleColor();
+    }
+
+    return open;
+}
+
 } // namespace vgui
 
 #endif // VGUI_COMMON_H

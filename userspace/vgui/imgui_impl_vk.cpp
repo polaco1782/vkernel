@@ -64,9 +64,18 @@ static void  vk_imgui_free (void*  p,  void*) { free(p); }
  * blending against the back-buffer (translucent windows / fades).
  * When false, all pixels are written opaque (fastest path). */
 static bool g_blend_enabled = false;
+static unsigned int g_clear_r = 22;
+static unsigned int g_clear_g = 22;
+static unsigned int g_clear_b = 30;
 
 void ImGui_ImplVK_SetTransparencyEnabled(bool enabled) { g_blend_enabled = enabled; }
 bool ImGui_ImplVK_GetTransparencyEnabled()             { return g_blend_enabled; }
+void ImGui_ImplVK_SetClearColor(unsigned int r, unsigned int g, unsigned int b)
+{
+    g_clear_r = r > 255u ? 255u : r;
+    g_clear_g = g > 255u ? 255u : g;
+    g_clear_b = b > 255u ? 255u : b;
+}
 
 static void framebuffer_image_callback(const ImDrawList*, const ImDrawCmd*) {}
 
@@ -995,7 +1004,7 @@ void ImGui_ImplVK_RenderDrawData(ImDrawData* draw_data,
 
     /* --- Clear back-buffer to dark background --- */
     {
-        unsigned int bg = pack_px(22, 22, 30, fmt);
+        unsigned int bg = pack_px(g_clear_r, g_clear_g, g_clear_b, fmt);
         if (S == W) {
             /* Flat single pass; compiler will auto-vectorize (SSE/AVX). */
             unsigned int* p   = pixels;

@@ -85,3 +85,6 @@ void ImGui_ImplVK_AddFramebufferImage(ImDrawList* draw_list,
  */
 void ImGui_ImplVK_SetTransparencyEnabled(bool enabled);
 bool ImGui_ImplVK_GetTransparencyEnabled();
+
+/* Set the renderer clear color (RGB8) used for the desktop/background. */
+void ImGui_ImplVK_SetClearColor(unsigned int r, unsigned int g, unsigned int b);

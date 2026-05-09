@@ -367,7 +367,7 @@ void VkfmPanel::draw_window(bool& visible, WindowManager& window_manager, Consol
     ImGui::SetNextWindowPos(ImVec2(350.0f, 30.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(500.0f, 700.0f), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("vkfm", &visible)) {
+    if (!imgui_begin_window_readable_caption("vkfm", &visible)) {
         ImGui::End();
         return;
     }

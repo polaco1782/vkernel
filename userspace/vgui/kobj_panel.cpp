@@ -224,7 +224,7 @@ void KobjNavigator::draw_window(bool& visible, WindowManager& window_manager)
     ImGui::SetNextWindowPos(ImVec2(860.0f, 470.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(470.0f, 260.0f), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("KObj Navigator", &visible)) {
+    if (!imgui_begin_window_readable_caption("KObj Navigator", &visible)) {
         ImGui::End();
         return;
     }

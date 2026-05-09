@@ -261,7 +261,7 @@ void WindowManager::draw_windows()
             app.focus_next = false;
         }
 
-        const bool draw_contents = ImGui::Begin(app.title.c_str(), &app.open);
+        const bool draw_contents = imgui_begin_window_readable_caption(app.title.c_str(), &app.open);
         if (draw_contents) {
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
                 focused_app_ = index;

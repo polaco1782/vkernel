@@ -47,7 +47,7 @@ void ConsoleLog::draw_window(bool& visible, WindowManager& window_manager)
     ImGui::SetNextWindowPos(ImVec2(10.0f, 330.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(500.0f, 200.0f), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("Console", &visible)) {
+    if (!imgui_begin_window_readable_caption("Console", &visible)) {
         ImGui::End();
         return;
     }

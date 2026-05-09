@@ -11,6 +11,166 @@
 
 namespace vgui {
 
+namespace {
+
+void apply_scheme_ocean()
+{
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.08f, 0.12f, colors[ImGuiCol_WindowBg].w);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.04f, 0.07f, 0.10f, colors[ImGuiCol_ChildBg].w);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.06f, 0.09f, 0.14f, colors[ImGuiCol_PopupBg].w);
+    colors[ImGuiCol_TitleBg] = ImVec4(0.03f, 0.20f, 0.26f, colors[ImGuiCol_TitleBg].w);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.04f, 0.28f, 0.35f, colors[ImGuiCol_TitleBgActive].w);
+    colors[ImGuiCol_Header] = ImVec4(0.08f, 0.33f, 0.46f, colors[ImGuiCol_Header].w);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.12f, 0.41f, 0.56f, colors[ImGuiCol_HeaderHovered].w);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.14f, 0.46f, 0.62f, colors[ImGuiCol_HeaderActive].w);
+    colors[ImGuiCol_Button] = ImVec4(0.07f, 0.36f, 0.50f, colors[ImGuiCol_Button].w);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.11f, 0.45f, 0.61f, colors[ImGuiCol_ButtonHovered].w);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.14f, 0.50f, 0.68f, colors[ImGuiCol_ButtonActive].w);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.08f, 0.15f, 0.22f, colors[ImGuiCol_FrameBg].w);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.12f, 0.23f, 0.32f, colors[ImGuiCol_FrameBgHovered].w);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.13f, 0.27f, 0.38f, colors[ImGuiCol_FrameBgActive].w);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.24f, 0.64f, 0.82f, colors[ImGuiCol_SliderGrab].w);
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.30f, 0.74f, 0.92f, colors[ImGuiCol_SliderGrabActive].w);
+    colors[ImGuiCol_CheckMark] = ImVec4(0.36f, 0.80f, 0.94f, colors[ImGuiCol_CheckMark].w);
+    colors[ImGuiCol_Separator] = ImVec4(0.18f, 0.34f, 0.44f, colors[ImGuiCol_Separator].w);
+    colors[ImGuiCol_ResizeGrip] = ImVec4(0.22f, 0.56f, 0.72f, colors[ImGuiCol_ResizeGrip].w);
+    colors[ImGuiCol_Tab] = ImVec4(0.07f, 0.24f, 0.34f, colors[ImGuiCol_Tab].w);
+    colors[ImGuiCol_TabActive] = ImVec4(0.10f, 0.35f, 0.49f, colors[ImGuiCol_TabActive].w);
+}
+
+void apply_scheme_forest()
+{
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    colors[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.10f, 0.08f, colors[ImGuiCol_WindowBg].w);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.05f, 0.08f, 0.06f, colors[ImGuiCol_ChildBg].w);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.12f, 0.09f, colors[ImGuiCol_PopupBg].w);
+    colors[ImGuiCol_TitleBg] = ImVec4(0.12f, 0.22f, 0.15f, colors[ImGuiCol_TitleBg].w);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.15f, 0.30f, 0.19f, colors[ImGuiCol_TitleBgActive].w);
+    colors[ImGuiCol_Header] = ImVec4(0.17f, 0.32f, 0.20f, colors[ImGuiCol_Header].w);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.22f, 0.40f, 0.25f, colors[ImGuiCol_HeaderHovered].w);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.25f, 0.45f, 0.27f, colors[ImGuiCol_HeaderActive].w);
+    colors[ImGuiCol_Button] = ImVec4(0.16f, 0.36f, 0.22f, colors[ImGuiCol_Button].w);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.22f, 0.45f, 0.27f, colors[ImGuiCol_ButtonHovered].w);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.26f, 0.52f, 0.31f, colors[ImGuiCol_ButtonActive].w);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.11f, 0.17f, 0.12f, colors[ImGuiCol_FrameBg].w);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.16f, 0.25f, 0.17f, colors[ImGuiCol_FrameBgHovered].w);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.19f, 0.29f, 0.20f, colors[ImGuiCol_FrameBgActive].w);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.45f, 0.71f, 0.35f, colors[ImGuiCol_SliderGrab].w);
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.55f, 0.80f, 0.44f, colors[ImGuiCol_SliderGrabActive].w);
+    colors[ImGuiCol_CheckMark] = ImVec4(0.63f, 0.86f, 0.45f, colors[ImGuiCol_CheckMark].w);
+    colors[ImGuiCol_Separator] = ImVec4(0.24f, 0.35f, 0.25f, colors[ImGuiCol_Separator].w);
+    colors[ImGuiCol_ResizeGrip] = ImVec4(0.33f, 0.55f, 0.36f, colors[ImGuiCol_ResizeGrip].w);
+    colors[ImGuiCol_Tab] = ImVec4(0.12f, 0.21f, 0.14f, colors[ImGuiCol_Tab].w);
+    colors[ImGuiCol_TabActive] = ImVec4(0.21f, 0.36f, 0.24f, colors[ImGuiCol_TabActive].w);
+}
+
+void apply_scheme_sunset()
+{
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    colors[ImGuiCol_WindowBg] = ImVec4(0.14f, 0.09f, 0.10f, colors[ImGuiCol_WindowBg].w);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.12f, 0.07f, 0.08f, colors[ImGuiCol_ChildBg].w);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.16f, 0.10f, 0.11f, colors[ImGuiCol_PopupBg].w);
+    colors[ImGuiCol_TitleBg] = ImVec4(0.31f, 0.15f, 0.12f, colors[ImGuiCol_TitleBg].w);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.40f, 0.20f, 0.16f, colors[ImGuiCol_TitleBgActive].w);
+    colors[ImGuiCol_Header] = ImVec4(0.45f, 0.24f, 0.17f, colors[ImGuiCol_Header].w);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.53f, 0.30f, 0.20f, colors[ImGuiCol_HeaderHovered].w);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.59f, 0.35f, 0.22f, colors[ImGuiCol_HeaderActive].w);
+    colors[ImGuiCol_Button] = ImVec4(0.47f, 0.24f, 0.15f, colors[ImGuiCol_Button].w);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.56f, 0.30f, 0.18f, colors[ImGuiCol_ButtonHovered].w);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.64f, 0.35f, 0.20f, colors[ImGuiCol_ButtonActive].w);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.12f, 0.11f, colors[ImGuiCol_FrameBg].w);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.29f, 0.17f, 0.14f, colors[ImGuiCol_FrameBgHovered].w);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.35f, 0.20f, 0.16f, colors[ImGuiCol_FrameBgActive].w);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.88f, 0.52f, 0.23f, colors[ImGuiCol_SliderGrab].w);
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.97f, 0.61f, 0.28f, colors[ImGuiCol_SliderGrabActive].w);
+    colors[ImGuiCol_CheckMark] = ImVec4(0.99f, 0.73f, 0.35f, colors[ImGuiCol_CheckMark].w);
+    colors[ImGuiCol_Separator] = ImVec4(0.41f, 0.24f, 0.17f, colors[ImGuiCol_Separator].w);
+    colors[ImGuiCol_ResizeGrip] = ImVec4(0.67f, 0.37f, 0.21f, colors[ImGuiCol_ResizeGrip].w);
+    colors[ImGuiCol_Tab] = ImVec4(0.24f, 0.13f, 0.11f, colors[ImGuiCol_Tab].w);
+    colors[ImGuiCol_TabActive] = ImVec4(0.40f, 0.22f, 0.15f, colors[ImGuiCol_TabActive].w);
+}
+
+void apply_scheme_win9x()
+{
+    ImGui::StyleColorsClassic();
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    const auto win9x_rgb = [](int r, int g, int b, float a) {
+        /* Our software path currently interprets ImGui vertex channels as BGR. */
+        return ImVec4((float)b / 255.0f, (float)g / 255.0f, (float)r / 255.0f, a);
+    };
+
+    colors[ImGuiCol_Text] = win9x_rgb(0, 0, 0, colors[ImGuiCol_Text].w);
+    colors[ImGuiCol_TextDisabled] = win9x_rgb(90, 90, 90, colors[ImGuiCol_TextDisabled].w);
+
+    /* Windows and controls stay classic gray (#C0C0C0). */
+    colors[ImGuiCol_WindowBg] = win9x_rgb(192, 192, 192, colors[ImGuiCol_WindowBg].w);
+    colors[ImGuiCol_ChildBg] = win9x_rgb(192, 192, 192, colors[ImGuiCol_ChildBg].w);
+    colors[ImGuiCol_PopupBg] = win9x_rgb(192, 192, 192, colors[ImGuiCol_PopupBg].w);
+
+    /* 3D cue: white highlight and dark gray shadow. */
+    colors[ImGuiCol_Border] = win9x_rgb(79, 79, 79, colors[ImGuiCol_Border].w);
+    colors[ImGuiCol_BorderShadow] = win9x_rgb(255, 255, 255, colors[ImGuiCol_BorderShadow].w);
+
+    colors[ImGuiCol_FrameBg] = win9x_rgb(192, 192, 192, colors[ImGuiCol_FrameBg].w);
+    colors[ImGuiCol_FrameBgHovered] = win9x_rgb(220, 220, 220, colors[ImGuiCol_FrameBgHovered].w);
+    colors[ImGuiCol_FrameBgActive] = win9x_rgb(168, 168, 168, colors[ImGuiCol_FrameBgActive].w);
+
+    colors[ImGuiCol_TitleBg] = win9x_rgb(64, 64, 160, colors[ImGuiCol_TitleBg].w);
+    colors[ImGuiCol_TitleBgActive] = win9x_rgb(0, 0, 128, colors[ImGuiCol_TitleBgActive].w);
+    colors[ImGuiCol_MenuBarBg] = win9x_rgb(192, 192, 192, colors[ImGuiCol_MenuBarBg].w);
+
+    colors[ImGuiCol_ScrollbarBg] = win9x_rgb(192, 192, 192, colors[ImGuiCol_ScrollbarBg].w);
+    colors[ImGuiCol_ScrollbarGrab] = win9x_rgb(174, 174, 174, colors[ImGuiCol_ScrollbarGrab].w);
+    colors[ImGuiCol_ScrollbarGrabHovered] = win9x_rgb(148, 148, 148, colors[ImGuiCol_ScrollbarGrabHovered].w);
+    colors[ImGuiCol_ScrollbarGrabActive] = win9x_rgb(115, 115, 115, colors[ImGuiCol_ScrollbarGrabActive].w);
+
+    colors[ImGuiCol_CheckMark] = win9x_rgb(0, 0, 0, colors[ImGuiCol_CheckMark].w);
+    colors[ImGuiCol_SliderGrab] = win9x_rgb(160, 160, 160, colors[ImGuiCol_SliderGrab].w);
+    colors[ImGuiCol_SliderGrabActive] = win9x_rgb(115, 115, 115, colors[ImGuiCol_SliderGrabActive].w);
+
+    colors[ImGuiCol_Button] = win9x_rgb(192, 192, 192, colors[ImGuiCol_Button].w);
+    colors[ImGuiCol_ButtonHovered] = win9x_rgb(220, 220, 220, colors[ImGuiCol_ButtonHovered].w);
+    colors[ImGuiCol_ButtonActive] = win9x_rgb(168, 168, 168, colors[ImGuiCol_ButtonActive].w);
+
+    colors[ImGuiCol_Header] = win9x_rgb(198, 210, 234, colors[ImGuiCol_Header].w);
+    colors[ImGuiCol_HeaderHovered] = win9x_rgb(172, 194, 230, colors[ImGuiCol_HeaderHovered].w);
+    colors[ImGuiCol_HeaderActive] = win9x_rgb(142, 173, 223, colors[ImGuiCol_HeaderActive].w);
+    colors[ImGuiCol_Separator] = win9x_rgb(96, 96, 96, colors[ImGuiCol_Separator].w);
+    colors[ImGuiCol_ResizeGrip] = win9x_rgb(160, 160, 160, colors[ImGuiCol_ResizeGrip].w);
+    colors[ImGuiCol_ResizeGripHovered] = win9x_rgb(128, 128, 128, colors[ImGuiCol_ResizeGripHovered].w);
+    colors[ImGuiCol_ResizeGripActive] = win9x_rgb(90, 90, 90, colors[ImGuiCol_ResizeGripActive].w);
+    colors[ImGuiCol_Tab] = win9x_rgb(192, 192, 192, colors[ImGuiCol_Tab].w);
+    colors[ImGuiCol_TabHovered] = win9x_rgb(220, 220, 220, colors[ImGuiCol_TabHovered].w);
+    colors[ImGuiCol_TabActive] = win9x_rgb(168, 168, 168, colors[ImGuiCol_TabActive].w);
+
+    style.WindowRounding = 0.0f;
+    style.ChildRounding = 0.0f;
+    style.FrameRounding = 0.0f;
+    style.PopupRounding = 0.0f;
+    style.ScrollbarRounding = 0.0f;
+    style.GrabRounding = 0.0f;
+    style.TabRounding = 0.0f;
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+    style.TabBorderSize = 1.0f;
+    style.FramePadding = ImVec2(5.0f, 3.0f);
+}
+
+}
+
 void ShellUi::initialize(const vk_framebuffer_info_t& framebuffer)
 {
     default_app_width_ = framebuffer.width / 2;
@@ -45,12 +205,29 @@ void ShellUi::reset_counter(ConsoleLog* log, vk::string_view message)
 
 void ShellUi::apply_style()
 {
+    /* Default desktop clear used by non-Win9x themes. */
+    ImGui_ImplVK_SetClearColor(22, 22, 30);
+
     switch (style_index_) {
     case 1:
         ImGui::StyleColorsLight();
         break;
     case 2:
         ImGui::StyleColorsClassic();
+        break;
+    case 3:
+        apply_scheme_ocean();
+        break;
+    case 4:
+        apply_scheme_forest();
+        break;
+    case 5:
+        apply_scheme_sunset();
+        break;
+    case 6:
+        apply_scheme_win9x();
+        /* #018281 desktop, pre-swizzled for current BGR vertex path. */
+        ImGui_ImplVK_SetClearColor(129, 130, 1);
         break;
     default:
         ImGui::StyleColorsDark();
@@ -165,7 +342,7 @@ void ShellUi::draw_info_window(const vk_framebuffer_info_t& framebuffer,
     ImGui::SetNextWindowPos(ImVec2(10.0f, 30.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(330.0f, 290.0f), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("Info Panel", &show_info_)) {
+    if (!imgui_begin_window_readable_caption("Info Panel", &show_info_)) {
         ImGui::End();
         return;
     }
@@ -244,7 +421,7 @@ void ShellUi::draw_settings_window(WindowManager& window_manager, ConsoleLog& lo
     ImGui::SetNextWindowPos(ImVec2(200.0f, 150.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(270.0f, 170.0f), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("Settings", &show_settings_, ImGuiWindowFlags_NoResize)) {
+    if (!imgui_begin_window_readable_caption("Settings", &show_settings_, ImGuiWindowFlags_NoResize)) {
         ImGui::End();
         return;
     }
@@ -252,8 +429,9 @@ void ShellUi::draw_settings_window(WindowManager& window_manager, ConsoleLog& lo
 
     ImGui::SeparatorText("Appearance");
 
-    const char* style_names[] = { "Dark", "Light", "Classic" };
-    if (ImGui::Combo("Color scheme", &style_index_, style_names, 3)) {
+    const char* style_names[] = { "Dark", "Light", "Classic", "Ocean", "Forest", "Sunset", "Win9x" };
+    const int style_name_count = static_cast<int>(sizeof(style_names) / sizeof(style_names[0]));
+    if (ImGui::Combo("Color scheme", &style_index_, style_names, style_name_count)) {
         apply_style();
         log.addf("Style changed to %s.", style_names[style_index_]);
     }

@@ -199,7 +199,7 @@ void TaskManagerPanel::draw_window(bool& visible, WindowManager& window_manager)
     ImGui::SetNextWindowPos(ImVec2(860.0f, 30.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(470.0f, 420.0f), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("Task Manager", &visible)) {
+    if (!imgui_begin_window_readable_caption("Task Manager", &visible)) {
         ImGui::End();
         return;
     }
