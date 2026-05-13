@@ -16,6 +16,7 @@
 #include "log.h"
 #include "elf.h"
 #include "resource_ptr.h"
+#include "virtual_memory.h"
 
 namespace vk {
 namespace elf {
@@ -41,13 +42,18 @@ static bool range_ok(usize file_size, u64 offset, u64 len) {
  * load()
  * ============================================================ */
 
-auto load(const u8* file_data, usize file_size) -> load_result {
+static auto load_impl(const u8* file_data,
+                      usize file_size,
+                      vm::address_space* as,
+                      virt_addr preferred_base) -> load_result {
     load_result result{};
     result.error          = elf_error::ok;
     result.entry          = 0;
     result.image_base     = null;
     result.image_size     = 0;
     result.image_from_phys = false;
+    result.image_phys     = 0;
+    result.image_vm_mapped = false;
 
     /* ---- 1. Basic size check ---- */
     if (file_size < sizeof(Elf64_Ehdr)) {
@@ -142,16 +148,46 @@ auto load(const u8* file_data, usize file_size) -> load_result {
      * would map these at their requested virtual addresses via paging.
      */
     u64 image_size = align_up(vaddr_max - vaddr_min, 4096ULL);
-    kernel_allocation_ptr<u8> image_base(
-        static_cast<u8*>(g_kernel_heap.allocate_zero_aligned(image_size, max_align)),
-        kernel_allocation_deleter {
-            .size = static_cast<usize>(image_size),
-            .from_phys = false,
-        });
+    kernel_allocation_ptr<u8> image_owner;
+    u8* image_runtime_base = null;
+    u8* image_write_base = null;
+    phys_addr image_phys = 0;
+    bool image_vm_mapped = false;
+
+    const virt_addr vm_image_base = align_up(preferred_base, max_align);
+    if (as != null) {
+        if (!vm::allocate_user_pages(as,
+                                     vm_image_base,
+                                     static_cast<usize>(image_size),
+                                     vm::MAP_WRITABLE | vm::MAP_USER | vm::MAP_EXECUTABLE,
+                                     &image_phys)) {
+            log::error() << "elf: virtual image allocation failed";
+            result.error = elf_error::no_memory;
+            return result;
+        }
+
+        image_runtime_base = reinterpret_cast<u8*>(static_cast<usize>(vm_image_base));
+        image_write_base = reinterpret_cast<u8*>(static_cast<usize>(image_phys));
+        image_vm_mapped = true;
+    } else {
+        image_owner = kernel_allocation_ptr<u8>(
+            static_cast<u8*>(g_kernel_heap.allocate_zero_aligned(image_size, max_align)),
+            kernel_allocation_deleter {
+                .size = static_cast<usize>(image_size),
+                .from_phys = false,
+            });
+        image_runtime_base = image_owner.get();
+        image_write_base = image_owner.get();
+    }
 
     log::debug() << "elf: vaddr range " << log::hex(static_cast<u64>(static_cast<unsigned long long>(vaddr_min)), 1, true, false) << " - " << log::hex(static_cast<u64>(static_cast<unsigned long long>(vaddr_max)), 1, true, false) << " (size " << static_cast<unsigned long long>(image_size) << " bytes)";
 
-    if (!image_base) {
+    if (image_write_base == null) {
+        if (as != null) {
+            result.error = elf_error::no_memory;
+            return result;
+        }
+
         /* Heap too small — fall back to the physical allocator.  The
          * physical allocator works in pages; cast the phys_addr to a
          * pointer (valid because the kernel runs identity-mapped). */
@@ -171,21 +207,30 @@ auto load(const u8* file_data, usize file_size) -> load_result {
             result.error = elf_error::no_memory;
             return result;
         }
-        image_base.reset(reinterpret_cast<u8*>(phys));
-        image_base = kernel_allocation_ptr<u8>(
-            image_base.release(),
+        image_owner.reset(reinterpret_cast<u8*>(phys));
+        image_owner = kernel_allocation_ptr<u8>(
+            image_owner.release(),
             kernel_allocation_deleter {
                 .size = static_cast<usize>(image_size),
                 .from_phys = true,
             });
         /* Physical pages are not guaranteed to be zeroed — clear them now. */
-        memory::set(image_base.get(), 0, image_size);
+        memory::set(image_owner.get(), 0, image_size);
+        image_runtime_base = image_owner.get();
+        image_write_base = image_owner.get();
         result.image_from_phys = true;
     }
 
-    /* load_bias: value to add to a vaddr to get the host pointer */
+    /*
+     * load_bias produces values that the process will observe at runtime.
+     * write_bias points at the kernel-accessible backing memory being filled.
+     * Keeping them separate is important for VM-backed processes: relocation
+     * slots must contain virtual addresses, not the physical staging buffer.
+     */
     i64 load_bias = static_cast<i64>(
-        reinterpret_cast<u64>(image_base.get())) - static_cast<i64>(vaddr_min);
+        reinterpret_cast<u64>(image_runtime_base)) - static_cast<i64>(vaddr_min);
+    i64 write_bias = static_cast<i64>(
+        reinterpret_cast<u64>(image_write_base)) - static_cast<i64>(vaddr_min);
 
     /* ---- 8. Copy PT_LOAD segments ---- */
     for (u16 i = 0; i < ehdr->e_phnum; ++i) {
@@ -193,7 +238,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
         if (ph.p_type != PT_LOAD) continue;
 
         u8* dest = reinterpret_cast<u8*>(
-            static_cast<i64>(ph.p_vaddr) + load_bias);
+            static_cast<i64>(ph.p_vaddr) + write_bias);
 
         /* Copy file image */
         if (ph.p_filesz > 0) {
@@ -224,7 +269,7 @@ auto load(const u8* file_data, usize file_size) -> load_result {
             if (ph.p_type != PT_DYNAMIC) continue;
 
             const auto* dyn = reinterpret_cast<const Elf64_Dyn*>(
-                reinterpret_cast<u8*>(static_cast<i64>(ph.p_vaddr) + load_bias));
+                reinterpret_cast<u8*>(static_cast<i64>(ph.p_vaddr) + write_bias));
 
             for (; dyn->d_tag != DT_NULL; ++dyn) {
                 if      (dyn->d_tag == DT_RELA)   rela_vaddr = dyn->d_val;
@@ -235,13 +280,13 @@ auto load(const u8* file_data, usize file_size) -> load_result {
 
         if (rela_vaddr != 0 && rela_size >= sizeof(Elf64_Rela)) {
             const auto* rela = reinterpret_cast<const Elf64_Rela*>(
-                reinterpret_cast<u8*>(static_cast<i64>(rela_vaddr) + load_bias));
+                reinterpret_cast<u8*>(static_cast<i64>(rela_vaddr) + write_bias));
             const usize count = rela_size / sizeof(Elf64_Rela);
 
             for (usize i = 0; i < count; ++i) {
                 if (elf64_r_type(rela[i].r_info) != R_X86_64_RELATIVE) continue;
                 auto* loc = reinterpret_cast<u64*>(
-                    static_cast<i64>(rela[i].r_offset) + load_bias);
+                    static_cast<i64>(rela[i].r_offset) + write_bias);
                 *loc = static_cast<u64>(load_bias + rela[i].r_addend);
             }
         }
@@ -250,13 +295,30 @@ auto load(const u8* file_data, usize file_size) -> load_result {
     /* ---- 10. Resolve entry point ---- */
     result.entry = static_cast<u64>(
         static_cast<i64>(ehdr->e_entry) + load_bias);
-    result.image_base = image_base.release();
+    result.image_base = image_vm_mapped ? image_runtime_base : image_owner.release();
     result.image_size = image_size;
+    result.image_phys = image_phys;
+    result.image_vm_mapped = image_vm_mapped;
     result.error      = elf_error::ok;
 
-    log::debug() << "elf: loaded image_base=" << reinterpret_cast<const void*>(result.image_base) << " size=" << static_cast<unsigned long long>(image_size) << " entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(result.entry)), 1, true, false);
+    log::debug() << "elf: loaded image_base=" << reinterpret_cast<const void*>(result.image_base)
+                 << " image_phys=" << reinterpret_cast<const void*>(static_cast<usize>(result.image_phys))
+                 << " vm_mapped=" << (result.image_vm_mapped ? "yes" : "no")
+                 << " size=" << static_cast<unsigned long long>(image_size)
+                 << " entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(result.entry)), 1, true, false);
 
     return result;
+}
+
+auto load(const u8* file_data, usize file_size) -> load_result {
+    return load_impl(file_data, file_size, null, 0);
+}
+
+auto load_into_address_space(const u8* file_data,
+                             usize file_size,
+                             vm::address_space* as,
+                             virt_addr preferred_base) -> load_result {
+    return load_impl(file_data, file_size, as, preferred_base);
 }
 
 /* ============================================================

@@ -14,6 +14,9 @@
 #include "types.h"
 
 namespace vk {
+namespace vm {
+struct address_space;
+}
 namespace elf {
 
 /* ============================================================
@@ -141,6 +144,8 @@ struct load_result {
     u8*         image_base;    /* Pointer to allocated image */
     u64         image_size;    /* Total size of allocated region */
     bool        image_from_phys; /* true = allocated via g_phys_alloc (free with free_pages) */
+    phys_addr   image_phys;    /* Physical backing when image_vm_mapped is true */
+    bool        image_vm_mapped;
 };
 
 /* ============================================================
@@ -160,6 +165,10 @@ struct load_result {
  * the address to jump to.
  */
 auto load(const u8* file_data, usize file_size) -> load_result;
+auto load_into_address_space(const u8* file_data,
+                             usize file_size,
+                             vm::address_space* as,
+                             virt_addr preferred_base) -> load_result;
 
 /* Human-readable error string */
 auto error_string(elf_error err) -> const char*;

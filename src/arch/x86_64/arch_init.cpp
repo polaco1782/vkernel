@@ -700,13 +700,18 @@ void activate() {
  *
  * Each CPU loads its own GDT/TSS pair.  The TSS is required for any
  * interrupt or exception that enters the kernel from ring 3 on this AP.
+ * 
+ * EFER.NXE is per-CPU; APs must enable it before running address spaces
+ * that use XD/NX PTEs for non-executable process heap pages.
  */
-void ap_activate() {
+
+ void ap_activate() {
     load_gdt();
     reload_kernel_segments();
     activate_idt();
     activate_tss();
     activate_fpu_state();
+    init_paging();
 }
 
 } // namespace arch

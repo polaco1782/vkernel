@@ -16,6 +16,7 @@
 #include "input.h"
 #include "panic.h"
 #include "process.h"
+#include "virtual_memory.h"
 #include "arch/x86_64/arch.h"
 #include "driver.h"
 #include "pci.h"
@@ -236,6 +237,7 @@ auto efi_main(
     if (auto status = memory::init(span(s_map, map_count)); status != status_code::success) {
         vk_panic(__FILE__, __LINE__, "Memory subsystem initialization failed");
     }
+    vm::init();
 
     log::info() << "Kernel initialization complete";
 

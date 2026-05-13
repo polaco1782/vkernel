@@ -139,7 +139,7 @@ static auto level_color(level lvl) -> console_color {
 }
 
 /* Current log routing destination — modified via kobj at sys/log/route. */
-static volatile u32 s_log_route = 0;  /* 0=default, 1=serial, 2=disabled */
+static volatile u32 s_log_route = 1;  /* 0=default, 1=serial, 2=disabled */
 
 auto get_route() -> route {
     return static_cast<route>(s_log_route);

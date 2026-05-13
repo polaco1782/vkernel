@@ -17,6 +17,7 @@
 #include "scheduler.h"
 #include "panic.h"
 #include "process_internal.h"
+#include "virtual_memory.h"
 #include "arch/x86_64/arch.h"
 #include "smp.h"
 
@@ -284,6 +285,59 @@ static inline auto task_matches_cpu_affinity(usize task_index, u8 this_apic) -> 
     sched::exit_task();
 }
 
+static void init_task_stack_frame(task& t, task_entry_fn entry, void* user_data) {
+    t.entry = entry;
+    t.user_data = user_data;
+
+    /*
+     * Set up the initial stack frame so the first context switch
+     * "returns" into task_trampoline.
+     *
+     * Keep a full interrupt-frame-shaped tail here.  Same-CPL iretq only
+     * consumes RIP, CS and RFLAGS, leaving the saved RSP/SS as harmless stack
+     * scratch space; the full shape also matches the rest of the saved-state
+     * model used by diagnostics and context switching.
+     *
+     * Because iretq is not a call, we must also arrange the post-iret stack
+     * exactly like a normal SysV function entry: %rsp % 16 == 8.  The padding
+     * slot above SS makes the same-CPL iretq leave RSP at stack_top - 24.
+     *
+     * Stack layout:
+     *          alignment padding
+     *          SS, RSP, RFLAGS, CS, RIP
+     *          error_code, int_no
+     *          FS, GS
+     *          R15..R8, RBP, RDI, RSI, RDX, RCX, RBX, RAX
+     *
+     * Total saved frame: 1 + 5 + 2 + 2 + 15 = 25 u64s.
+     */
+    auto* stack_top = reinterpret_cast<u64*>(
+        reinterpret_cast<usize>(&t.stack[TASK_STACK_SIZE]) & ~0xFull);
+    auto* iret_frame = stack_top - 6;
+
+    /* Full interrupt-frame-shaped tail */
+    iret_frame[0] = reinterpret_cast<u64>(&task_trampoline); /* RIP */
+    iret_frame[1] = arch::SEG_KERNEL_CODE; /* CS */
+    iret_frame[2] = 0x2;  /* RFLAGS: reserved bit set, IF enabled in trampoline */
+    iret_frame[3] = reinterpret_cast<u64>(stack_top); /* RSP if privilege changes */
+    iret_frame[4] = arch::SEG_KERNEL_DATA; /* SS if privilege changes */
+    iret_frame[5] = 0; /* padding: makes post-iret %rsp 16n+8 */
+
+    /* error_code + int_no */
+    iret_frame[-1] = 0; /* error_code */
+    iret_frame[-2] = 0; /* int_no */
+
+    /* FS, GS — FS at lower address (pushed last by ISR), GS at higher */
+    iret_frame[-3] = 0; /* GS (higher addr) */
+    iret_frame[-4] = 0; /* FS (lower addr) */
+
+    /* 15 GPRs: R15..R8, RBP, RDI, RSI, RDX, RCX, RBX, RAX */
+    for (int i = 5; i <= 19; ++i)
+        iret_frame[-i] = 0;
+
+    t.rsp = reinterpret_cast<u64>(iret_frame - 19);
+}
+
 [[noreturn]] static void cpu_idle_trampoline() {
     arch::enable_interrupts();
     while (true) {
@@ -399,6 +453,28 @@ static auto pick_next_task(usize cur) -> usize {
     log::debug() << "Dumping " << dump_count << " bytes at entry point " << log::hex(static_cast<u64>(static_cast<unsigned long long>(entry_va)), 1, true, false) << ": " << bytes_buf;
 }
 
+static void activate_task_address_space(const task& t) {
+    auto* ctx = static_cast<process::process_task_context*>(t.user_data);
+    const phys_addr before = vm::active_cr3();
+    const phys_addr target = (ctx != null && ctx->address_space != null)
+        ? ctx->address_space->pml4_phys
+        : vm::kernel_cr3();
+    static usize s_vm_switch_trace_budget = 64;
+    if (s_vm_switch_trace_budget > 0 && before != target) {
+        --s_vm_switch_trace_budget;
+        log::debug() << "vmtrace: switch task_id=" << static_cast<unsigned long long>(t.id)
+                     << " name=" << t.name.c_str()
+                     << " from_cr3=" << reinterpret_cast<const void*>(static_cast<usize>(before))
+                     << " to_cr3=" << reinterpret_cast<const void*>(static_cast<usize>(target))
+                     << " as=" << (ctx != null ? reinterpret_cast<const void*>(ctx->address_space) : null);
+    }
+    if (ctx != null && ctx->address_space != null) {
+        vm::activate(ctx->address_space);
+    } else {
+        vm::activate_kernel();
+    }
+}
+
 /* ============================================================
  * Scheduler API
  * ============================================================ */
@@ -450,8 +526,6 @@ auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) 
     t.id    = g_next_task_id++;
     t.state = task_state::ready;
     t.wake_tick = 0;
-    t.entry = entry;
-    t.user_data = user_data;
     t.xsave_valid = false;
     t.allow_secondary_cpu = g_scheduler_active;
     t.affinity_cpu = SCHED_CPU_NONE;
@@ -464,53 +538,7 @@ auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) 
         ++g_task_count;
     }
 
-    /*
-     * Set up the initial stack frame so the first context switch
-     * "returns" into task_trampoline.
-     *
-     * Keep a full interrupt-frame-shaped tail here.  Same-CPL iretq only
-     * consumes RIP, CS and RFLAGS, leaving the saved RSP/SS as harmless stack
-     * scratch space; the full shape also matches the rest of the saved-state
-     * model used by diagnostics and context switching.
-     *
-     * Because iretq is not a call, we must also arrange the post-iret stack
-     * exactly like a normal SysV function entry: %rsp % 16 == 8.  The padding
-     * slot above SS makes the same-CPL iretq leave RSP at stack_top - 24.
-     *
-     * Stack layout:
-     *          alignment padding
-     *          SS, RSP, RFLAGS, CS, RIP
-     *          error_code, int_no
-     *          FS, GS
-     *          R15..R8, RBP, RDI, RSI, RDX, RCX, RBX, RAX
-     *
-     * Total saved frame: 1 + 5 + 2 + 2 + 15 = 25 u64s.
-     */
-    auto* stack_top = reinterpret_cast<u64*>(
-        reinterpret_cast<usize>(&t.stack[TASK_STACK_SIZE]) & ~0xFull);
-    auto* iret_frame = stack_top - 6;
-
-    /* Full interrupt-frame-shaped tail */
-    iret_frame[0] = reinterpret_cast<u64>(&task_trampoline); /* RIP */
-    iret_frame[1] = arch::SEG_KERNEL_CODE; /* CS */
-    iret_frame[2] = 0x2;  /* RFLAGS: reserved bit set, IF enabled in trampoline */
-    iret_frame[3] = reinterpret_cast<u64>(stack_top); /* RSP if privilege changes */
-    iret_frame[4] = arch::SEG_KERNEL_DATA; /* SS if privilege changes */
-    iret_frame[5] = 0; /* padding: makes post-iret %rsp 16n+8 */
-
-    /* error_code + int_no */
-    iret_frame[-1] = 0; /* error_code */
-    iret_frame[-2] = 0; /* int_no */
-
-    /* FS, GS — FS at lower address (pushed last by ISR), GS at higher */
-    iret_frame[-3] = 0; /* GS (higher addr) */
-    iret_frame[-4] = 0; /* FS (lower addr) */
-
-    /* 15 GPRs: R15..R8, RBP, RDI, RSI, RDX, RCX, RBX, RAX */
-    for (int i = 5; i <= 19; ++i)
-        iret_frame[-i] = 0;
-
-    t.rsp = reinterpret_cast<u64>(iret_frame - 19);
+    init_task_stack_frame(t, entry, user_data);
 
     if constexpr (log::debug_enabled()) {
         log::debug() << "task '" << t.name.c_str() << "': entry=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(reinterpret_cast<u64>(entry))), 1, true, false) << " user_data=" << reinterpret_cast<const void*>(user_data) << " rsp=" << log::hex(static_cast<u64>(static_cast<unsigned long long>(t.rsp)), 1, true, false);
@@ -605,12 +633,12 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         arch::fxsave(g_tasks[cur].xsave_area);
         sanitize_fxsave_area(g_tasks[cur].xsave_area);
         g_tasks[cur].xsave_valid = true;
-        if (g_tasks[cur].state == task_state::running) {
-            g_tasks[cur].state = task_state::ready;
-        } else if (g_tasks[cur].state == task_state::terminated &&
-                   g_tasks[cur].user_data != null) {
+        if (g_tasks[cur].state == task_state::terminated &&
+            g_tasks[cur].user_data != null) {
             terminated_ctx = static_cast<process::process_task_context*>(g_tasks[cur].user_data);
             g_tasks[cur].user_data = null;
+        } else if (g_tasks[cur].state == task_state::running) {
+            g_tasks[cur].state = task_state::ready;
         }
         g_tasks[cur].current_cpu = SCHED_CPU_NONE;
     }
@@ -622,6 +650,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
             cpu_set_current_task(SCHED_NO_TASK);
             init_cpu_idle_frame(this_apic);
             g_sched_lock.release();
+            vm::activate_kernel();
             if (terminated_ctx != null) {
                 process::cleanup_process_context(terminated_ctx, -1);
             }
@@ -648,13 +677,13 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         sanitize_fxsave_area(g_tasks[next].xsave_area);
         arch::fxrstor(g_tasks[next].xsave_area);
     }
-
     g_sched_lock.release();
 
     if (terminated_ctx != null) {
         process::cleanup_process_context(terminated_ctx, -1);
     }
 
+    activate_task_address_space(g_tasks[next]);
     return reinterpret_cast<arch::register_state*>(next_rsp);
 }
 
@@ -687,6 +716,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     }
     g_tasks[first].current_cpu = g_bsp_apic_id;
     g_scheduler_active = true;
+    activate_task_address_space(g_tasks[first]);
     g_sched_lock.release();
 
     /* Unmask IRQ0 and enable interrupts (BSP only) */

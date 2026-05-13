@@ -12,6 +12,9 @@
 #include "vk.h"
 
 namespace vk {
+namespace vm {
+struct address_space;
+}
 namespace process {
 
 struct process_allocation {
@@ -32,6 +35,9 @@ struct process_task_context {
     u8*   image_base;
     usize image_size;
     bool  image_from_phys; /* true = free via g_phys_alloc, false = g_kernel_heap */
+    vm::address_space* address_space;
+    phys_addr image_phys;
+    bool image_vm_mapped;
     console_interface interface;
     vk_key_event_t key_queue[KEY_QUEUE_SIZE];
     usize key_q_head;
@@ -50,6 +56,7 @@ struct process_task_context {
 };
 
 void cleanup_process_context(process_task_context* ctx, int exit_code);
+void process_task_main(void* user_data);
 
 } // namespace process
 } // namespace vk

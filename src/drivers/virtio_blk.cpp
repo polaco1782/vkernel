@@ -41,6 +41,8 @@ constexpr u8 VIRTIO_BLK_S_OK   = 0;
 
 constexpr u32 VIRTIO_BLK_SECTOR_SIZE = 512;
 constexpr u32 VIRTIO_BLK_MAX_SECTORS_PER_REQUEST = 128;
+constexpr u32 VIRTIO_BLK_BOUNCE_BYTES =
+    VIRTIO_BLK_SECTOR_SIZE * VIRTIO_BLK_MAX_SECTORS_PER_REQUEST;
 
 #pragma pack(push, 1)
 struct vring_desc {
@@ -92,6 +94,8 @@ struct virtio_blk_device {
     vring_used* used = null;
     virtio_blk_req_header request_header {};
     u8 request_status = 0xFF;
+    phys_addr bounce_phys = 0;
+    u8* bounce_mem = null;
 };
 
 static virtio_blk_device s_device;
@@ -183,6 +187,21 @@ static auto setup_queue(virtio_blk_device& dev) -> bool {
     memory::set(dev.queue_mem, 0, queue_bytes);
     arch::make_region_writable(dev.queue_phys, queue_bytes);
 
+    dev.bounce_phys = g_phys_alloc.allocate_pages(
+        VIRTIO_BLK_BOUNCE_BYTES / PAGE_SIZE_4K,
+        PAGE_SIZE_4K,
+        0x100000000ULL);
+    if (dev.bounce_phys == 0) {
+        g_phys_alloc.free_pages(dev.queue_phys, dev.queue_pages);
+        dev.queue_phys = 0;
+        dev.queue_pages = 0;
+        dev.queue_mem = null;
+        return false;
+    }
+    arch::make_region_writable(dev.bounce_phys, VIRTIO_BLK_BOUNCE_BYTES);
+    dev.bounce_mem = reinterpret_cast<u8*>(dev.bounce_phys);
+    memory::set(dev.bounce_mem, 0, VIRTIO_BLK_BOUNCE_BYTES);
+
     const usize desc_bytes = sizeof(vring_desc) * dev.queue_size;
     const usize avail_bytes = sizeof(u16) * (3 + dev.queue_size);
     const usize used_offset = align_up(desc_bytes + avail_bytes, static_cast<usize>(PAGE_SIZE_4K));
@@ -265,13 +284,28 @@ static auto virtio_blk_transfer(block_device* block_dev, u64 lba, u32 count, voi
             ? VIRTIO_BLK_MAX_SECTORS_PER_REQUEST
             : remaining;
         const u32 bytes = chunk * VIRTIO_BLK_SECTOR_SIZE;
+        if (write) {
+            memory::copy(dev->bounce_mem, current_buffer, bytes);
+        }
+
         if (!submit_request(*dev,
                             write ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN,
                             current_lba,
-                            current_buffer,
+                            dev->bounce_mem,
                             bytes)) {
+            log::warn() << "virtio_blk: submit failed "
+                         << (write ? "write" : "read")
+                         << " caller=" << reinterpret_cast<const void*>(current_buffer)
+                         << " bounce_phys=" << reinterpret_cast<const void*>(static_cast<usize>(dev->bounce_phys))
+                         << " lba=" << static_cast<unsigned long long>(current_lba)
+                         << " bytes=" << static_cast<unsigned long long>(bytes);
             return false;
         }
+
+        if (!write) {
+            memory::copy(current_buffer, dev->bounce_mem, bytes);
+        }
+
         current_lba += chunk;
         current_buffer += bytes;
         remaining -= chunk;
@@ -380,6 +414,10 @@ static void virtio_blk_shutdown() {
     }
     if (s_device.queue_phys != 0 && s_device.queue_pages != 0) {
         g_phys_alloc.free_pages(s_device.queue_phys, s_device.queue_pages);
+    }
+    if (s_device.bounce_phys != 0) {
+        g_phys_alloc.free_pages(s_device.bounce_phys,
+                                VIRTIO_BLK_BOUNCE_BYTES / PAGE_SIZE_4K);
     }
     s_device = {};
 }

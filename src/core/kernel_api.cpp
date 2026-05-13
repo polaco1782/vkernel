@@ -11,6 +11,7 @@
 #include "log.h"
 #include "memory.h"
 #include "fs.h"
+#include "framebuffer.h"
 #include "input.h"
 #include "scheduler.h"
 #include "sound.h"
@@ -18,6 +19,7 @@
 #include "kobj.h"
 #include "vk.h"
 #include "process_internal.h"
+#include "virtual_memory.h"
 
 namespace vk {
 namespace kernel_api {
@@ -38,6 +40,37 @@ static auto dequeue_ascii_key(process::process_task_context* ctx) -> char;
 /* ---- memory ---- */
 
 static constexpr usize PROCESS_ALLOC_GUARD_SIZE = PAGE_SIZE_4K;
+
+static void trace_process_buffer(const char* label,
+                                 process::process_task_context* ctx,
+                                 const void* ptr,
+                                 usize size) {
+    if (label == null || ctx == null || ptr == null || ctx->address_space == null) {
+        return;
+    }
+
+    const virt_addr start = reinterpret_cast<virt_addr>(ptr);
+    const virt_addr end = size > 0 ? start + size - 1 : start;
+    phys_addr start_phys = 0;
+    phys_addr end_phys = 0;
+    u64 start_flags = 0;
+    u64 end_flags = 0;
+    const bool start_ok = vm::debug_resolve(ctx->address_space, start, &start_phys, &start_flags);
+    const bool end_ok = vm::debug_resolve(ctx->address_space, end, &end_phys, &end_flags);
+
+    log::debug() << "vmtrace: task=" << static_cast<unsigned long long>(sched::current_task_id())
+                 << " name=" << sched::current_task_name()
+                 << " " << label
+                 << " range=" << reinterpret_cast<const void*>(static_cast<usize>(start))
+                 << ".." << reinterpret_cast<const void*>(static_cast<usize>(end))
+                 << " size=" << static_cast<unsigned long long>(size)
+                 << " start_ok=" << (start_ok ? "yes" : "no")
+                 << " start_phys=" << reinterpret_cast<const void*>(static_cast<usize>(start_phys))
+                 << " start_flags=" << log::hex(start_flags, 1, true, false)
+                 << " end_ok=" << (end_ok ? "yes" : "no")
+                 << " end_phys=" << reinterpret_cast<const void*>(static_cast<usize>(end_phys))
+                 << " end_flags=" << log::hex(end_flags, 1, true, false);
+}
 
 static void free_process_allocation_pages(void* ptr, usize size) {
     if (ptr == null || size == 0) {
@@ -60,37 +93,73 @@ static void* stub_malloc(vk_usize size) {
 
     const usize requested = static_cast<usize>(size);
     const usize rounded = align_up(requested, static_cast<usize>(16));
-    if (rounded < requested || rounded > ~static_cast<usize>(0) - PROCESS_ALLOC_GUARD_SIZE) {
+    if (rounded < requested) {
         return null;
     }
 
-    const usize allocated = rounded + PROCESS_ALLOC_GUARD_SIZE;
+    const bool uses_process_vm = ctx->address_space != null;
+    if (!uses_process_vm && rounded > ~static_cast<usize>(0) - PROCESS_ALLOC_GUARD_SIZE) {
+        return null;
+    }
+
+    /*
+     * VM-backed processes need consecutive vk_malloc calls to remain exactly
+     * contiguous because userspace newlib implements _sbrk by growing one
+     * monotonic arena.  A guard gap here makes large malloc users, like Quake,
+     * fail even though the virtual heap can grow correctly.
+     */
+    const usize allocated = uses_process_vm ? rounded : rounded + PROCESS_ALLOC_GUARD_SIZE;
     bool from_phys = false;
-    void* raw = g_kernel_heap.allocate_zero(allocated);
-    if (raw == null) {
-        const u32 page_count = static_cast<u32>(
-            (allocated + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
-        phys_addr phys = g_phys_alloc.allocate_pages(page_count, PAGE_SIZE_4K, 0);
-        if (phys == 0) {
+    void* raw = null;
+    void* user = null;
+
+    if (uses_process_vm) {
+        phys_addr phys = 0;
+        virt_addr virt = 0;
+        if (!vm::allocate_user_heap(ctx->address_space,
+                                    allocated,
+                                    vm::MAP_WRITABLE | vm::MAP_USER,
+                                    &phys,
+                                    &virt)) {
             return null;
         }
-        raw = reinterpret_cast<void*>(phys);
-        memory::set(raw, 0, static_cast<size_phys>(page_count) * PAGE_SIZE_4K);
+        raw = reinterpret_cast<void*>(static_cast<usize>(phys));
+        user = reinterpret_cast<void*>(static_cast<usize>(virt));
         from_phys = true;
+    } else {
+        raw = g_kernel_heap.allocate_zero(allocated);
+        user = raw;
+        if (raw == null) {
+            const u32 page_count = static_cast<u32>(
+                (allocated + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
+            phys_addr phys = g_phys_alloc.allocate_pages(page_count, PAGE_SIZE_4K, 0);
+            if (phys == 0) {
+                return null;
+            }
+            raw = reinterpret_cast<void*>(phys);
+            user = raw;
+            memory::set(raw, 0, static_cast<size_phys>(page_count) * PAGE_SIZE_4K);
+            from_phys = true;
+        }
     }
 
     auto* rec = static_cast<process::process_allocation*>(
         g_kernel_heap.allocate_zero(sizeof(process::process_allocation)));
     if (rec == null) {
         if (from_phys) {
-            free_process_allocation_pages(raw, allocated);
+            if (ctx->address_space != null && user != raw) {
+                vm::unmap_range(ctx->address_space, reinterpret_cast<virt_addr>(user), allocated);
+                free_process_allocation_pages(raw, allocated);
+            } else {
+                free_process_allocation_pages(raw, allocated);
+            }
         } else {
             g_kernel_heap.free(raw);
         }
         return null;
     }
 
-    rec->user_ptr = raw;
+    rec->user_ptr = user;
     rec->raw_ptr = raw;
     rec->requested_size = requested;
     rec->allocated_size = allocated;
@@ -121,7 +190,12 @@ static void stub_free(void* ptr) {
             } else {
                 ctx->allocations = rec->next;
             }
-            if (rec->from_phys) {
+            if (ctx->address_space != null && rec->raw_ptr != rec->user_ptr) {
+                vm::unmap_range(ctx->address_space,
+                                reinterpret_cast<virt_addr>(rec->user_ptr),
+                                rec->allocated_size);
+                free_process_allocation_pages(rec->raw_ptr, rec->allocated_size);
+            } else if (rec->from_phys) {
                 free_process_allocation_pages(rec->raw_ptr, rec->allocated_size);
             } else {
                 g_kernel_heap.free(rec->raw_ptr);
@@ -362,6 +436,12 @@ static vk_u32 stub_ticks_per_sec() {
 
 static vk_usize stub_kobj_rpc(const char* req_json, char* out, vk_usize out_cap) {
     if (out == null || out_cap == 0) return 0;
+    static usize s_kobj_trace_budget = 64;
+    if (s_kobj_trace_budget > 0) {
+        --s_kobj_trace_budget;
+        auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+        trace_process_buffer("kobj-rpc-request", ctx, req_json, req_json != null ? 1 : 0);
+    }
     kobj::krpc(req_json, out, out_cap);
     vk_usize len = 0;
     while (len < out_cap && out[len] != '\0') ++len;
@@ -548,24 +628,116 @@ static int stub_send_key(vk_u64 task_id, const vk_key_event_t* ev) {
     return 1;
 }
 
+static auto remap_target_framebuffer(process::process_task_context* target,
+                                     const vk_framebuffer_info_t* fb) -> bool {
+    if (target == null || !validate_fb(fb)) {
+        return false;
+    }
+
+    vk_framebuffer_info_t mapped = *fb;
+    usize fb_bytes = 0;
+    if (!framebuffer::byte_size(*fb, fb_bytes)) {
+        return false;
+    }
+
+    auto* source_ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    const virt_addr source_base = static_cast<virt_addr>(fb->base);
+    if (target->address_space != null
+        && source_base >= vm::USER_IMAGE_BASE
+        && source_base < vm::USER_MAP_LIMIT) {
+        if (source_ctx == null || source_ctx->address_space == null) {
+            log::warn() << "vmtrace: set_task_framebuffer has user address but no source address space";
+            return false;
+        }
+
+        const virt_addr old_target_base =
+            target->fb_override_valid
+            && target->fb_override.base >= vm::USER_SHARED_BASE
+            && target->fb_override.base < vm::USER_MAP_LIMIT
+                ? static_cast<virt_addr>(target->fb_override.base)
+                : vm::USER_SHARED_BASE + static_cast<usize>(source_base & (PAGE_SIZE_4K - 1));
+        const virt_addr target_start = align_down(old_target_base, PAGE_SIZE_4K);
+        const usize target_offset = static_cast<usize>(old_target_base - target_start);
+        const usize source_offset = static_cast<usize>(source_base & (PAGE_SIZE_4K - 1));
+
+        if (target_offset != source_offset) {
+            log::warn() << "vmtrace: set_task_framebuffer offset mismatch old_target="
+                        << reinterpret_cast<const void*>(static_cast<usize>(old_target_base))
+                        << " source=" << reinterpret_cast<const void*>(static_cast<usize>(source_base));
+            return false;
+        }
+
+        const usize mapped_bytes = align_up(target_offset + fb_bytes, PAGE_SIZE_4K);
+        const virt_addr source_start = align_down(source_base, PAGE_SIZE_4K);
+
+        for (usize offset = 0; offset < mapped_bytes; offset += PAGE_SIZE_4K) {
+            phys_addr source_phys = 0;
+            u64 source_flags = 0;
+            const virt_addr source_page = source_start + offset;
+            if (!vm::debug_resolve(source_ctx->address_space, source_page, &source_phys, &source_flags)) {
+                log::warn() << "vmtrace: set_task_framebuffer source resolve failed src="
+                            << reinterpret_cast<const void*>(static_cast<usize>(source_page));
+                return false;
+            }
+        }
+
+        vm::unmap_range(target->address_space, target_start, mapped_bytes);
+
+        for (usize offset = 0; offset < mapped_bytes; offset += PAGE_SIZE_4K) {
+            phys_addr source_phys = 0;
+            u64 source_flags = 0;
+            const virt_addr source_page = source_start + offset;
+            if (!vm::debug_resolve(source_ctx->address_space, source_page, &source_phys, &source_flags)) {
+                target->fb_override = {};
+                target->fb_override_valid = false;
+                target->fb_text_col = 0;
+                target->fb_text_row = 0;
+                return false;
+            }
+
+            if (!vm::map_page(target->address_space,
+                              target_start + offset,
+                              align_down(source_phys, PAGE_SIZE_4K),
+                              vm::MAP_WRITABLE | vm::MAP_USER)) {
+                vm::unmap_range(target->address_space, target_start, mapped_bytes);
+                target->fb_override = {};
+                target->fb_override_valid = false;
+                target->fb_text_col = 0;
+                target->fb_text_row = 0;
+                log::warn() << "vmtrace: set_task_framebuffer map failed dst="
+                            << reinterpret_cast<const void*>(static_cast<usize>(target_start + offset))
+                            << " phys=" << reinterpret_cast<const void*>(static_cast<usize>(source_phys));
+                return false;
+            }
+        }
+
+        mapped.base = static_cast<vk_u64>(old_target_base);
+    }
+
+    target->fb_override = mapped;
+    target->fb_override_valid = true;
+    target->fb_text_col = 0;
+    target->fb_text_row = 0;
+    return true;
+}
+
 static int stub_set_task_framebuffer(vk_u64 task_id, const vk_framebuffer_info_t* fb) {
     if (fb == null) return 0;
     auto* target = static_cast<process::process_task_context*>(sched::task_user_data(task_id));
     if (target == null) return 0;
-    target->fb_override = *fb;
-    target->fb_override_valid = (fb->valid != 0u && fb->base != 0u && fb->width > 0u && fb->height > 0u);
-    target->fb_text_col = 0;
-    target->fb_text_row = 0;
+    if (!remap_target_framebuffer(target, fb)) {
+        return 0;
+    }
     return target->fb_override_valid ? 1 : 0;
 }
 
 static void route_framebuffer_info(vk_framebuffer_info_t* out) {
     if (out == null) return;
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
     if (!should_use_framebuffer()) {
         *out = {};
         return;
     }
-    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
     if (ctx != null && ctx->fb_override_valid) {
         *out = ctx->fb_override;
         return;

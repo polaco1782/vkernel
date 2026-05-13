@@ -47,7 +47,7 @@ done
 #    tracks=126  heads=64  sectors/track=32
 # ───────────────────────────────────────────────────────────────────────────
 
-DISK_MB=128
+DISK_MB=512
 ESP_START_MiB=1
 ESP_END_MiB=127
 ESP_BYTE_OFFSET=$((ESP_START_MiB * 1024 * 1024))   # 1 048 576

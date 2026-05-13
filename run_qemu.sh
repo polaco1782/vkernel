@@ -19,13 +19,16 @@ for arg in "$@"; do
     case "$arg" in
         --debug|-d) DEBUG_QEMU=1 ;;
         --verbose|-d) VERBOSE=1 ;;
+        --keep-disk) KEEP_DISK=1 ;;
     esac
 done
 
-if [ "${DEBUG_QEMU}" -eq 1 ] || [ "${VERBOSE}" -eq 1 ]; then
-    make DEBUG=1 disk
-else
-    make disk
+if [ -z "${KEEP_DISK}" ]; then
+    if [ "${DEBUG_QEMU}" -eq 1 ] || [ "${VERBOSE}" -eq 1 ]; then
+        make DEBUG=1 disk
+    else
+        make disk
+    fi
 fi
 
 if [ ! -f "${EFI_FILE}" ]; then

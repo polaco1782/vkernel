@@ -40,9 +40,9 @@ private:
     bool show_console_ = true;
     bool show_settings_ = false;
     bool show_demo_ = false;
-    bool show_task_manager_ = true;
-    bool show_kobj_ = true;
-    bool show_vkfm_ = true;
+    bool show_task_manager_ = false;
+    bool show_kobj_ = false;
+    bool show_vkfm_ = false;
     bool open_about_ = false;
     vk_u32 default_app_width_ = 320;
     vk_u32 default_app_height_ = 200;
