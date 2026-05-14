@@ -12,6 +12,7 @@
 #include "vkfm_panel.h"
 #include "window_manager.h"
 
+#include <iostream>
 #include <unistd.h>
 
 namespace {
@@ -30,7 +31,7 @@ int main(int /*argc*/, char** /*argv*/)
     vk_framebuffer_info_t framebuffer = {};
     VK_CALL(framebuffer_info, &framebuffer);
     if (!framebuffer_available(framebuffer)) {
-        VK_CALL(puts, "vgui: no framebuffer available\n");
+        std::cout << "vgui: no framebuffer available\n";
         return 1;
     }
 
@@ -43,7 +44,7 @@ int main(int /*argc*/, char** /*argv*/)
     }
 
     if (!ImGui_ImplVK_Init(&framebuffer)) {
-        VK_CALL(puts, "vgui: backend init failed\n");
+        std::cout << "vgui: backend init failed\n";
         ImPlot::DestroyContext();
         ImGui::DestroyContext();
         return 1;
@@ -157,11 +158,11 @@ int main(int /*argc*/, char** /*argv*/)
             nullptr,
         };
         (void)execve("shell.vbin", argv, nullptr);
-        VK_CALL(puts, "vgui: failed to exec shell.vbin\n");
+        std::cout << "vgui: failed to exec shell.vbin\n";
         return 1;
     }
 
-    VK_CALL(puts, "vgui: clean exit.\n");
+    std::cout << "vgui: clean exit.\n";
 
     return 0;
 }

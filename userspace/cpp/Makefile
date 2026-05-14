@@ -23,7 +23,8 @@ CXXFLAGS  += -Wall -Wextra
 CXXFLAGS  += -isystem $(SYSROOT)/include
 CXXFLAGS  += -I$(CPP_INCLUDE)
 
-SRCS   := runtime/cxx_runtime.cpp
+SRCS   := runtime/cxx_runtime.cpp \
+		  runtime/iostream.cpp
 OBJS   := $(SRCS:.cpp=.o)
 TARGET := libvkcpp.a
 

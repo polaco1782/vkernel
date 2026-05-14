@@ -1,6 +1,8 @@
 #include "frontend.h"
 #include "hq2x.h"
 
+#include <iostream>
+
 namespace clownmdemu_frontend {
 
 void log_message(void* user_data, const char* format, va_list arg);
@@ -285,7 +287,7 @@ void prime_audio(AppState* app) {
 bool load_rom(AppState* app, const char* path) {
     FILE* file = fopen(path, "rb");
     if (file == nullptr) {
-        printf("Unable to open %s\n", path);
+        std::cout << "Unable to open " << path << '\n';
         return false;
     }
 
@@ -308,7 +310,7 @@ bool load_rom(AppState* app, const char* path) {
     const size_t file_size = static_cast<size_t>(file_size_long);
     if (file_size == 0 || file_size > kMaxRomBytes) {
         fclose(file);
-        printf("Invalid ROM size: %zu bytes\n", file_size);
+        std::cout << "Invalid ROM size: " << file_size << " bytes\n";
         return false;
     }
 
@@ -339,7 +341,7 @@ bool init_framebuffer(AppState* app) {
     VK_CALL(framebuffer_info, &app->framebuffer);
     if (!app->framebuffer.valid || app->framebuffer.base == 0 ||
         app->framebuffer.width == 0 || app->framebuffer.height == 0) {
-        printf("No framebuffer available\n");
+        std::cout << "No framebuffer available\n";
         return false;
     }
 

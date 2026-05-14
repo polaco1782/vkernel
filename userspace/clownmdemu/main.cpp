@@ -1,5 +1,7 @@
 #include "frontend.h"
 
+#include <iostream>
+
 int main(int argc, char** argv) {
     using namespace clownmdemu_frontend;
 
@@ -28,12 +30,12 @@ int main(int argc, char** argv) {
 
     reset_emulator(app);
 
-    printf("ClownMDEmu\n");
+    std::cout << "ClownMDEmu\n";
     if (!app->loaded_rom_path.empty())
-        printf("ROM file: %s\n", path_basename(app->loaded_rom_path.c_str()));
+        std::cout << "ROM file: " << path_basename(app->loaded_rom_path.c_str()) << '\n';
     if (!app->rom_title.empty())
-        printf("Loaded: %s\n", app->rom_title.c_str());
-    printf("Controls: arrows, A/S/D, Q/W/E, Enter, Backspace, Tab, Escape\n");
+        std::cout << "Loaded: " << app->rom_title << '\n';
+    std::cout << "Controls: arrows, A/S/D, Q/W/E, Enter, Backspace, Tab, Escape\n";
 
     while (!app->quit_requested) {
         pump_input(app);

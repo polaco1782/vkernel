@@ -1,5 +1,7 @@
 #include "frontend.h"
 
+#include <iostream>
+
 namespace clownmdemu_frontend {
 
 namespace {
@@ -177,11 +179,10 @@ void log_message(void* user_data, const char* format, va_list arg) {
 
     char buffer[kMaxLogMessage];
     vsnprintf(buffer, sizeof(buffer), format, arg);
-    VK_CALL(puts, "[clownmdemu] ");
-    VK_CALL(puts, buffer);
+    std::cout << "[clownmdemu] " << buffer;
     const size_t length = strlen(buffer);
     if (length == 0 || buffer[length - 1] != '\n')
-        VK_CALL(putc, '\n');
+        std::cout << '\n';
 }
 
 void callback_fm_audio(void* user_data,

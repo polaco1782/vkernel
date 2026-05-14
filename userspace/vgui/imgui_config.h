@@ -7,12 +7,13 @@
  *
  * Constraints:
  *  - Newlib provides the C standard library.
- *  - No C++ STL (no <vector>, <string>, …).
+ *  - The in-repo userspace/cpp shim provides the freestanding C++ runtime.
  *  - No exceptions, no RTTI.
- *  - Placement new must be self-contained (no <new> header).
  */
 
 #pragma once
+
+#include <new>
 
 #define ImDrawIdx unsigned int
 
@@ -22,18 +23,3 @@
 
 /* ---- Enable math operator overloads for ImVec2 / ImVec4 ---- */
 #define IMGUI_DEFINE_MATH_OPERATORS
-
-/*
- * Placement new shim.
- *
- * We compile with -nostdinc++ so <new> is unavailable.  ImGui 1.89+
- * already defines its own ImNewWrapper-based placement new in imgui.h,
- * but older compilers or edge-cases can still emit a bare ::new(ptr).
- * Provide a fallback here that is guarded against double-definition.
- */
-#if defined(__cplusplus) && !defined(VGUI_PLACEMENT_NEW_DEFINED)
-#define VGUI_PLACEMENT_NEW_DEFINED
-struct VguiPlacementNewTag {};
-inline void* operator new(decltype(sizeof(0)), VguiPlacementNewTag, void* p) noexcept { return p; }
-inline void  operator delete(void*, VguiPlacementNewTag, void*) noexcept {}
-#endif

@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include <array>
+#include <iostream>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -15,7 +16,7 @@ void check(bool condition, const char* message)
 {
     if (!condition) {
         ++g_failures;
-        printf("cppcompat: FAIL: %s\n", message);
+        std::cout << "cppcompat: FAIL: " << message << '\n';
     }
 }
 
@@ -119,10 +120,10 @@ int main()
     delete heap_value;
 
     if (g_failures != 0) {
-        printf("cppcompat: %d checks failed\n", g_failures);
+        std::cout << "cppcompat: " << g_failures << " checks failed\n";
         return 1;
     }
 
-    puts("cppcompat: all checks passed");
+    std::cout << "cppcompat: all checks passed\n";
     return 0;
 }

@@ -8,6 +8,7 @@
  */
 
 #include <math.h>
+#include <iostream>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1316,14 +1317,14 @@ static void play_live(MODFILE *mod, const char *filename, int sample_rate)
     VK_CALL(framebuffer_info, &g_fb);
 
     if (!g_fb.valid || g_fb.base == 0 || g_fb.width == 0 || g_fb.height == 0) {
-        VK_CALL(puts, "  No framebuffer available.\n");
+        std::cout << "  No framebuffer available.\n";
         exit(1);
     }
 
     pixbuf_pixels = (vk_usize)g_fb.stride * g_fb.height;
     pixbuf = (vk_u32 *)malloc(pixbuf_pixels * sizeof(vk_u32));
     if (pixbuf == NULL) {
-        VK_CALL(puts, "  Failed to allocate MODPlay backbuffer.\n");
+        std::cout << "  Failed to allocate MODPlay backbuffer.\n";
         exit(1);
     }
 
@@ -1331,8 +1332,11 @@ static void play_live(MODFILE *mod, const char *filename, int sample_rate)
     vis_reset_dynamic_state();
     g_current_filename = filename;
 
-    printf("Playing '%s'  (%s, %d ch, %d Hz)\n", filename, module_format_name(mod->filetype), mod->nChannels, sample_rate);
-    printf("Press any key to stop.\n\n");
+    std::cout << "Playing '" << filename << "'  ("
+              << module_format_name(mod->filetype) << ", "
+              << mod->nChannels << " ch, "
+              << sample_rate << " Hz)\n";
+    std::cout << "Press any key to stop.\n\n";
 
     VK_CALL(snd_set_sample_rate, (vk_u32)sample_rate);
     VK_CALL(snd_set_volume, 255, 255);
@@ -1388,7 +1392,7 @@ static void play_live(MODFILE *mod, const char *filename, int sample_rate)
     pixbuf = NULL;
     pixbuf_pixels = 0;
     g_current_filename = NULL;
-    printf("\nStopped.\n");
+    std::cout << "\nStopped.\n";
 }
 
 int main(int argc, char *argv[])
@@ -1400,7 +1404,7 @@ int main(int argc, char *argv[])
     FILE *f = fopen(filename, "rb");
 
     if (!f) {
-        printf("Error: cannot open '%s'\n", filename);
+        std::cout << "Error: cannot open '" << filename << "'\n";
         return 1;
     }
 
@@ -1409,14 +1413,14 @@ int main(int argc, char *argv[])
     fseek(f, 0, SEEK_SET);
 
     if (tune_len <= 0) {
-        printf("Error: empty or unreadable file\n");
+        std::cout << "Error: empty or unreadable file\n";
         fclose(f);
         return 1;
     }
 
     uint8_t *tune = (uint8_t *)malloc((size_t)tune_len);
     if (!tune) {
-        printf("Error: out of memory\n");
+        std::cout << "Error: out of memory\n";
         fclose(f);
         return 1;
     }
@@ -1426,7 +1430,7 @@ int main(int argc, char *argv[])
 
     MODFILE_Init(&mod);
     if (MODFILE_Set(tune, (int)tune_len, &mod) < 0) {
-        printf("Error: '%s' is not a supported module file\n", filename);
+        std::cout << "Error: '" << filename << "' is not a supported module file\n";
         free(tune);
         return 1;
     }

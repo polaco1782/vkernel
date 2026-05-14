@@ -2,6 +2,7 @@
 
 #include "console_log.h"
 
+#include <new>
 #include <stdio.h>
 
 namespace vgui {
@@ -9,7 +10,7 @@ namespace vgui {
 void FramebufferDeleter::operator()(vk_u32* ptr) const noexcept
 {
     if (ptr != nullptr) {
-        free(ptr);
+        delete[] ptr;
     }
 }
 
@@ -20,8 +21,7 @@ auto FramebufferSurface::allocate(vk_u32 width, vk_u32 height) -> bool
         return false;
     }
 
-    const vk_usize bytes = pixel_count * sizeof(vk_u32);
-    auto* pixels = static_cast<vk_u32*>(malloc(bytes));
+    auto* pixels = new (std::nothrow) vk_u32[pixel_count];
     if (pixels == nullptr) {
         return false;
     }

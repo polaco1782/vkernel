@@ -20,7 +20,8 @@ ROOT_DIR        := $(realpath $(CURDIR)/../..)
 USER_INCLUDE    := ../include
 SYSROOT         := ../sysroot
 LIBC_DIR        := ../libc
-CPP_INCLUDE     := ../cpp/include
+CPP_DIR         := ../cpp
+CPP_INCLUDE     := $(CPP_DIR)/include
 KERNEL_INCLUDE  := $(ROOT_DIR)/include
 IMGUI_DIR       := ./imgui
 IMPLOT_DIR      := ./implot
@@ -79,16 +80,21 @@ LDFLAGS  += -Wl,-z,norelro
 LDFLAGS  += -Wl,--gc-sections
 LDFLAGS  += -L$(SYSROOT)/lib
 LDFLAGS  += -L$(LIBC_DIR)
+LDFLAGS  += -L$(CPP_DIR)
 
-# No -lstdc++ — cxxabi_stubs.cpp provides all the C++ ABI we need
-# without pulling in the host's glibc-dependent libstdc++.a.
 CRT0     := $(LIBC_DIR)/crt0.o
+CPP_RUNTIME_LIB := $(CPP_DIR)/libvkcpp.a
 LIBVKSYS := $(LIBC_DIR)/libvksys.a
-LIBS     := -Wl,--start-group -lvksys -lc -lm -lgcc -Wl,--end-group
+LIBS     := -Wl,--start-group -lvkcpp -lvksys -lc -lm -lgcc -Wl,--end-group
 
 LIBC_MAKE_ARGS :=
 ifdef DEBUG
 LIBC_MAKE_ARGS += DEBUG=$(DEBUG)
+endif
+
+CPP_MAKE_ARGS :=
+ifdef DEBUG
+CPP_MAKE_ARGS += DEBUG=$(DEBUG)
 endif
 
 # ---- Sources & objects --------------------------------------------------
@@ -110,8 +116,7 @@ IMPLOT_SRCS :=                         \
 IMPLOT_OBJS := $(IMPLOT_SRCS:.cpp=.o)
 IMPLOT_DEPS := $(IMPLOT_OBJS:.o=.d)
 
-OUR_SRCS   := cxxabi_stubs.cpp      \
-			  console_log.cpp       \
+OUR_SRCS   := console_log.cpp       \
 			  imgui_impl_vk.cpp     \
 			  kobj_panel.cpp        \
 			  launch_registry.cpp   \
@@ -130,7 +135,7 @@ TARGET     := vgui.vbin
 
 # ---- Phony targets ------------------------------------------------------
 
-.PHONY: all clean distclean help libc_build
+.PHONY: all clean distclean help libc_build cpp_build
 
 all: _check_imgui _check_implot _check_sysroot $(TARGET)
 
@@ -145,6 +150,7 @@ help:
 	@echo "  bash setup_imgui.sh   – download Dear ImGui sources"
 	@echo "  bash setup_implot.sh  – download ImPlot sources"
 	@echo "  make -C ../libc       – build newlib glue (crt0, libvksys)"
+	@echo "  make -C ../cpp        – build the freestanding C++ runtime (optional; auto-built here)"
 
 # ---- Dependency guards --------------------------------------------------
 
@@ -186,12 +192,18 @@ $(IMPLOT_DIR)/%.o: $(IMPLOT_DIR)/%.cpp
 libc_build:
 	@$(MAKE) -C $(LIBC_DIR) $(LIBC_MAKE_ARGS)
 
+cpp_build:
+	@$(MAKE) --no-print-directory -C $(CPP_DIR) CXX=$(CXX) AR=$(AR) $(CPP_MAKE_ARGS)
+
 $(CRT0) $(LIBVKSYS): libc_build
+	@:
+
+$(CPP_RUNTIME_LIB): cpp_build
 	@:
 
 # ---- Link ---------------------------------------------------------------
 
-$(TARGET): $(CRT0) $(LIBVKSYS) $(ALL_OBJS)
+$(TARGET): $(CRT0) $(LIBVKSYS) $(CPP_RUNTIME_LIB) $(ALL_OBJS)
 	@echo "  LD          $@"
 	@$(CXX) $(LDFLAGS) -o $@ $(CRT0) $(ALL_OBJS) $(LIBS)
 ifndef DEBUG

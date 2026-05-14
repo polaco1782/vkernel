@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <iostream>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -1452,14 +1453,14 @@ static bool init_framebuffer(AppState* app) {
     VK_CALL(framebuffer_info, &app->framebuffer);
     if (!app->framebuffer.valid || app->framebuffer.base == 0
         || app->framebuffer.width == 0 || app->framebuffer.height == 0) {
-        printf("No framebuffer available\n");
+        std::cout << "No framebuffer available\n";
         return false;
     }
 
     app->present_pixels = static_cast<vk_usize>(app->framebuffer.stride) * app->framebuffer.height;
     app->present_buffer = static_cast<vk_u32*>(malloc(app->present_pixels * sizeof(vk_u32)));
     if (app->present_buffer == nullptr) {
-        printf("Failed to allocate presentation buffer\n");
+        std::cout << "Failed to allocate presentation buffer\n";
         return false;
     }
 
@@ -1484,7 +1485,7 @@ int main(int argc, char** argv) {
 
     auto* app = static_cast<AppState*>(calloc(1, sizeof(AppState)));
     if (app == nullptr) {
-        printf("Failed to allocate app state\n");
+        std::cout << "Failed to allocate app state\n";
         return 1;
     }
 

@@ -1,0 +1,49 @@
+#ifndef VKCPP_IOSTREAM_H
+#define VKCPP_IOSTREAM_H
+
+#include <cstddef>
+#include <stdio.h>
+#include <string>
+
+namespace std {
+
+class ostream {
+public:
+    explicit ostream(FILE* stream = nullptr) noexcept : stream_(stream) {}
+
+    auto put(char ch) -> ostream&;
+    auto write(const char* data, size_t count) -> ostream&;
+    void flush();
+
+private:
+    FILE* stream_;
+};
+
+using ostream_manipulator = ostream& (*)(ostream&);
+
+auto operator<<(ostream& stream, ostream_manipulator manip) -> ostream&;
+auto operator<<(ostream& stream, const char* text) -> ostream&;
+auto operator<<(ostream& stream, const string& text) -> ostream&;
+auto operator<<(ostream& stream, char ch) -> ostream&;
+auto operator<<(ostream& stream, signed char ch) -> ostream&;
+auto operator<<(ostream& stream, unsigned char ch) -> ostream&;
+auto operator<<(ostream& stream, bool value) -> ostream&;
+auto operator<<(ostream& stream, short value) -> ostream&;
+auto operator<<(ostream& stream, unsigned short value) -> ostream&;
+auto operator<<(ostream& stream, int value) -> ostream&;
+auto operator<<(ostream& stream, unsigned int value) -> ostream&;
+auto operator<<(ostream& stream, long value) -> ostream&;
+auto operator<<(ostream& stream, unsigned long value) -> ostream&;
+auto operator<<(ostream& stream, long long value) -> ostream&;
+auto operator<<(ostream& stream, unsigned long long value) -> ostream&;
+auto operator<<(ostream& stream, const void* value) -> ostream&;
+
+auto endl(ostream& stream) -> ostream&;
+auto flush(ostream& stream) -> ostream&;
+
+extern ostream cout;
+extern ostream cerr;
+
+}  // namespace std
+
+#endif  // VKCPP_IOSTREAM_H
