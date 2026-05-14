@@ -15,8 +15,8 @@ extern "C" {
 namespace {
 
 constexpr vk_u32 kOutputSampleRate = 44100;
-/* AC'97 playback is a one-shot DMA window, so bigger submissions buy more
- * underrun tolerance when emulation or rendering stalls for a frame or two. */
+/* AC'97 playback still runs in coarse DMA windows, so bigger submissions buy
+ * more underrun tolerance when emulation or rendering stalls for a frame or two. */
 constexpr vk_u32 kPlayBlockFrames = 4096;
 constexpr vk_u32 kQueueCapacityFrames = 32768;
 constexpr vk_u32 kQueuePrimeFrames = kPlayBlockFrames * 2;
@@ -63,6 +63,8 @@ struct AudioState {
     vk_u32 queue_write;
     vk_u32 queue_count;
     int16_t play_block[kPlayBlockFrames * 2];
+    vk_u32 play_block_frames;
+    bool play_block_pending;
     int16_t* fm_scratch;
     size_t fm_scratch_frames;
     int16_t* psg_scratch;
@@ -510,18 +512,30 @@ static vk_u32 audio_pop_frames(AppState* app, int16_t* output, vk_u32 requested_
     return total_frames;
 }
 
+static bool audio_stage_play_block(AppState* app) {
+    if (app->audio.play_block_pending || app->audio.queue_count == 0)
+        return false;
+
+    app->audio.play_block_frames = audio_pop_frames(app, app->audio.play_block, kPlayBlockFrames);
+    app->audio.play_block_pending = app->audio.play_block_frames != 0;
+    return app->audio.play_block_pending;
+}
+
 static void audio_try_submit(AppState* app) {
-    if (VK_CALL(snd_is_playing) || app->audio.queue_count == 0)
-        return;
+    while (true) {
+        if (!app->audio.play_block_pending && !audio_stage_play_block(app))
+            return;
 
-    const vk_u32 frames = audio_pop_frames(app, app->audio.play_block, kPlayBlockFrames);
-    if (frames == 0)
-        return;
+        if (!VK_CALL(snd_play,
+                app->audio.play_block,
+                app->audio.play_block_frames * 2u * static_cast<vk_u32>(sizeof(int16_t)),
+                VK_SND_FORMAT_SIGNED_16_STEREO)) {
+            return;
+        }
 
-    VK_CALL(snd_play,
-        app->audio.play_block,
-        frames * 2u * static_cast<vk_u32>(sizeof(int16_t)),
-        VK_SND_FORMAT_SIGNED_16_STEREO);
+        app->audio.play_block_frames = 0;
+        app->audio.play_block_pending = false;
+    }
 }
 
 static void audio_reset(AppState* app) {
@@ -540,6 +554,8 @@ static void audio_reset(AppState* app) {
     app->audio.queue_read = 0;
     app->audio.queue_write = 0;
     app->audio.queue_count = 0;
+    app->audio.play_block_frames = 0;
+    app->audio.play_block_pending = false;
     memset(app->audio.frame_mix, 0, sizeof(app->audio.frame_mix));
     VK_CALL(snd_set_sample_rate, kOutputSampleRate);
     VK_CALL(snd_set_volume, 255, 255);

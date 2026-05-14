@@ -96,9 +96,14 @@ static_assert(sizeof(ac97_bd) == 8, "BD entry must be 8 bytes");
 inline constexpr u16 BD_IOC = (1u << 14);
 inline constexpr u16 BD_BUP = (1u << 15);
 
+inline constexpr u32 STREAM_BUFFER_COUNT = 2;
 inline constexpr u32 BDL_COUNT       = 32;   /* Max 32 entries in BDL */
 inline constexpr u32 DMA_BUFFER_SIZE = 65536; /* 64 KB DMA buffer */
+inline constexpr u32 DMA_PAGE_COUNT  = DMA_BUFFER_SIZE / 0x1000u;
 inline constexpr u64 PLAYBACK_WATCHDOG_SLACK_TICKS = 2; /* 20 ms at 100 Hz */
+inline constexpr u8 INVALID_BUFFER_SLOT = 0xFF;
+
+static_assert(STREAM_BUFFER_COUNT <= BDL_COUNT, "stream queue must fit in the AC97 BDL");
 
 /* ============================================================
  * Driver state
@@ -111,13 +116,19 @@ static pci_address s_pci_addr = {};
 /* BDL and DMA buffer — identity-mapped physical memory */
 static ac97_bd* s_bdl       = null;
 static u32      s_bdl_phys  = 0;
-static u8*      s_dma_buf   = null;
-static u32      s_dma_phys  = 0;
+static u8*      s_dma_buf[STREAM_BUFFER_COUNT]  = {};
+static u32      s_dma_phys[STREAM_BUFFER_COUNT] = {};
+static bool     s_dma_in_use[STREAM_BUFFER_COUNT] = {};
+static u8       s_desc_buffer[BDL_COUNT] = {};
+static u32      s_desc_frames[BDL_COUNT] = {};
 
 static u32  s_sample_rate      = 48000;
 static bool s_playing          = false;
 static u64  s_play_end_tick    = 0;
-static u32  s_current_length   = 0;  /* bytes submitted */
+static u32  s_queued_frames    = 0;
+static u8   s_queue_head_desc  = 0;
+static u8   s_queue_tail_desc  = 0;
+static u8   s_queue_count      = 0;
 
 /* ============================================================
  * NAM / NABM I/O helpers
@@ -126,10 +137,134 @@ static u32  s_current_length   = 0;  /* bytes submitted */
 static u16 nam_read16(u16 reg)             { return arch::inw(static_cast<u16>(s_nam_base + reg)); }
 static void nam_write16(u16 reg, u16 val)  { arch::outw(static_cast<u16>(s_nam_base + reg), val); }
 
+static u8 nabm_read8(u16 reg)              { return arch::inb(static_cast<u16>(s_nabm_base + reg)); }
 static u16 nabm_read16(u16 reg)            { return arch::inw(static_cast<u16>(s_nabm_base + reg)); }
 static void nabm_write8(u16 reg, u8 val)   { arch::outb(static_cast<u16>(s_nabm_base + reg), val); }
 static void nabm_write16(u16 reg, u16 val) { arch::outw(static_cast<u16>(s_nabm_base + reg), val); }
 static void nabm_write32(u16 reg, u32 val) { arch::outl(static_cast<u16>(s_nabm_base + reg), val); }
+
+static void ac97_clear_status() {
+    nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
+}
+
+static void ac97_reset_channel() {
+    nabm_write8(PO_CR, CR_RR);
+    for (int i = 0; i < 1000; ++i) {
+        arch::cpu_nop();
+    }
+    nabm_write8(PO_CR, 0);
+    ac97_clear_status();
+}
+
+static void ac97_reset_stream_state() {
+    s_playing = false;
+    s_play_end_tick = 0;
+    s_queued_frames = 0;
+    s_queue_head_desc = 0;
+    s_queue_tail_desc = 0;
+    s_queue_count = 0;
+
+    if (s_bdl != null) {
+        for (u32 i = 0; i < BDL_COUNT; ++i) {
+            s_bdl[i].addr = 0;
+            s_bdl[i].length = 0;
+            s_bdl[i].flags = 0;
+            s_desc_buffer[i] = INVALID_BUFFER_SLOT;
+            s_desc_frames[i] = 0;
+        }
+    }
+
+    for (u32 i = 0; i < STREAM_BUFFER_COUNT; ++i) {
+        s_dma_in_use[i] = false;
+    }
+}
+
+static auto ac97_acquire_buffer_slot() -> i32 {
+    for (u32 slot = 0; slot < STREAM_BUFFER_COUNT; ++slot) {
+        if (!s_dma_in_use[slot]) {
+            s_dma_in_use[slot] = true;
+            return static_cast<i32>(slot);
+        }
+    }
+
+    return -1;
+}
+
+static void ac97_update_watchdog() {
+    if (!s_playing || s_queued_frames == 0 || s_sample_rate == 0) {
+        s_play_end_tick = 0;
+        return;
+    }
+
+    u64 dur_ticks = ((u64)s_queued_frames * SCHED_TICK_HZ + s_sample_rate - 1u) / s_sample_rate;
+    s_play_end_tick = sched::tick_count()
+                    + (dur_ticks < 1u ? 1u : dur_ticks)
+                    + PLAYBACK_WATCHDOG_SLACK_TICKS;
+}
+
+static void ac97_release_head_buffer() {
+    if (s_queue_count == 0) {
+        return;
+    }
+
+    const u8 desc = s_queue_head_desc;
+    const u8 slot = s_desc_buffer[desc];
+    if (slot < STREAM_BUFFER_COUNT) {
+        s_dma_in_use[slot] = false;
+    }
+
+    if (s_desc_frames[desc] <= s_queued_frames) {
+        s_queued_frames -= s_desc_frames[desc];
+    } else {
+        s_queued_frames = 0;
+    }
+    s_desc_frames[desc] = 0;
+    s_desc_buffer[desc] = INVALID_BUFFER_SLOT;
+    s_bdl[desc].addr = 0;
+    s_bdl[desc].length = 0;
+    s_bdl[desc].flags = 0;
+
+    s_queue_head_desc = static_cast<u8>((s_queue_head_desc + 1u) % BDL_COUNT);
+    --s_queue_count;
+}
+
+static void ac97_refresh_playback_state() {
+    if (!s_playing) {
+        return;
+    }
+
+    const u16 sr = nabm_read16(PO_SR);
+    const u8 civ = nabm_read8(PO_CIV);
+
+    while (s_queue_count > 1 && s_queue_head_desc != civ) {
+        ac97_release_head_buffer();
+    }
+
+    if (sr & (SR_LVBCI | SR_BCIS | SR_FIFOE)) {
+        ac97_clear_status();
+    }
+
+    const bool fifo_error = (sr & SR_FIFOE) != 0;
+    const bool dma_halted = (sr & SR_DCH) != 0;
+
+    if (fifo_error || dma_halted) {
+        while (s_queue_count > 0) {
+            ac97_release_head_buffer();
+        }
+        nabm_write8(PO_CR, 0);
+        s_playing = false;
+        s_play_end_tick = 0;
+        return;
+    }
+
+    if (s_play_end_tick != 0 && sched::tick_count() >= s_play_end_tick) {
+        ac97_reset_channel();
+        ac97_reset_stream_state();
+        return;
+    }
+
+    ac97_update_watchdog();
+}
 
 /* ============================================================
  * Driver interface implementation
@@ -208,7 +343,7 @@ static bool ac97_init() {
     /* ---- Allocate BDL and DMA buffer ---- */
     /* BDL: 32 entries × 8 bytes = 256 bytes, needs to be below 4 GB for 32-bit addresses */
     physical_pages_ptr<ac97_bd> bdl(
-        reinterpret_cast<ac97_bd*>(g_phys_alloc.allocate_pages(1, PAGE_SIZE_4K, 0)),
+        reinterpret_cast<ac97_bd*>(g_phys_alloc.allocate_pages(1, 0x1000u, 0)),
         physical_pages_deleter { .page_count = 1 });
     if (!bdl) {
         log::error() << "ac97: failed to allocate BDL page";
@@ -216,31 +351,44 @@ static bool ac97_init() {
     }
     s_bdl_phys = static_cast<u32>(reinterpret_cast<phys_addr>(bdl.get()));
     s_bdl      = bdl.get();
-    memory::set(s_bdl, 0, PAGE_SIZE_4K);
+    memory::set(s_bdl, 0, 0x1000u);
 
-    /* DMA buffer — 64 KB, 4K aligned */
-    constexpr u32 DMA_PAGE_COUNT = DMA_BUFFER_SIZE / PAGE_SIZE_4K;
-    physical_pages_ptr<u8> dma_buf(
-        reinterpret_cast<u8*>(g_phys_alloc.allocate_pages(
-            DMA_PAGE_COUNT, PAGE_SIZE_4K, 0)),
-        physical_pages_deleter { .page_count = DMA_PAGE_COUNT });
-    if (!dma_buf) {
-        log::error() << "ac97: failed to allocate DMA buffer";
-        return false;
+    /* DMA buffers — two full-size windows so userspace can queue the next
+     * block before the current one drains and avoid stop/start pops. */
+    for (u32 slot = 0; slot < STREAM_BUFFER_COUNT; ++slot) {
+        physical_pages_ptr<u8> dma_buf(
+            reinterpret_cast<u8*>(g_phys_alloc.allocate_pages(
+                DMA_PAGE_COUNT, 0x1000u, 0)),
+            physical_pages_deleter { .page_count = DMA_PAGE_COUNT });
+        if (!dma_buf) {
+            log::error() << "ac97: failed to allocate DMA buffer slot";
+            for (u32 previous = 0; previous < slot; ++previous) {
+                g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(s_dma_buf[previous]), DMA_PAGE_COUNT);
+                s_dma_buf[previous] = null;
+                s_dma_phys[previous] = 0;
+            }
+            return false;
+        }
+
+        s_dma_phys[slot] = static_cast<u32>(reinterpret_cast<phys_addr>(dma_buf.get()));
+        s_dma_buf[slot] = dma_buf.get();
+        memory::set(s_dma_buf[slot], 0, DMA_BUFFER_SIZE);
+        (void)dma_buf.release();
     }
-    s_dma_phys = static_cast<u32>(reinterpret_cast<phys_addr>(dma_buf.get()));
-    s_dma_buf  = dma_buf.get();
-    memory::set(s_dma_buf, 0, DMA_BUFFER_SIZE);
 
-    log::debug() << "ac97: DMA buffer at " << log::hex(static_cast<u64>(s_dma_phys), 1, true, false) << ", BDL at " << log::hex(static_cast<u64>(s_bdl_phys), 1, true, false);
+    log::debug() << "ac97: DMA buffers at "
+                 << log::hex(static_cast<u64>(s_dma_phys[0]), 1, true, false)
+                 << " and "
+                 << log::hex(static_cast<u64>(s_dma_phys[1]), 1, true, false)
+                 << ", BDL at "
+                 << log::hex(static_cast<u64>(s_bdl_phys), 1, true, false);
 
     /* Point the hardware at our BDL */
     nabm_write32(PO_BDBAR, s_bdl_phys);
 
     (void)bdl.release();
-    (void)dma_buf.release();
 
-    s_playing = false;
+    ac97_reset_stream_state();
     log::info() << "ac97: initialised";
     return true;
 }
@@ -249,19 +397,21 @@ static void ac97_shutdown() {
     /* Stop DMA */
     nabm_write8(PO_CR, 0);
     /* Clear status */
-    nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
-    if (s_dma_buf != null) {
-        g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(s_dma_buf),
-                                DMA_BUFFER_SIZE / PAGE_SIZE_4K);
-        s_dma_buf = null;
-        s_dma_phys = 0;
+    ac97_clear_status();
+    for (u32 slot = 0; slot < STREAM_BUFFER_COUNT; ++slot) {
+        if (s_dma_buf[slot] != null) {
+            g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(s_dma_buf[slot]), DMA_PAGE_COUNT);
+            s_dma_buf[slot] = null;
+            s_dma_phys[slot] = 0;
+            s_dma_in_use[slot] = false;
+        }
     }
     if (s_bdl != null) {
         g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(s_bdl), 1);
         s_bdl = null;
         s_bdl_phys = 0;
     }
-    s_playing = false;
+    ac97_reset_stream_state();
     log::info() << "ac97: shutdown";
 }
 
@@ -274,30 +424,40 @@ static bool ac97_set_sample_rate(u32 rate_hz) {
     if (actual != static_cast<u16>(rate_hz)) {
         /* Some codecs only support 48000; accept whatever it gives us */
         s_sample_rate = actual;
-        log::info() << "ac97: rate adjusted to " << actual << " Hz";
+        log::info() << "ac97: rate adjusted to codec-supported value";
     }
     return true;
 }
 
 static bool ac97_play(const u8* samples, u32 length, sound_format fmt) {
-    if (!s_dma_buf || !s_bdl || length == 0) return false;
+    if (!s_bdl || length == 0) return false;
+
+    ac97_refresh_playback_state();
+    if (!s_playing) {
+        ac97_reset_channel();
+        ac97_reset_stream_state();
+        nabm_write32(PO_BDBAR, s_bdl_phys);
+    } else if (s_queue_count >= BDL_COUNT) {
+        return false;
+    }
+
+    const i32 buffer_slot_index = ac97_acquire_buffer_slot();
+    if (buffer_slot_index < 0) {
+        return false;
+    }
+
+    const u8 slot = static_cast<u8>(buffer_slot_index);
+    const u8 desc = s_queue_tail_desc;
+    if (s_dma_buf[slot] == null) {
+        s_dma_in_use[slot] = false;
+        return false;
+    }
 
     /* Clamp to DMA buffer size */
     u32 transfer = length;
     if (transfer > DMA_BUFFER_SIZE) {
         transfer = DMA_BUFFER_SIZE;
     }
-
-    /* Stop current playback first */
-    nabm_write8(PO_CR, CR_RR);
-    for (int i = 0; i < 1000; ++i) arch::cpu_nop();
-    nabm_write8(PO_CR, 0);
-
-    /* Clear status bits */
-    nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
-
-    /* Copy samples to DMA buffer */
-    memory::copy(s_dma_buf, samples, transfer);
 
     /* Set sample rate */
     nam_write16(NAM_PCM_FRONT_RATE, static_cast<u16>(s_sample_rate));
@@ -315,10 +475,10 @@ static bool ac97_play(const u8* samples, u32 length, sound_format fmt) {
         if (num_frames * 4 > DMA_BUFFER_SIZE) {
             num_frames = DMA_BUFFER_SIZE / 4;
         }
-        auto* dst = reinterpret_cast<i16*>(s_dma_buf);
+        auto* dst = reinterpret_cast<i16*>(s_dma_buf[slot]);
         /* Expand backwards: each src byte → two i16 words (L = R = sample). */
         for (i32 i = static_cast<i32>(num_frames) - 1; i >= 0; --i) {
-            i16 s = static_cast<i16>((static_cast<i16>(s_dma_buf[i]) - 128) << 8);
+            i16 s = static_cast<i16>((static_cast<i16>(samples[i]) - 128) << 8);
             dst[i * 2]     = s;   /* left  */
             dst[i * 2 + 1] = s;   /* right */
         }
@@ -326,80 +486,43 @@ static bool ac97_play(const u8* samples, u32 length, sound_format fmt) {
         transfer     = num_frames * 4;   /* total bytes = frames × 4 */
     } else {
         /* signed_16 stereo: transfer bytes / 2 = total 16-bit words */
+        memory::copy(s_dma_buf[slot], samples, transfer);
         sample_count = transfer / 2;
     }
 
-    /* Fill BDL — use a single entry pointing to the entire buffer */
-    s_bdl[0].addr   = s_dma_phys;
-    s_bdl[0].length = static_cast<u16>(sample_count & 0xFFFF);
-    s_bdl[0].flags  = BD_IOC | BD_BUP;
+    s_bdl[desc].addr   = s_dma_phys[slot];
+    s_bdl[desc].length = static_cast<u16>(sample_count & 0xFFFF);
+    s_bdl[desc].flags  = BD_IOC | BD_BUP;
 
-    /* Clear remaining entries */
-    for (u32 i = 1; i < BDL_COUNT; ++i) {
-        s_bdl[i].addr   = 0;
-        s_bdl[i].length = 0;
-        s_bdl[i].flags  = 0;
+    s_desc_buffer[desc] = slot;
+    s_desc_frames[desc] = sample_count / 2;
+    s_queued_frames += s_desc_frames[desc];
+    if (s_queue_count == 0) {
+        s_queue_head_desc = desc;
+    }
+    s_queue_tail_desc = static_cast<u8>((desc + 1u) % BDL_COUNT);
+    ++s_queue_count;
+
+    nabm_write8(PO_LVI, desc);
+
+    if (!s_playing) {
+        nabm_write8(PO_CR, CR_RPBM | CR_LVBIE | CR_IOCE);
+        s_playing = true;
     }
 
-    /* Set BDL base address */
-    nabm_write32(PO_BDBAR, s_bdl_phys);
-
-    /* Set Last Valid Index = 0 (only one buffer entry) */
-    nabm_write8(PO_LVI, 0);
-
-    /* Keep a coarse watchdog only as a last resort.  The scheduler tick is
-     * 10 ms, so treating the nominal end tick as exact completion truncates
-     * streamed buffers and causes audible clicks at block boundaries.
-     * sample_count is always total 16-bit words; frames = sample_count / 2
-     * because AC97 is always stereo (2 words per frame). */
-    u32 frames = sample_count / 2;
-    u64 dur_ticks = ((u64)frames * SCHED_TICK_HZ + s_sample_rate - 1u) / s_sample_rate;
-    s_play_end_tick = sched::tick_count()
-                    + (dur_ticks < 1u ? 1u : dur_ticks)
-                    + PLAYBACK_WATCHDOG_SLACK_TICKS;
-    s_current_length = transfer;
-
-    /* Start DMA playback */
-    nabm_write8(PO_CR, CR_RPBM | CR_LVBIE | CR_IOCE);
-
-    s_playing = true;
+    ac97_update_watchdog();
     return true;
 }
 
 static void ac97_stop() {
     nabm_write8(PO_CR, 0);  /* Stop DMA */
-    nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);  /* Clear status */
-    s_playing = false;
-    s_play_end_tick = 0;
+    ac97_clear_status();
+    ac97_reset_stream_state();
 }
 
 static bool ac97_is_playing() {
-    if (!s_playing) return false;
-
-    /* Check hardware status.  Do not treat CELV as completion: with a
-     * single valid descriptor, "current equals last valid" is expected
-     * for most of the buffer lifetime and can become true long before
-     * playback has actually drained. */
-    u16 sr = nabm_read16(PO_SR);
-    if (sr & (SR_DCH | SR_LVBCI | SR_BCIS | SR_FIFOE)) {
-        /* Clear status bits */
-        nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
-        s_playing = false;
-        s_play_end_tick = 0;
-        return false;
-    }
-
-    /* Last-resort watchdog: only force-stop playback if the hardware never
-     * reports completion after a generous margin beyond the expected end. */
-    if (s_play_end_tick != 0 && sched::tick_count() >= s_play_end_tick) {
-        nabm_write8(PO_CR, 0);
-        nabm_write16(PO_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
-        s_playing = false;
-        s_play_end_tick = 0;
-        return false;
-    }
-
-    return true;
+    ac97_refresh_playback_state();
+    return s_playing;
 }
 
 static void ac97_set_volume(u8 left, u8 right) {
