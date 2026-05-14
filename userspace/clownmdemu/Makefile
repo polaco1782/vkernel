@@ -68,7 +68,7 @@ LIBS   := -Wl,--start-group -lvkcpp -lvksys -lc -lm -lgcc -Wl,--end-group
 
 TARGET := clownmdemu.vbin
 
-CPP_SRCS := main.cpp
+CPP_SRCS := main.cpp common.cpp audio.cpp browser.cpp app.cpp hqx.cpp hq2x.cpp
 C_SRCS   := $(VENDOR_DIR)/unity.c
 OBJS     := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)
 
@@ -79,7 +79,7 @@ all: $(CPP_RUNTIME_LIB) $(TARGET)
 $(CPP_RUNTIME_LIB):
 	@$(MAKE) --no-print-directory -C $(CPP_DIR) CXX=$(CXX) AR=$(AR) $(DEBUG_ARG)
 
-main.o: main.cpp
+%.o: %.cpp
 	@echo "  CXX     $<"
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
