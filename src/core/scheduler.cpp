@@ -567,6 +567,32 @@ auto sched::create_task(const char* name, task_entry_fn entry, void* user_data) 
     return create_task(string_view(name), entry, user_data);
 }
 
+auto sched::replace_current_task_context(string_view name, void* user_data) -> bool {
+    static_string<32> updated_name;
+    if (!updated_name.assign(name)) {
+        return false;
+    }
+
+    g_sched_lock.acquire();
+    const usize cur = cpu_current_task();
+    if (cur >= g_task_count || g_tasks[cur].state == task_state::terminated) {
+        g_sched_lock.release();
+        return false;
+    }
+
+    g_tasks[cur].name = updated_name;
+    g_tasks[cur].user_data = user_data;
+    if (user_data != null) {
+        static_cast<process::process_task_context*>(user_data)->task_id = g_tasks[cur].id;
+    }
+    g_sched_lock.release();
+    return true;
+}
+
+auto sched::replace_current_task_context(const char* name, void* user_data) -> bool {
+    return replace_current_task_context(string_view(name), user_data);
+}
+
 void sched::yield() {
     if (!g_scheduler_active || g_task_count < 2) return;
     arch::disable_interrupts();

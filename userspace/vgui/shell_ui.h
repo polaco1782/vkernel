@@ -17,7 +17,9 @@ public:
     void initialize(const vk_framebuffer_info_t& framebuffer);
 
     [[nodiscard]] auto running() const -> bool { return running_; }
+    [[nodiscard]] auto drop_to_shell_requested() const -> bool { return drop_to_shell_requested_; }
     void request_quit(ConsoleLog* log = nullptr, vk::string_view message = vk::string_view());
+    void request_drop_to_shell(ConsoleLog* log = nullptr, vk::string_view message = vk::string_view());
     void reset_counter(ConsoleLog* log = nullptr, vk::string_view message = vk::string_view());
 
     void draw(const vk_framebuffer_info_t& framebuffer,
@@ -36,6 +38,7 @@ private:
     void draw_about_modal();
 
     bool running_ = true;
+    bool drop_to_shell_requested_ = false;
     bool show_info_ = true;
     bool show_console_ = true;
     bool show_settings_ = false;

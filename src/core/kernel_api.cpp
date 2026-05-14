@@ -280,6 +280,20 @@ static vk_i64 stub_run_cmdline(const char* command_line) {
     return process::run_command_line(command_line, current_console_interface());
 }
 
+static int stub_exec_cmdline(const char* command_line) {
+    if (command_line == null) return -1;
+
+    vk_framebuffer_info_t fb_override = {};
+    const vk_framebuffer_info_t* fb_ptr = null;
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx != null && ctx->fb_override_valid) {
+        fb_override = ctx->fb_override;
+        fb_ptr = &fb_override;
+    }
+
+    return process::exec_command_line(command_line, current_console_interface(), fb_ptr);
+}
+
 static int stub_set_compositor_active(vk_u32 active) {
     s_compositor_active = (active != 0u);
     return 1;
@@ -896,6 +910,7 @@ void init() {
     /* process command line */
     s_api.vk_get_cmdline = stub_get_cmdline;
     s_api.vk_terminate_task = stub_terminate_task;
+    s_api.vk_exec_cmdline = stub_exec_cmdline;
 
     s_api_ready = true;
 }

@@ -410,11 +410,136 @@ int _wait(int* status)
     return -1;
 }
 
+#define VK_EXEC_CMDLINE_MAX 256
+
+static int _exec_arg_needs_quotes(const char* arg)
+{
+    if (!arg || *arg == '\0') {
+        return 1;
+    }
+
+    while (*arg != '\0') {
+        if (*arg == ' ' || *arg == '\t' || *arg == '\n' || *arg == '\r'
+            || *arg == '"' || *arg == '\'') {
+            return 1;
+        }
+        ++arg;
+    }
+
+    return 0;
+}
+
+static char _exec_quote_char(const char* arg)
+{
+    int has_single_quote = 0;
+    int has_double_quote = 0;
+
+    while (arg && *arg != '\0') {
+        if (*arg == '\'') {
+            has_single_quote = 1;
+        } else if (*arg == '"') {
+            has_double_quote = 1;
+        }
+        ++arg;
+    }
+
+    if (has_double_quote && !has_single_quote) {
+        return '\'';
+    }
+
+    return '"';
+}
+
+static int _exec_append_char(char* out, vk_usize out_cap, vk_usize* len, char ch)
+{
+    if (!out || !len || *len + 1 >= out_cap) {
+        return 0;
+    }
+
+    out[*len] = ch;
+    ++(*len);
+    out[*len] = '\0';
+    return 1;
+}
+
+static int _exec_append_arg(char* out, vk_usize out_cap, vk_usize* len, const char* arg)
+{
+    if (!out || !len || !arg) {
+        return 0;
+    }
+
+    if (*len != 0 && !_exec_append_char(out, out_cap, len, ' ')) {
+        return 0;
+    }
+
+    if (!_exec_arg_needs_quotes(arg)) {
+        while (*arg != '\0') {
+            if (!_exec_append_char(out, out_cap, len, *arg++)) {
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+    const char quote = _exec_quote_char(arg);
+    if (!_exec_append_char(out, out_cap, len, quote)) {
+        return 0;
+    }
+
+    while (*arg != '\0') {
+        if (*arg == quote) {
+            if (!_exec_append_char(out, out_cap, len, '\\')) {
+                return 0;
+            }
+        }
+        if (!_exec_append_char(out, out_cap, len, *arg++)) {
+            return 0;
+        }
+    }
+
+    return _exec_append_char(out, out_cap, len, quote);
+}
+
 int _execve(const char* name, char* const argv[], char* const env[])
 {
-    (void)name;
-    (void)argv;
     (void)env;
-    errno = ENOSYS;
+
+    if (!name) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    if (!VK_CALL(file_exists, name)) {
+        errno = ENOENT;
+        return -1;
+    }
+
+    if (!vk_get_api()->vk_exec_cmdline) {
+        errno = ENOSYS;
+        return -1;
+    }
+
+    char cmdline[VK_EXEC_CMDLINE_MAX] = {0};
+    vk_usize len = 0;
+    if (!_exec_append_arg(cmdline, sizeof(cmdline), &len, name)) {
+        errno = E2BIG;
+        return -1;
+    }
+
+    if (argv && argv[0]) {
+        for (int index = 1; argv[index] != 0; ++index) {
+            if (!_exec_append_arg(cmdline, sizeof(cmdline), &len, argv[index])) {
+                errno = E2BIG;
+                return -1;
+            }
+        }
+    }
+
+    if (vk_get_api()->vk_exec_cmdline(cmdline) < 0) {
+        errno = ENOEXEC;
+        return -1;
+    }
+
+    errno = ENOEXEC;
     return -1;
 }

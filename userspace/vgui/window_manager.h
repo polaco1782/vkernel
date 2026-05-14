@@ -41,6 +41,7 @@ public:
     [[nodiscard]] auto launch_windowed_app(vk::string_view path, vk_u32 width, vk_u32 height) -> vk_i64;
     [[nodiscard]] auto route_key_event(const vk_key_event_t& event) -> bool;
     [[nodiscard]] auto route_mouse_event(const vk_mouse_event_t& event) -> bool;
+    void shutdown();
 
     void draw_windows();
     void clear_focus_if_host_window_focused();

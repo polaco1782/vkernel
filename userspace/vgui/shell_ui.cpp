@@ -192,6 +192,16 @@ void ShellUi::request_quit(ConsoleLog* log, vk::string_view message)
     if (log != nullptr && !message.empty()) {
         log->add(message);
     }
+    drop_to_shell_requested_ = false;
+    running_ = false;
+}
+
+void ShellUi::request_drop_to_shell(ConsoleLog* log, vk::string_view message)
+{
+    if (log != nullptr && !message.empty()) {
+        log->add(message);
+    }
+    drop_to_shell_requested_ = true;
     running_ = false;
 }
 
@@ -251,6 +261,10 @@ void ShellUi::draw_menu_bar(LaunchRegistry& launch_registry, WindowManager& wind
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New", "Ctrl+N")) {
             reset_counter(&log, "File > New: counter reset.");
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Drop to Shell")) {
+            request_drop_to_shell(&log, "File > Drop to Shell: replacing vGUI with shell.vbin.");
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) {

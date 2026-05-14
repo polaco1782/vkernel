@@ -135,6 +135,10 @@ void wait_for_task(u64 task_id);
  */
 auto detach_current_task() -> void*;
 
+/* Replace the current task's visible name and attached user_data. */
+[[nodiscard]] auto replace_current_task_context(string_view name, void* user_data) -> bool;
+[[nodiscard]] auto replace_current_task_context(const char* name, void* user_data) -> bool;
+
 /* Query current task info */
 [[nodiscard]] auto current_task_id() -> u64;
 [[nodiscard]] auto current_task_name_view() -> string_view;

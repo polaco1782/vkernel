@@ -223,6 +223,52 @@ auto WindowManager::launch_windowed_app(vk::string_view path, vk_u32 width, vk_u
     return task;
 }
 
+void WindowManager::shutdown()
+{
+    bool waiting_for_apps = false;
+    for (int index = 0; index < k_max_apps; ++index) {
+        AppWindow& app = apps_[index];
+        if (!app.used) {
+            continue;
+        }
+
+        if (app_task_running(app.task_id)) {
+            if (!app.close_requested) {
+                request_app_termination(app);
+                app.close_requested = true;
+            }
+            waiting_for_apps = true;
+        }
+    }
+
+    while (waiting_for_apps) {
+        waiting_for_apps = false;
+        for (int index = 0; index < k_max_apps; ++index) {
+            AppWindow& app = apps_[index];
+            if (app.used && app_task_running(app.task_id)) {
+                waiting_for_apps = true;
+                break;
+            }
+        }
+
+        if (waiting_for_apps) {
+            VK_CALL(sleep, 1);
+        }
+    }
+
+    for (int index = 0; index < k_max_apps; ++index) {
+        AppWindow& app = apps_[index];
+        if (app.used) {
+            release_app_slot(app);
+        }
+    }
+
+    focused_app_ = -1;
+    if (vk_get_api()->vk_set_compositor_default_fb) {
+        (void)vk_get_api()->vk_set_compositor_default_fb(nullptr);
+    }
+}
+
 void WindowManager::draw_windows()
 {
     for (int index = 0; index < k_max_apps; ++index) {

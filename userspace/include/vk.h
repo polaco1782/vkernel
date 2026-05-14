@@ -39,6 +39,12 @@ static inline int vk_terminate_task(vk_u64 task_id) {
     return 0;
 }
 
+static inline int vk_exec_cmdline(const char* command_line) {
+    if (vk_get_api()->vk_exec_cmdline)
+        return vk_get_api()->vk_exec_cmdline(command_line);
+    return -1;
+}
+
 static inline vk_usize vk_json_copy_escaped(char* out, vk_usize out_cap, vk_usize pos, const char* s) {
     vk_usize i = 0;
     if (!s) return pos;

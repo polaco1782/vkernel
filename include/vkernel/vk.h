@@ -171,11 +171,12 @@ typedef struct vk_api {
     vk_usize (*vk_get_cmdline)(char* out, vk_usize out_cap);
     vk_i64   (*vk_run_cmdline)(const char* command_line);
     int      (*vk_terminate_task)(vk_u64 task_id);
+    int      (*vk_exec_cmdline)(const char* command_line);
 
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 28ULL
+#define VK_API_VERSION 29ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

@@ -48,6 +48,24 @@ auto run_command_line(const char* command_line, console_interface interface) -> 
 auto run_command_line(string_view command_line, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64;
 auto run_command_line(const char* command_line, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64;
 
+/*
+ * Replace the current task's process image with a new binary.
+ * Returns -1 on load/setup error. On success this does not return.
+ */
+auto exec(string_view filename) -> int;
+auto exec(const char* filename) -> int;
+auto exec(string_view filename, console_interface interface) -> int;
+auto exec(const char* filename, console_interface interface) -> int;
+auto exec(string_view filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> int;
+auto exec(const char* filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> int;
+
+auto exec_command_line(string_view command_line) -> int;
+auto exec_command_line(const char* command_line) -> int;
+auto exec_command_line(string_view command_line, console_interface interface) -> int;
+auto exec_command_line(const char* command_line, console_interface interface) -> int;
+auto exec_command_line(string_view command_line, console_interface interface, const vk_framebuffer_info_t* fb_override) -> int;
+auto exec_command_line(const char* command_line, console_interface interface, const vk_framebuffer_info_t* fb_override) -> int;
+
 } // namespace process
 } // namespace vk
 

@@ -43,6 +43,12 @@ struct address_space_deleter {
 };
 using address_space_ptr = unique_ptr<vm::address_space, address_space_deleter>;
 
+struct loaded_process {
+    process_context_ptr ctx {};
+    process_image_ptr image_base_owner {};
+    address_space_ptr owned_address_space {};
+};
+
 static auto is_ascii_space(char ch) -> bool {
     return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
 }
@@ -171,12 +177,165 @@ static void copy_command_line(process_task_context* ctx,
     ctx->command_line_len = len;
 }
 
+static void discard_loaded_process(loaded_process& loaded) {
+    auto* ctx = loaded.ctx.get();
+    if (ctx != null && ctx->image_vm_mapped && ctx->image_phys != 0 && ctx->address_space != null) {
+        vm::unmap_range(ctx->address_space,
+                        reinterpret_cast<virt_addr>(ctx->image_base),
+                        ctx->image_size);
+        g_phys_alloc.free_pages(ctx->image_phys,
+                                static_cast<u32>((ctx->image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K));
+    }
+
+    loaded.ctx.reset();
+    loaded.image_base_owner.reset();
+    loaded.owned_address_space.reset();
+}
+
+static auto load_process_context(string_view filename,
+                                 string_view command_line,
+                                 console_interface interface,
+                                 const vk_framebuffer_info_t* fb_override,
+                                 loaded_process& loaded) -> bool {
+    kernel_heap_ptr<u8> owned_file;
+    usize file_size = 0;
+    const u8* data = fs::load_file(filename, owned_file, file_size);
+    if (data == null) {
+        static_string<128> filename_buf(filename);
+        log::warn() << "process: file not found: " << filename_buf.c_str();
+        return false;
+    }
+
+    static_string<128> filename_buf(filename);
+    log::info() << "Loading binary: " << filename_buf.c_str() << " (" << file_size << " bytes)";
+
+    const usize sz = file_size;
+
+    u64   entry_addr      = 0;
+    u8*   image_base_raw  = null;
+    u64   image_size      = 0;
+    bool  image_from_phys = false;
+    phys_addr image_phys  = 0;
+    bool  image_vm_mapped = false;
+
+    auto* address_space = vm::create_address_space();
+    if (address_space == null) {
+        log::error() << "process: failed to create address space";
+        return false;
+    }
+    address_space_ptr owned_address_space(address_space);
+
+    const bool is_elf = sz >= 4 &&
+        data[0] == 0x7Fu && data[1] == 'E' &&
+        data[2] == 'L'   && data[3] == 'F';
+    const bool is_pe = sz >= 2 &&
+        data[0] == 'M' && data[1] == 'Z';
+
+    if (is_elf) {
+        auto result = elf::load_into_address_space(data, sz, address_space, vm::USER_IMAGE_BASE);
+        if (result.error != elf::elf_error::ok) {
+            log::error() << "process: ELF load failed: " << elf::error_string(result.error);
+            return false;
+        }
+        entry_addr      = result.entry;
+        image_base_raw  = result.image_base;
+        image_size      = result.image_size;
+        image_from_phys = result.image_from_phys;
+        image_phys      = result.image_phys;
+        image_vm_mapped = result.image_vm_mapped;
+    } else if (is_pe) {
+        auto result = pe::load(data, sz);
+        if (result.error != pe::pe_error::ok) {
+            log::error() << "process: PE load failed: " << pe::error_string(result.error);
+            return false;
+        }
+        entry_addr = result.entry;
+        image_base_raw = result.image_base;
+        image_size = result.image_size;
+    } else {
+        log::error() << "process: unknown binary format (not ELF or PE)";
+        return false;
+    }
+
+    process_image_ptr image_base_owner;
+    if (!image_vm_mapped) {
+        image_base_owner = process_image_ptr(
+            image_base_raw,
+            kernel_allocation_deleter {
+                .size = static_cast<usize>(image_size),
+                .from_phys = image_from_phys,
+            });
+    }
+
+    log::info() << "Executing at " << log::hex(static_cast<u64>(static_cast<unsigned long long>(entry_addr)), 1, true, false);
+    phys_addr entry_phys = 0;
+    u64 entry_flags = 0;
+    const bool entry_mapped = vm::debug_resolve(address_space, entry_addr, &entry_phys, &entry_flags);
+    log::debug() << "vmtrace: process image filename=" << filename_buf.c_str()
+                 << " as=" << reinterpret_cast<const void*>(address_space)
+                 << " pml4=" << reinterpret_cast<const void*>(static_cast<usize>(address_space->pml4_phys))
+                 << " image_base=" << reinterpret_cast<const void*>(image_base_raw)
+                 << " image_phys=" << reinterpret_cast<const void*>(static_cast<usize>(image_phys))
+                 << " image_size=" << static_cast<unsigned long long>(image_size)
+                 << " entry_mapped=" << (entry_mapped ? "yes" : "no")
+                 << " entry_phys=" << reinterpret_cast<const void*>(static_cast<usize>(entry_phys))
+                 << " entry_flags=" << log::hex(entry_flags, 1, true, false);
+
+    kernel_api::init();
+
+    process_context_ptr ctx(
+        static_cast<process_task_context*>(g_kernel_heap.allocate(sizeof(process_task_context))));
+    if (!ctx) {
+        if (image_vm_mapped && image_phys != 0) {
+            g_phys_alloc.free_pages(image_phys,
+                                    static_cast<u32>((image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K));
+        }
+        log::error() << "process: out of memory while creating task context";
+        return false;
+    }
+
+    ctx->entry           = entry_addr;
+    ctx->image_base      = image_base_raw;
+    ctx->image_size      = image_size;
+    ctx->image_from_phys = image_from_phys;
+    ctx->address_space   = owned_address_space.get();
+    ctx->image_phys      = image_phys;
+    ctx->image_vm_mapped = image_vm_mapped;
+    ctx->interface       = interface;
+    ctx->key_q_head      = 0;
+    ctx->key_q_tail      = 0;
+    ctx->mouse_q_head    = 0;
+    ctx->mouse_q_tail    = 0;
+    copy_command_line(ctx.get(), command_line, filename);
+    if (!remap_framebuffer_override(ctx->address_space, fb_override, ctx->fb_override, ctx->fb_override_valid)) {
+        if (image_vm_mapped && image_phys != 0) {
+            g_phys_alloc.free_pages(image_phys,
+                                    static_cast<u32>((image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K));
+        }
+        log::error() << "process: failed to map framebuffer override";
+        return false;
+    }
+    ctx->task_id = 0;
+    ctx->fb_text_col = 0;
+    ctx->fb_text_row = 0;
+    ctx->allocations = null;
+
+    loaded.ctx = move(ctx);
+    loaded.image_base_owner = move(image_base_owner);
+    loaded.owned_address_space = move(owned_address_space);
+    return true;
+}
+
 } // namespace
 
 static auto run_impl(string_view filename,
                      string_view command_line,
                      console_interface interface,
                      const vk_framebuffer_info_t* fb_override) -> i64;
+static auto exec_impl(string_view filename,
+                      string_view command_line,
+                      console_interface interface,
+                      const vk_framebuffer_info_t* fb_override) -> int;
 
 static auto current_console_interface() -> console_interface {
     auto* ctx = static_cast<process_task_context*>(sched::current_task_user_data());
@@ -285,6 +444,56 @@ auto run(string_view filename, console_interface interface, const vk_framebuffer
     return run_impl(filename, filename, interface, fb_override);
 }
 
+auto exec(string_view filename) -> int {
+    return exec(filename, current_console_interface());
+}
+
+auto exec(const char* filename) -> int {
+    return exec(string_view(filename), current_console_interface());
+}
+
+auto exec(string_view filename, console_interface interface) -> int {
+    return exec(filename, interface, null);
+}
+
+auto exec(string_view filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> int {
+    return exec_impl(filename, filename, interface, fb_override);
+}
+
+auto exec_command_line(string_view command_line) -> int {
+    return exec_command_line(command_line, current_console_interface());
+}
+
+auto exec_command_line(const char* command_line) -> int {
+    return exec_command_line(string_view(command_line), current_console_interface());
+}
+
+auto exec_command_line(string_view command_line, console_interface interface) -> int {
+    return exec_command_line(command_line, interface, null);
+}
+
+auto exec_command_line(const char* command_line, console_interface interface) -> int {
+    return exec_command_line(string_view(command_line), interface, null);
+}
+
+auto exec_command_line(string_view command_line,
+                       console_interface interface,
+                       const vk_framebuffer_info_t* fb_override) -> int {
+    static_string<128> program;
+    if (!parse_program_path(command_line, program)) {
+        log::warn() << "process: empty command line";
+        return -1;
+    }
+
+    return exec_impl(program.view(), command_line, interface, fb_override);
+}
+
+auto exec_command_line(const char* command_line,
+                       console_interface interface,
+                       const vk_framebuffer_info_t* fb_override) -> int {
+    return exec_command_line(string_view(command_line), interface, fb_override);
+}
+
 auto run_command_line(string_view command_line) -> i64 {
     return run_command_line(command_line, current_console_interface());
 }
@@ -323,153 +532,71 @@ static auto run_impl(string_view filename,
                      string_view command_line,
                      console_interface interface,
                      const vk_framebuffer_info_t* fb_override) -> i64 {
-    kernel_heap_ptr<u8> owned_file;
-    usize file_size = 0;
-    const u8* data = fs::load_file(filename, owned_file, file_size);
-    if (data == null) {
-        static_string<128> filename_buf(filename);
-        log::warn() << "process: file not found: " << filename_buf.c_str();
-        return -1;
-    }
-
+    loaded_process loaded;
     static_string<128> filename_buf(filename);
-    log::info() << "Loading binary: " << filename_buf.c_str() << " (" << file_size << " bytes)";
-
-    const usize sz = file_size;
-
-    u64   entry_addr      = 0;
-    u8*   image_base_raw  = null;
-    u64   image_size      = 0;
-    bool  image_from_phys = false;
-    phys_addr image_phys  = 0;
-    bool  image_vm_mapped = false;
-
-    auto* address_space = vm::create_address_space();
-    if (address_space == null) {
-        log::error() << "process: failed to create address space";
-        return -1;
-    }
-    address_space_ptr owned_address_space(address_space);
-
-    /* Detect format by magic bytes:
-     *   ELF  →  7F 45 4C 46  (\x7FELF)
-     *   PE   →  4D 5A        (MZ)       */
-    const bool is_elf = sz >= 4 &&
-        data[0] == 0x7Fu && data[1] == 'E' &&
-        data[2] == 'L'   && data[3] == 'F';
-    const bool is_pe = sz >= 2 &&
-        data[0] == 'M' && data[1] == 'Z';
-
-    if (is_elf) {
-        auto result = elf::load_into_address_space(data, sz, address_space, vm::USER_IMAGE_BASE);
-        if (result.error != elf::elf_error::ok) {
-            log::error() << "process: ELF load failed: " << elf::error_string(result.error);
-            return -1;
-        }
-        entry_addr      = result.entry;
-        image_base_raw  = result.image_base;
-        image_size      = result.image_size;
-        image_from_phys = result.image_from_phys;
-        image_phys      = result.image_phys;
-        image_vm_mapped = result.image_vm_mapped;
-    } else if (is_pe) {
-        auto result = pe::load(data, sz);
-        if (result.error != pe::pe_error::ok) {
-            log::error() << "process: PE load failed: " << pe::error_string(result.error);
-            return -1;
-        }
-        entry_addr = result.entry;
-        image_base_raw = result.image_base;
-        image_size = result.image_size;
-    } else {
-        log::error() << "process: unknown binary format (not ELF or PE)";
+    if (!load_process_context(filename, command_line, interface, fb_override, loaded)) {
         return -1;
     }
 
-    process_image_ptr image_base_owner;
-    if (!image_vm_mapped) {
-        image_base_owner = process_image_ptr(
-            image_base_raw,
-            kernel_allocation_deleter {
-                .size = static_cast<usize>(image_size),
-                .from_phys = image_from_phys,
-            });
-    }
-
-    log::info() << "Executing at " << log::hex(static_cast<u64>(static_cast<unsigned long long>(entry_addr)), 1, true, false);
-    phys_addr entry_phys = 0;
-    u64 entry_flags = 0;
-    const bool entry_mapped = vm::debug_resolve(address_space, entry_addr, &entry_phys, &entry_flags);
-    log::debug() << "vmtrace: process image filename=" << filename_buf.c_str()
-                 << " as=" << reinterpret_cast<const void*>(address_space)
-                 << " pml4=" << reinterpret_cast<const void*>(static_cast<usize>(address_space->pml4_phys))
-                 << " image_base=" << reinterpret_cast<const void*>(image_base_raw)
-                 << " image_phys=" << reinterpret_cast<const void*>(static_cast<usize>(image_phys))
-                 << " image_size=" << static_cast<unsigned long long>(image_size)
-                 << " entry_mapped=" << (entry_mapped ? "yes" : "no")
-                 << " entry_phys=" << reinterpret_cast<const void*>(static_cast<usize>(entry_phys))
-                 << " entry_flags=" << log::hex(entry_flags, 1, true, false);
-
-    /* Ensure the API table is ready */
-    kernel_api::init();
-
-    process_context_ptr ctx(
-        static_cast<process_task_context*>(g_kernel_heap.allocate(sizeof(process_task_context))));
-    if (!ctx) {
-        if (image_vm_mapped && image_phys != 0) {
-            g_phys_alloc.free_pages(image_phys,
-                                    static_cast<u32>((image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K));
-        }
-        log::error() << "process: out of memory while creating task context";
-        return -1;
-    }
-
-    ctx->entry           = entry_addr;
-    ctx->image_base      = image_base_raw;
-    ctx->image_size      = image_size;
-    ctx->image_from_phys = image_from_phys;
-    ctx->address_space   = owned_address_space.get();
-    ctx->image_phys      = image_phys;
-    ctx->image_vm_mapped = image_vm_mapped;
-    ctx->interface       = interface;
-    ctx->key_q_head      = 0;
-    ctx->key_q_tail      = 0;
-    ctx->mouse_q_head    = 0;
-    ctx->mouse_q_tail    = 0;
-    copy_command_line(ctx.get(), command_line, filename);
-    if (!remap_framebuffer_override(ctx->address_space, fb_override, ctx->fb_override, ctx->fb_override_valid)) {
-        if (image_vm_mapped && image_phys != 0) {
-            g_phys_alloc.free_pages(image_phys,
-                                    static_cast<u32>((image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K));
-        }
-        log::error() << "process: failed to map framebuffer override";
-        return -1;
-    }
-    ctx->task_id = 0;
-    ctx->fb_text_col = 0;
-    ctx->fb_text_row = 0;
-    ctx->allocations = null;
-
-	// create a new task and pass the context as user data
-    i64 task_id = sched::create_task(filename, process_task_main, ctx.get());
+    i64 task_id = sched::create_task(filename, process_task_main, loaded.ctx.get());
     if (task_id < 0) {
-        if (image_vm_mapped && image_phys != 0) {
-            g_phys_alloc.free_pages(image_phys,
-                                    static_cast<u32>((image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K));
-        }
+        discard_loaded_process(loaded);
         log::error() << "process: failed to create task";
         return -1;
     }
 
-    (void)ctx.release();
-    if (!image_vm_mapped) {
-        (void)image_base_owner.release();
-    }
-    (void)owned_address_space.release();
+    (void)loaded.ctx.release();
+    (void)loaded.image_base_owner.release();
+    (void)loaded.owned_address_space.release();
 
     log::info() << "Spawned task id " << static_cast<unsigned long long>(task_id) << " for " << filename_buf.c_str();
 
     return task_id;
+}
+
+static auto exec_impl(string_view filename,
+                      string_view command_line,
+                      console_interface interface,
+                      const vk_framebuffer_info_t* fb_override) -> int {
+    loaded_process loaded;
+    static_string<128> filename_buf(filename);
+    if (!load_process_context(filename, command_line, interface, fb_override, loaded)) {
+        return -1;
+    }
+
+    auto* current_ctx = static_cast<process_task_context*>(sched::current_task_user_data());
+    const u64 current_task_id = sched::current_task_id();
+    if (current_ctx == null || current_task_id == 0) {
+        discard_loaded_process(loaded);
+        log::error() << "process: exec requires a running process task";
+        return -1;
+    }
+
+    auto* next_ctx = loaded.ctx.get();
+    next_ctx->task_id = current_task_id;
+    if (!sched::replace_current_task_context(filename, next_ctx)) {
+        discard_loaded_process(loaded);
+        log::error() << "process: failed to replace current task context";
+        return -1;
+    }
+
+    log::info() << "Replacing task id " << static_cast<unsigned long long>(current_task_id)
+                << " with " << filename_buf.c_str();
+    cleanup_process_context(current_ctx, 0);
+
+    (void)loaded.ctx.release();
+    (void)loaded.image_base_owner.release();
+    (void)loaded.owned_address_space.release();
+
+    if (next_ctx->address_space != null) {
+        vm::activate(next_ctx->address_space);
+    } else {
+        vm::activate_kernel();
+    }
+
+    int ret = asm_call_process_entry(next_ctx->entry, kernel_api::get_api());
+    cleanup_process_context(next_ctx, ret);
+    sched::exit_task();
 }
 
 auto run(const char* filename, console_interface interface) -> i64 {
@@ -478,6 +605,14 @@ auto run(const char* filename, console_interface interface) -> i64 {
 
 auto run(const char* filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> i64 {
     return run(string_view(filename), interface, fb_override);
+}
+
+auto exec(const char* filename, console_interface interface) -> int {
+    return exec(string_view(filename), interface);
+}
+
+auto exec(const char* filename, console_interface interface, const vk_framebuffer_info_t* fb_override) -> int {
+    return exec(string_view(filename), interface, fb_override);
 }
 
 } // namespace process

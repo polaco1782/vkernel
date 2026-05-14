@@ -12,6 +12,8 @@
 #include "vkfm_panel.h"
 #include "window_manager.h"
 
+#include <unistd.h>
+
 namespace {
 
 auto framebuffer_available(const vk_framebuffer_info_t& framebuffer) -> bool
@@ -23,6 +25,8 @@ auto framebuffer_available(const vk_framebuffer_info_t& framebuffer) -> bool
 
 int main(int /*argc*/, char** /*argv*/)
 {
+    bool drop_to_shell = false;
+
     vk_framebuffer_info_t framebuffer = {};
     VK_CALL(framebuffer_info, &framebuffer);
     if (!framebuffer_available(framebuffer)) {
@@ -131,6 +135,9 @@ int main(int /*argc*/, char** /*argv*/)
             ImGui_ImplVK_RenderDrawData(ImGui::GetDrawData(), &framebuffer);
             vk_get_api()->vk_sleep(1);
         }
+
+        drop_to_shell = ui.drop_to_shell_requested();
+        window_manager.shutdown();
     }
 
     ImGui_ImplVK_Shutdown();
@@ -142,6 +149,16 @@ int main(int /*argc*/, char** /*argv*/)
     }
     if (vk_get_api()->vk_set_compositor_default_fb) {
         (void)vk_get_api()->vk_set_compositor_default_fb(nullptr);
+    }
+
+    if (drop_to_shell) {
+        char* const argv[] = {
+            const_cast<char*>("shell.vbin"),
+            nullptr,
+        };
+        (void)execve("shell.vbin", argv, nullptr);
+        VK_CALL(puts, "vgui: failed to exec shell.vbin\n");
+        return 1;
     }
 
     VK_CALL(puts, "vgui: clean exit.\n");
