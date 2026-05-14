@@ -184,6 +184,12 @@ public:
         emplace_back(std::move(value));
     }
 
+    void assign(size_type count, const T& value)
+    {
+        clear();
+        resize(count, value);
+    }
+
     void pop_back()
     {
         if (size_ == 0) {

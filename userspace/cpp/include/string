@@ -172,6 +172,45 @@ public:
         storage_[current + 1] = CharT();
     }
 
+    void pop_back() noexcept
+    {
+        if (size() > 0)
+            resize(size() - 1);
+    }
+
+    basic_string& assign(const CharT* str, size_type count)
+    {
+        clear();
+        return append(str, count);
+    }
+
+    basic_string substr(size_type pos = 0, size_type count = npos) const
+    {
+        const size_type len = size();
+        if (pos > len)
+            pos = len;
+        const size_type actual = (count == npos || count > len - pos) ? len - pos : count;
+        basic_string result;
+        result.append(data() + pos, actual);
+        return result;
+    }
+
+    size_type rfind(CharT ch, size_type pos = npos) const noexcept
+    {
+        const size_type len = size();
+        if (len == 0)
+            return npos;
+        size_type i = (pos == npos || pos >= len) ? len - 1 : pos;
+        while (true) {
+            if (storage_[i] == ch)
+                return i;
+            if (i == 0)
+                break;
+            --i;
+        }
+        return npos;
+    }
+
     basic_string& append(const CharT* str)
     {
         return append(str, traits_type::length(str));
@@ -253,7 +292,40 @@ inline bool operator==(const basic_string<CharT, Traits, Alloc>& lhs,
 }
 
 template <typename CharT, typename Traits, typename Alloc>
+inline bool operator==(const basic_string<CharT, Traits, Alloc>& lhs,
+                       const CharT* rhs) noexcept
+{
+    if (rhs == nullptr)
+        return lhs.empty();
+    const size_t n = Traits::length(rhs);
+    if (lhs.size() != n)
+        return false;
+    return Traits::compare(lhs.data(), rhs, n) == 0;
+}
+
+template <typename CharT, typename Traits, typename Alloc>
+inline bool operator==(const CharT* lhs,
+                       const basic_string<CharT, Traits, Alloc>& rhs) noexcept
+{
+    return rhs == lhs;
+}
+
+template <typename CharT, typename Traits, typename Alloc>
 inline bool operator!=(const basic_string<CharT, Traits, Alloc>& lhs,
+                       const basic_string<CharT, Traits, Alloc>& rhs) noexcept
+{
+    return !(lhs == rhs);
+}
+
+template <typename CharT, typename Traits, typename Alloc>
+inline bool operator!=(const basic_string<CharT, Traits, Alloc>& lhs,
+                       const CharT* rhs) noexcept
+{
+    return !(lhs == rhs);
+}
+
+template <typename CharT, typename Traits, typename Alloc>
+inline bool operator!=(const CharT* lhs,
                        const basic_string<CharT, Traits, Alloc>& rhs) noexcept
 {
     return !(lhs == rhs);

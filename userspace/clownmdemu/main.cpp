@@ -8,35 +8,31 @@ int main(int argc, char** argv) {
 
     ClownMDEmu_Constant_Initialise();
 
-    auto* app = static_cast<AppState*>(calloc(1, sizeof(AppState)));
-    if (app == nullptr) {
-        printf("Failed to allocate app state\n");
-        return 1;
-    }
+    auto* app = new AppState{};
 
     if (!init_framebuffer(app)) {
-        free(app);
+        delete app;
         return 1;
     }
     if (!init_emulator(app)) {
         destroy_app(app);
-        free(app);
+        delete app;
         return 1;
     }
     if (!browse_and_load_rom(app)) {
         const int exit_code = app->quit_requested ? 0 : 1;
         destroy_app(app);
-        free(app);
+        delete app;
         return exit_code;
     }
 
     reset_emulator(app);
 
     printf("ClownMDEmu\n");
-    if (app->loaded_rom_path[0] != '\0')
-        printf("ROM file: %s\n", path_basename(app->loaded_rom_path));
-    if (app->rom_title[0] != '\0')
-        printf("Loaded: %s\n", app->rom_title);
+    if (!app->loaded_rom_path.empty())
+        printf("ROM file: %s\n", path_basename(app->loaded_rom_path.c_str()));
+    if (!app->rom_title.empty())
+        printf("Loaded: %s\n", app->rom_title.c_str());
     printf("Controls: arrows, A/S/D, Q/W/E, Enter, Backspace, Tab, Escape\n");
 
     while (!app->quit_requested) {
@@ -73,6 +69,6 @@ int main(int argc, char** argv) {
     }
 
     destroy_app(app);
-    free(app);
+    delete app;
     return 0;
 }

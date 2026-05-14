@@ -8,10 +8,12 @@ void browser_set_status(RomBrowserState* browser, const char* format, ...) {
     if (browser == nullptr || format == nullptr)
         return;
 
+    char tmp[kRomBrowserStatusMax];
     va_list args;
     va_start(args, format);
-    vsnprintf(browser->status, sizeof(browser->status), format, args);
+    vsnprintf(tmp, sizeof(tmp), format, args);
     va_end(args);
+    browser->status = tmp;
 }
 
 bool browser_is_supported_rom(const char* name, vk_u64 size_bytes) {
@@ -25,35 +27,23 @@ bool browser_is_supported_rom(const char* name, vk_u64 size_bytes) {
         || ends_with_casefolded(name, ".32x");
 }
 
-void browser_join_path(char* out, size_t out_capacity, const char* parent, const char* child) {
-    if (out == nullptr || out_capacity == 0)
-        return;
-
-    if (parent == nullptr || parent[0] == '\0' || strcmp(parent, "/") == 0) {
-        snprintf(out, out_capacity, "/%s", child != nullptr ? child : "");
-        return;
+std::string browser_join_path(const std::string& parent, const std::string& child) {
+    std::string result;
+    if (parent.empty() || parent == "/") {
+        result += "/";
+    } else {
+        result += parent;
+        result += "/";
     }
-
-    snprintf(out, out_capacity, "%s/%s", parent, child != nullptr ? child : "");
+    result += child;
+    return result;
 }
 
-void browser_parent_path(char* path) {
-    if (path == nullptr || path[0] == '\0' || strcmp(path, "/") == 0)
-        return;
-
-    size_t length = strlen(path);
-    while (length > 1 && path[length - 1] == '/')
-        --length;
-    while (length > 1 && path[length - 1] != '/')
-        --length;
-
-    if (length <= 1) {
-        path[0] = '/';
-        path[1] = '\0';
-        return;
-    }
-
-    path[length - 1] = '\0';
+std::string browser_parent_path(std::string path) {
+    const size_t slash = path.rfind('/');
+    if (slash == std::string::npos || slash == 0)
+        return "/";
+    return path.substr(0, slash);
 }
 
 vk_u64 parse_u64_decimal(const char* text) {
@@ -79,13 +69,12 @@ bool browser_parse_item_record(const char* record, RomBrowserEntry* entry) {
         return false;
 
     const size_t name_length = static_cast<size_t>(second_tab - (record + 2));
-    memset(entry, 0, sizeof(*entry));
-    memcpy(entry->name,
-           record + 2,
-           name_length < sizeof(entry->name) - 1 ? name_length : sizeof(entry->name) - 1);
+    *entry = RomBrowserEntry{};
+    const size_t copy_length = name_length < kRomBrowserNameMax - 1 ? name_length : kRomBrowserNameMax - 1;
+    entry->name.assign(record + 2, copy_length);
     entry->is_directory = record[0] == 'D';
     entry->size_bytes = parse_u64_decimal(second_tab + 1);
-    return entry->name[0] != '\0';
+    return !entry->name.empty();
 }
 
 void browser_sort_entries(RomBrowserState* browser) {
@@ -100,7 +89,7 @@ void browser_sort_entries(RomBrowserState* browser) {
             const RomBrowserEntry& previous = browser->entries[insert_index - 1];
             const bool directories_first = entry.is_directory && !previous.is_directory;
             const bool names_precede = entry.is_directory == previous.is_directory
-                                    && compare_casefolded(entry.name, previous.name) < 0;
+                                    && compare_casefolded(entry.name.c_str(), previous.name.c_str()) < 0;
             if (!directories_first && !names_precede)
                 break;
 
@@ -118,10 +107,13 @@ void browser_query_default_path(RomBrowserState* browser) {
 
     memset(browser->response, 0, sizeof(browser->response));
     vk_kobj_rpc_path_json("get", "fs/root_path", browser->response, sizeof(browser->response));
+    char path_buf[kRomBrowserPathMax] = {};
     if (!vk_kobj_response_ok(browser->response)
-        || !vk_json_extract_string_field(browser->response, "value", browser->current_path, sizeof(browser->current_path))
-        || browser->current_path[0] == '\0') {
-        copy_string(browser->current_path, sizeof(browser->current_path), "/");
+        || !vk_json_extract_string_field(browser->response, "value", path_buf, sizeof(path_buf))
+        || path_buf[0] == '\0') {
+        browser->current_path = "/";
+    } else {
+        browser->current_path = path_buf;
     }
 }
 
@@ -130,7 +122,7 @@ bool browser_refresh_listing(AppState* app) {
     memset(browser->response, 0, sizeof(browser->response));
     memset(browser->raw_items, 0, sizeof(browser->raw_items));
 
-    vk_kobj_rpc_path_json("fs_list", browser->current_path, browser->response, sizeof(browser->response));
+    vk_kobj_rpc_path_json("fs_list", browser->current_path.c_str(), browser->response, sizeof(browser->response));
     if (!vk_kobj_response_ok(browser->response)) {
         char error[kRomBrowserStatusMax];
         browser->entry_count = 0;
@@ -158,7 +150,7 @@ bool browser_refresh_listing(AppState* app) {
         RomBrowserEntry entry;
         if (!browser_parse_item_record(browser->raw_items[index], &entry))
             continue;
-        if (!entry.is_directory && !browser_is_supported_rom(entry.name, entry.size_bytes))
+        if (!entry.is_directory && !browser_is_supported_rom(entry.name.c_str(), entry.size_bytes))
             continue;
         browser->entries[browser->entry_count++] = entry;
     }
@@ -236,16 +228,16 @@ const unsigned char* browser_glyph_for(char ch) {
 }
 
 void browser_present_buffer(const AppState* app) {
-    if (app == nullptr || app->present_buffer == nullptr)
+    if (app == nullptr || app->present_buffer.empty())
         return;
 
     memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(app->framebuffer.base)),
-           app->present_buffer,
-           app->present_pixels * sizeof(vk_u32));
+           app->present_buffer.data(),
+           app->present_buffer.size() * sizeof(vk_u32));
 }
 
 void browser_fill_rect(AppState* app, int x, int y, int width, int height, vk_u32 color) {
-    if (app == nullptr || app->present_buffer == nullptr || width <= 0 || height <= 0)
+    if (app == nullptr || app->present_buffer.empty() || width <= 0 || height <= 0)
         return;
 
     int x0 = x < 0 ? 0 : x;
@@ -270,7 +262,7 @@ void browser_fill_rect(AppState* app, int x, int y, int width, int height, vk_u3
 }
 
 void browser_draw_background(AppState* app) {
-    if (app == nullptr || app->present_buffer == nullptr)
+    if (app == nullptr || app->present_buffer.empty())
         return;
 
     for (vk_u32 y = 0; y < app->framebuffer.height; ++y) {
@@ -413,7 +405,7 @@ void render_rom_browser(AppState* app) {
     browser_draw_text_clipped(app,
                               content_x,
                               header_y + 28,
-                              browser->current_path,
+                              browser->current_path.c_str(),
                               path_fg,
                               1,
                               content_width / static_cast<int>(kUiGlyphWidth + 1u));
@@ -467,7 +459,7 @@ void render_rom_browser(AppState* app) {
             char label[kRomBrowserNameMax + 2];
             char size_label[16];
 
-            snprintf(label, sizeof(label), "%s%s", entry.name, entry.is_directory ? "/" : "");
+            snprintf(label, sizeof(label), "%s%s", entry.name.c_str(), entry.is_directory ? "/" : "");
 
             if (selected)
                 browser_fill_rect(app, content_x - 8, row_y - 4, content_width + 16, static_cast<int>(kUiRowHeight) - 2, selected_bg);
@@ -482,7 +474,7 @@ void render_rom_browser(AppState* app) {
                                       name_char_limit);
 
             if (entry.is_directory) {
-                copy_string(size_label, sizeof(size_label), "DIR");
+                snprintf(size_label, sizeof(size_label), "DIR");
             } else {
                 browser_format_size(size_label, sizeof(size_label), entry.size_bytes);
             }
@@ -500,7 +492,7 @@ void render_rom_browser(AppState* app) {
     browser_draw_text_clipped(app,
                               content_x,
                               panel_y + panel_height - static_cast<int>(kUiFooterHeight) + 6,
-                              browser->status,
+                              browser->status.c_str(),
                               text_fg,
                               1,
                               content_width / static_cast<int>(kUiGlyphWidth + 1u));
@@ -517,16 +509,13 @@ void render_rom_browser(AppState* app) {
 
 void browser_go_parent(AppState* app) {
     auto* browser = &app->browser;
-    char parent_path[kRomBrowserPathMax];
-
-    copy_string(parent_path, sizeof(parent_path), browser->current_path);
-    browser_parent_path(parent_path);
-    if (strcmp(parent_path, browser->current_path) == 0) {
+    const std::string parent_path = browser_parent_path(browser->current_path);
+    if (parent_path == browser->current_path) {
         browser_set_status(browser, "ALREADY AT ROOT");
         return;
     }
 
-    copy_string(browser->current_path, sizeof(browser->current_path), parent_path);
+    browser->current_path = parent_path;
     browser_refresh_listing(app);
 }
 
@@ -537,21 +526,20 @@ bool browser_open_selection(AppState* app) {
         return false;
 
     const RomBrowserEntry& entry = browser->entries[browser->selected_index];
-    char path[kRomBrowserPathMax];
-    browser_join_path(path, sizeof(path), browser->current_path, entry.name);
+    const std::string path = browser_join_path(browser->current_path, entry.name);
 
     if (entry.is_directory) {
-        copy_string(browser->current_path, sizeof(browser->current_path), path);
+        browser->current_path = path;
         browser_refresh_listing(app);
         return false;
     }
 
-    if (load_rom(app, path)) {
-        browser_set_status(browser, "LOADED %s", path_basename(path));
+    if (load_rom(app, path.c_str())) {
+        browser_set_status(browser, "LOADED %s", path_basename(path.c_str()));
         return true;
     }
 
-    browser_set_status(browser, "FAILED TO LOAD %s", path_basename(path));
+    browser_set_status(browser, "FAILED TO LOAD %s", path_basename(path.c_str()));
     return false;
 }
 
@@ -561,7 +549,7 @@ bool browse_and_load_rom(AppState* app) {
     auto* browser = &app->browser;
     bool dirty = true;
 
-    memset(browser, 0, sizeof(*browser));
+    *browser = RomBrowserState{};
     browser_query_default_path(browser);
     browser_refresh_listing(app);
 

@@ -1,11 +1,14 @@
 #pragma once
 
+#include <array>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
+#include <vector>
 
 extern "C" {
 #include "../include/vk.h"
@@ -21,7 +24,7 @@ inline constexpr vk_u32 kOutputSampleRate = 44100;
 /* AC'97 playback still runs in coarse DMA windows, so bigger submissions buy
  * more underrun tolerance when emulation or rendering stalls for a frame or two. */
 inline constexpr vk_u32 kPlayBlockFrames = 4096;
-inline constexpr vk_u32 kQueueCapacityFrames = 32768;
+inline constexpr vk_u32 kQueueCapacityFrames = kPlayBlockFrames * 4;
 inline constexpr vk_u32 kQueuePrimeFrames = kPlayBlockFrames * 2;
 inline constexpr vk_u32 kMaxFrameAudioFrames = 2048;
 inline constexpr vk_u32 kMaxCatchupFrames = 8;
@@ -68,10 +71,8 @@ struct AudioState {
     int16_t play_block[kPlayBlockFrames * 2];
     vk_u32 play_block_frames;
     bool play_block_pending;
-    int16_t* fm_scratch;
-    size_t fm_scratch_frames;
-    int16_t* psg_scratch;
-    size_t psg_scratch_frames;
+    std::vector<int16_t> fm_scratch;
+    std::vector<int16_t> psg_scratch;
 };
 
 struct TimingState {
@@ -82,36 +83,32 @@ struct TimingState {
 };
 
 struct RomBrowserEntry {
-    char name[kRomBrowserNameMax];
-    vk_u64 size_bytes;
-    bool is_directory;
+    std::string name;
+    vk_u64 size_bytes = 0;
+    bool is_directory = false;
 };
 
 struct RomBrowserState {
-    char current_path[kRomBrowserPathMax];
-    char status[kRomBrowserStatusMax];
-    RomBrowserEntry entries[kRomBrowserMaxEntries];
+    std::string current_path;
+    std::string status;
+    std::array<RomBrowserEntry, kRomBrowserMaxEntries> entries;
     char response[kRomBrowserResponseMax];
     char raw_items[kRomBrowserMaxEntries][kRomBrowserItemMax];
-    vk_u32 entry_count;
-    vk_u32 selected_index;
-    vk_u32 scroll_index;
+    vk_u32 entry_count = 0;
+    vk_u32 selected_index = 0;
+    vk_u32 scroll_index = 0;
 };
 
 struct AppState {
     ClownMDEmu emulator;
     ClownMDEmu_Callbacks callbacks;
-    cc_u16l* rom_words;
-    cc_u32f rom_word_count;
-    char rom_title[49];
-    char loaded_rom_path[kRomBrowserPathMax];
+    std::vector<cc_u16l> rom_words;
+    std::string rom_title;
+    std::string loaded_rom_path;
     vk_framebuffer_info_t framebuffer;
-    vk_u32* present_buffer;
-    vk_usize present_pixels;
-    vk_u32* hq2x_input_buffer;
-    vk_usize hq2x_input_capacity_pixels;
-    vk_u32* hq2x_output_buffer;
-    vk_usize hq2x_output_capacity_pixels;
+    std::vector<vk_u32> present_buffer;
+    std::vector<vk_u32> hq2x_input_buffer;
+    std::vector<vk_u32> hq2x_output_buffer;
     vk_u32 palette[VDP_TOTAL_COLOURS];
     vk_u32 frame_rgba[VDP_MAX_SCANLINE_WIDTH * VDP_MAX_SCANLINES];
     vk_u32 screen_width;

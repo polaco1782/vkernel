@@ -18,20 +18,6 @@ int16_t apply_volume_divisor(int16_t sample, vk_u32 divisor) {
     return static_cast<int16_t>(static_cast<int32_t>(sample) / static_cast<int32_t>(divisor));
 }
 
-bool ensure_scratch_buffer(int16_t** buffer, size_t* capacity_frames, size_t required_frames, size_t channels) {
-    if (required_frames <= *capacity_frames)
-        return true;
-
-    const size_t sample_count = required_frames * channels;
-    auto* resized = static_cast<int16_t*>(realloc(*buffer, sample_count * sizeof(int16_t)));
-    if (resized == nullptr)
-        return false;
-
-    *buffer = resized;
-    *capacity_frames = required_frames;
-    return true;
-}
-
 void audio_add_sample(AppState* app, vk_u32 frame_index, int32_t left, int32_t right) {
     if (frame_index >= kMaxFrameAudioFrames)
         return;
@@ -203,14 +189,9 @@ void callback_fm_audio(void* user_data,
                        size_t total_frames,
                        void (*generate_fm_audio)(ClownMDEmu*, cc_s16l*, size_t)) {
     auto* app = static_cast<AppState*>(user_data);
-    if (!ensure_scratch_buffer(&app->audio.fm_scratch, &app->audio.fm_scratch_frames, total_frames, 2)) {
-        app->quit_requested = true;
-        return;
-    }
-
-    memset(app->audio.fm_scratch, 0, total_frames * 2u * sizeof(int16_t));
-    generate_fm_audio(clownmdemu, app->audio.fm_scratch, total_frames);
-    audio_mix_chunk(app, &app->audio.fm, app->audio.fm_scratch, total_frames, false, CLOWNMDEMU_FM_VOLUME_DIVISOR);
+    app->audio.fm_scratch.assign(total_frames * 2, int16_t(0));
+    generate_fm_audio(clownmdemu, app->audio.fm_scratch.data(), total_frames);
+    audio_mix_chunk(app, &app->audio.fm, app->audio.fm_scratch.data(), total_frames, false, CLOWNMDEMU_FM_VOLUME_DIVISOR);
 }
 
 void callback_psg_audio(void* user_data,
@@ -218,14 +199,9 @@ void callback_psg_audio(void* user_data,
                         size_t total_frames,
                         void (*generate_psg_audio)(ClownMDEmu*, cc_s16l*, size_t)) {
     auto* app = static_cast<AppState*>(user_data);
-    if (!ensure_scratch_buffer(&app->audio.psg_scratch, &app->audio.psg_scratch_frames, total_frames, 1)) {
-        app->quit_requested = true;
-        return;
-    }
-
-    memset(app->audio.psg_scratch, 0, total_frames * sizeof(int16_t));
-    generate_psg_audio(clownmdemu, app->audio.psg_scratch, total_frames);
-    audio_mix_chunk(app, &app->audio.psg, app->audio.psg_scratch, total_frames, true, CLOWNMDEMU_PSG_VOLUME_DIVISOR);
+    app->audio.psg_scratch.assign(total_frames, int16_t(0));
+    generate_psg_audio(clownmdemu, app->audio.psg_scratch.data(), total_frames);
+    audio_mix_chunk(app, &app->audio.psg, app->audio.psg_scratch.data(), total_frames, true, CLOWNMDEMU_PSG_VOLUME_DIVISOR);
 }
 
 void callback_pcm_audio(void* user_data,

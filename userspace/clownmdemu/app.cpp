@@ -19,19 +19,6 @@ size_t callback_cd_audio_read(void* user_data, cc_s16l* sample_buffer, size_t to
 
 namespace {
 
-bool ensure_pixel_buffer(vk_u32** buffer, vk_usize* capacity_pixels, vk_usize required_pixels) {
-    if (required_pixels <= *capacity_pixels)
-        return true;
-
-    auto* resized = static_cast<vk_u32*>(realloc(*buffer, required_pixels * sizeof(vk_u32)));
-    if (resized == nullptr)
-        return false;
-
-    *buffer = resized;
-    *capacity_pixels = required_pixels;
-    return true;
-}
-
 void blit_scaled_image(AppState* app,
                        const vk_u32* source_pixels,
                        vk_u32 source_width,
@@ -89,10 +76,8 @@ bool try_apply_hq2x(AppState* app,
 
     const vk_usize packed_pixels = static_cast<vk_usize>(*source_width) * static_cast<vk_usize>(*source_height);
     const vk_usize output_pixels = packed_pixels * 4u;
-    if (!ensure_pixel_buffer(&app->hq2x_input_buffer, &app->hq2x_input_capacity_pixels, packed_pixels)
-        || !ensure_pixel_buffer(&app->hq2x_output_buffer, &app->hq2x_output_capacity_pixels, output_pixels)) {
-        return false;
-    }
+    app->hq2x_input_buffer.resize(packed_pixels);
+    app->hq2x_output_buffer.resize(output_pixels);
 
     for (vk_u32 row = 0; row < *source_height; ++row) {
         memcpy(&app->hq2x_input_buffer[static_cast<vk_usize>(row) * *source_width],
@@ -101,12 +86,12 @@ bool try_apply_hq2x(AppState* app,
     }
 
     HQ2x filter;
-    filter.resize(app->hq2x_input_buffer,
+    filter.resize(app->hq2x_input_buffer.data(),
                   *source_width,
                   *source_height,
-                  app->hq2x_output_buffer);
+                  app->hq2x_output_buffer.data());
 
-    *source_pixels = app->hq2x_output_buffer;
+    *source_pixels = app->hq2x_output_buffer.data();
     *source_width *= 2u;
     *source_height *= 2u;
     *source_stride = *source_width;
@@ -236,14 +221,15 @@ void configure_callbacks(AppState* app) {
 }
 
 void extract_rom_title(AppState* app) {
-    memset(app->rom_title, 0, sizeof(app->rom_title));
-    if (app->rom_words == nullptr || app->rom_word_count * 2u < 0x180u)
+    app->rom_title.clear();
+    if (app->rom_words.empty() || app->rom_words.size() * 2u < 0x180u)
         return;
 
     const cc_u32f header_offset = app->region == CLOWNMDEMU_REGION_DOMESTIC ? 0x120u : 0x150u;
-    if (header_offset + 0x30u > app->rom_word_count * 2u)
+    if (header_offset + 0x30u > app->rom_words.size() * 2u)
         return;
 
+    app->rom_title.resize(0x30u);
     const cc_u16l* words = &app->rom_words[header_offset / 2u];
     for (size_t i = 0; i < 0x30u / 2u; ++i) {
         const cc_u16l word = words[i];
@@ -251,11 +237,8 @@ void extract_rom_title(AppState* app) {
         app->rom_title[i * 2 + 1] = static_cast<char>(word & 0xFFu);
     }
 
-    size_t end = strlen(app->rom_title);
-    while (end > 0 && app->rom_title[end - 1] == ' ') {
-        app->rom_title[end - 1] = '\0';
-        --end;
-    }
+    while (!app->rom_title.empty() && app->rom_title.back() == ' ')
+        app->rom_title.pop_back();
 }
 
 void set_timing(AppState* app) {
@@ -273,10 +256,10 @@ void set_timing(AppState* app) {
 }
 
 void present_frame(AppState* app) {
-    if (app->present_buffer == nullptr || app->screen_width == 0 || app->screen_height == 0)
+    if (app->present_buffer.empty() || app->screen_width == 0 || app->screen_height == 0)
         return;
 
-    memset(app->present_buffer, 0, app->present_pixels * sizeof(vk_u32));
+    app->present_buffer.assign(app->present_buffer.size(), 0u);
 
     const vk_u32* source_pixels = app->frame_rgba;
     vk_u32 source_width = app->screen_width;
@@ -287,8 +270,8 @@ void present_frame(AppState* app) {
     blit_scaled_image(app, source_pixels, source_width, source_height, source_stride);
 
     memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(app->framebuffer.base)),
-           app->present_buffer,
-           app->present_pixels * sizeof(vk_u32));
+           app->present_buffer.data(),
+           app->present_buffer.size() * sizeof(vk_u32));
 }
 
 void prime_audio(AppState* app) {
@@ -329,32 +312,25 @@ bool load_rom(AppState* app, const char* path) {
         return false;
     }
 
-    free(app->rom_words);
-    app->rom_words = nullptr;
-    app->rom_word_count = 0;
+    app->rom_words.clear();
 
     const size_t word_count = (file_size + 1u) / 2u;
-    auto* rom_words = static_cast<cc_u16l*>(malloc(word_count * sizeof(cc_u16l)));
-    if (rom_words == nullptr) {
-        fclose(file);
-        return false;
-    }
+    app->rom_words.resize(word_count);
 
     for (size_t index = 0; index < word_count; ++index) {
         const int high = fgetc(file);
         const int low = fgetc(file);
-        rom_words[index] = static_cast<cc_u16l>(((high == EOF ? 0 : high) & 0xFF) << 8)
-                         | static_cast<cc_u16l>((low == EOF ? 0 : low) & 0xFF);
+        app->rom_words[index] = static_cast<cc_u16l>(((high == EOF ? 0 : high) & 0xFF) << 8)
+                              | static_cast<cc_u16l>((low == EOF ? 0 : low) & 0xFF);
     }
 
     fclose(file);
 
-    app->rom_words = rom_words;
-    app->rom_word_count = static_cast<cc_u32f>(word_count);
-    copy_string(app->loaded_rom_path, sizeof(app->loaded_rom_path), path);
+    app->loaded_rom_path = path;
     extract_rom_title(app);
 
-    ClownMDEmu_SetCartridge(&app->emulator, app->rom_words, app->rom_word_count);
+    ClownMDEmu_SetCartridge(&app->emulator, app->rom_words.data(),
+                            static_cast<cc_u32f>(app->rom_words.size()));
     ClownMDEmu_HardReset(&app->emulator, cc_true, cc_false);
     return true;
 }
@@ -367,14 +343,9 @@ bool init_framebuffer(AppState* app) {
         return false;
     }
 
-    app->present_pixels = static_cast<vk_usize>(app->framebuffer.stride) * app->framebuffer.height;
-    app->present_buffer = static_cast<vk_u32*>(malloc(app->present_pixels * sizeof(vk_u32)));
-    if (app->present_buffer == nullptr) {
-        printf("Failed to allocate presentation buffer\n");
-        return false;
-    }
-
-    memset(app->present_buffer, 0, app->present_pixels * sizeof(vk_u32));
+    const vk_usize present_pixels =
+        static_cast<vk_usize>(app->framebuffer.stride) * app->framebuffer.height;
+    app->present_buffer.assign(present_pixels, 0u);
     return true;
 }
 
@@ -513,12 +484,6 @@ void pump_input(AppState* app) {
 void destroy_app(AppState* app) {
     VK_CALL(snd_stop);
     close_save_file(app);
-    free(app->audio.fm_scratch);
-    free(app->audio.psg_scratch);
-    free(app->hq2x_input_buffer);
-    free(app->hq2x_output_buffer);
-    free(app->present_buffer);
-    free(app->rom_words);
 }
 
 } // namespace clownmdemu_frontend

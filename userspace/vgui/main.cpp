@@ -145,5 +145,6 @@ int main(int /*argc*/, char** /*argv*/)
     }
 
     VK_CALL(puts, "vgui: clean exit.\n");
+
     return 0;
 }
