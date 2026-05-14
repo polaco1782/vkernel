@@ -86,6 +86,25 @@ stage_clownmdemu_roms() {
     done
 }
 
+stage_vnes_roms() {
+    local rom
+    for rom in userspace/vnes/roms/*; do
+        local base
+        local ext
+
+        [ -f "${rom}" ] || continue
+        base=$(basename "${rom}")
+        ext="${base##*.}"
+        ext="${ext,,}"
+
+        case "${ext}" in
+            nes)
+                copy_into_esp "${rom}" "${base}"
+                ;;
+        esac
+    done
+}
+
 stage_minimp3_tracks() {
     local track
     for track in userspace/minimp3/tracks/*; do
@@ -145,6 +164,7 @@ copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "UNREALPM.S3M"
 copy_into_esp "userspace/rotozoom/head.bmp" "head.bmp"
 copy_into_esp "userspace/quake/pak0.pak" "pak0.pak"
 stage_clownmdemu_roms
+stage_vnes_roms
 stage_minimp3_tracks
 
 echo "  Done: ${OUTPUT}"

@@ -40,6 +40,7 @@ ipch/
 .vscode/
 .idea/
 .codex
+.github
 
 # OS files
 .DS_Store
@@ -77,3 +78,4 @@ doom.wad
 pak0.pak
 userspace/clownmdemu/roms/
 userspace/minimp3/tracks/
+userspace/vnes/roms/
