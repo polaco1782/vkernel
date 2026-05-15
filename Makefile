@@ -23,6 +23,7 @@ FRAMEBUFFER_TEXT_VBIN := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.vbin
 RAYTRACER_VBIN := $(USERSPACE_DIR)/raytracer/raytracer.vbin
 SHELL_VBIN      := $(USERSPACE_DIR)/shell/shell.vbin
 DOOM_VBIN       := $(USERSPACE_DIR)/doom/doom.vbin
+QUAKE_VBIN      := $(USERSPACE_DIR)/quake/quake.vbin
 MODPLAY_VBIN    := $(USERSPACE_DIR)/MODPlay/modplay.vbin
 CLOWNMDEMU_VBIN := $(USERSPACE_DIR)/clownmdemu/clownmdemu.vbin
 MINIMP3_VBIN    := $(USERSPACE_DIR)/minimp3/minimp3.vbin
@@ -31,7 +32,7 @@ VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
 SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
 CPPCOMPAT_VBIN   := $(USERSPACE_DIR)/cppcompat/cppcompat.vbin
 VNES_VBIN        := $(USERSPACE_DIR)/vnes/vnes.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VNES_VBIN)
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(QUAKE_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VNES_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -179,6 +180,9 @@ $(SHELL_VBIN): $(USERSPACE_DIR)/shell/shell.c $(USERSPACE_DIR)/shell/Makefile
 $(DOOM_VBIN): $(USERSPACE_DIR)/doom/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
 
+$(QUAKE_VBIN): $(USERSPACE_DIR)/quake/Makefile libc-glue
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/quake CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
+
 $(MODPLAY_VBIN): $(USERSPACE_DIR)/MODPlay/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
 
@@ -226,6 +230,7 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/quake clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/clownmdemu clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/minimp3 clean

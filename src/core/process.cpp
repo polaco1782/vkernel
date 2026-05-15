@@ -315,6 +315,7 @@ static auto load_process_context(string_view filename,
         log::error() << "process: failed to map framebuffer override";
         return false;
     }
+    ctx->stdio_to_serial = ctx->fb_override_valid;
     ctx->task_id = 0;
     ctx->fb_text_col = 0;
     ctx->fb_text_row = 0;

@@ -28,6 +28,7 @@ static auto current_console_interface() -> process::console_interface;
 static auto validate_fb(const vk_framebuffer_info_t* fb) -> bool;
 static void route_putc(char c);
 static void route_puts(const char* str);
+static auto route_stdio_write(const char* buf, vk_usize len) -> vk_usize;
 static auto dequeue_ascii_key(process::process_task_context* ctx) -> char;
 
 /* ============================================================
@@ -250,7 +251,8 @@ static void stub_sleep(vk_u64 ticks) {
 }
 
 static vk_i64 stub_run(const char* path) {
-    return process::run(path);
+    if (path == null) return -1;
+    return process::run(path, current_console_interface());
 }
 
 static vk_i64 stub_run_with_fb(const char* path, const vk_framebuffer_info_t* fb) {
@@ -264,20 +266,26 @@ static bool s_compositor_default_fb_valid = false;
 
 static vk_i64 stub_run_auto(const char* path) {
     if (path == null) return -1;
-    if (s_compositor_active && s_compositor_default_fb_valid) {
-        return process::run(path, process::console_interface::graphical, &s_compositor_default_fb);
+    const auto interface = current_console_interface();
+    if (interface == process::console_interface::graphical &&
+        s_compositor_active &&
+        s_compositor_default_fb_valid) {
+        return process::run(path, interface, &s_compositor_default_fb);
     }
-    return process::run(path);
+    return process::run(path, interface);
 }
 
 static vk_i64 stub_run_cmdline(const char* command_line) {
     if (command_line == null) return -1;
-    if (s_compositor_active && s_compositor_default_fb_valid) {
+    const auto interface = current_console_interface();
+    if (interface == process::console_interface::graphical &&
+        s_compositor_active &&
+        s_compositor_default_fb_valid) {
         return process::run_command_line(command_line,
-                                         process::console_interface::graphical,
+                                         interface,
                                          &s_compositor_default_fb);
     }
-    return process::run_command_line(command_line, current_console_interface());
+    return process::run_command_line(command_line, interface);
 }
 
 static int stub_exec_cmdline(const char* command_line) {
@@ -540,6 +548,25 @@ static void route_puts(const char* str) {
     while (*str != '\0') {
         route_putc(*str++);
     }
+}
+
+static auto route_stdio_write(const char* buf, vk_usize len) -> vk_usize {
+    if (buf == null || len == 0) {
+        return 0;
+    }
+
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx != null && ctx->stdio_to_serial) {
+        for (vk_usize i = 0; i < len; ++i) {
+            console::putc_serial(buf[i]);
+        }
+        return len;
+    }
+
+    for (vk_usize i = 0; i < len; ++i) {
+        route_putc(buf[i]);
+    }
+    return len;
 }
 
 static void route_put_hex(vk_u64 value) {
@@ -847,6 +874,8 @@ void init() {
     s_api.vk_put_dec = route_put_dec;
     s_api.vk_clear = route_clear;
     /* console input */
+    /* stdio */
+    s_api.vk_stdio_write = route_stdio_write;
     s_api.vk_getc = route_getc;
     s_api.vk_try_getc = route_try_getc;
     /* memory */

@@ -173,6 +173,9 @@ typedef struct vk_api {
     int      (*vk_terminate_task)(vk_u64 task_id);
     int      (*vk_exec_cmdline)(const char* command_line);
 
+    /* ---- stdio routing ---- */
+    vk_usize (*vk_stdio_write)(const char* buf, vk_usize len);
+
 } vk_api_t;
 
 /* Current API version */
