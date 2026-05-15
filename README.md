@@ -130,7 +130,7 @@ src/arch/x86_64/
     ap_trampoline.S        AP startup trampoline
     smp.cpp                 AP discovery and INIT-SIPI-SIPI bringup
 
-userspace/
+userspace/               Git submodule with libc, apps, ports, demos
     libc/                   newlib syscall glue and CRT
     include/vk.h            libc-friendly API wrapper
     shell/                  Interactive shell
@@ -286,6 +286,10 @@ vk> help
 Entering a staged `.vbin` name directly also attempts to launch it.
 
 ## Build
+
+`userspace/` now lives in its own Git repository and is checked out here as a
+submodule. Clone with `--recurse-submodules`, or run
+`git submodule update --init --recursive` after cloning.
 
 ### Prerequisites
 

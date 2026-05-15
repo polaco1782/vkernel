@@ -1,0 +1,3 @@
+[submodule "userspace"]
+	path = userspace
+	url = ../vkernel-userspace.git
