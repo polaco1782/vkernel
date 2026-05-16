@@ -193,7 +193,8 @@ the filesystem facade:
 
 `scripts/make_disk.sh` stages all built `.vbin` files into `\EFI\vkernel`,
 generates `vgui_apps.txt`, and copies runtime assets such as Doom WADs, Quake
-PAKs, MOD/S3M files, MP3 tracks, bitmaps, and emulator ROMs when present.
+base data under `id1/`, Zeusbot mod data under `zeusbot/`, MOD/S3M files, MP3
+tracks, bitmaps, and emulator ROMs when present.
 
 ## Kernel API
 
@@ -398,6 +399,10 @@ the graphical framebuffer. The log route can still be changed through KObj.
 ### Quake
 
 ![Quake running on vkernel](quake.webp)
+
+The Quake base data is staged as `id1/pak0.pak`, and the Zeusbot mod is staged
+as `zeusbot/progs.dat`. Launch it from the shell as `quake.vbin -game zeusbot`,
+or start `quake_zeusbot.vbin` from vGUI.
 
 ## Compiler Requirements
 

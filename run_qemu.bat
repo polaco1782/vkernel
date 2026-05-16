@@ -16,6 +16,8 @@ set "EFI_FILE=%BUILD_DIR%\vkernel.efi"
 set "ESP_ROOT=%BUILD_DIR%\esp"
 set "ESP_BOOT=%ESP_ROOT%\EFI\BOOT"
 set "ESP_VKERNEL=%ESP_ROOT%\EFI\vkernel"
+set "ESP_ID1=%ESP_VKERNEL%\id1"
+set "ESP_ZEUSBOT=%ESP_VKERNEL%\zeusbot"
 set "BOOT_IMG=%BUILD_DIR%\vkernel_boot.vhd"
 set "NVRAM_FILE=%BUILD_DIR%\ovmf_vars.fd"
 set "BUILD_CONFIG=Debug"
@@ -74,6 +76,8 @@ if errorlevel 1 (
 if exist "%ESP_ROOT%" rmdir /s /q "%ESP_ROOT%"
 mkdir "%ESP_BOOT%" || exit /b 1
 mkdir "%ESP_VKERNEL%" || exit /b 1
+mkdir "%ESP_ID1%" || exit /b 1
+mkdir "%ESP_ZEUSBOT%" || exit /b 1
 
 copy /y "%EFI_FILE%" "%ESP_BOOT%\bootx64.efi" >nul
 if errorlevel 1 (
@@ -103,7 +107,9 @@ call :copy_if_exists "userspace\MODPlay\UNREALPM.S3M" "UNREALPM.S3M"
 if errorlevel 1 exit /b 1
 call :copy_if_exists "userspace\rotozoom\head.bmp" "head.bmp"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\quake\pak0.pak" "pak0.pak"
+call :copy_if_exists "userspace\quake\pak0.pak" "id1\pak0.pak"
+if errorlevel 1 exit /b 1
+call :copy_if_exists "userspace\quake\progs.dat" "zeusbot\progs.dat"
 if errorlevel 1 exit /b 1
 
 for %%E in (bin gen smd 32x md) do (

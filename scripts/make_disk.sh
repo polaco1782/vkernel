@@ -67,6 +67,37 @@ copy_into_esp() {
     mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${src}" "::/EFI/vkernel/${dest_name}"
 }
 
+# Recursively copy a source directory into ::/EFI/vkernel/<dest_dir>.
+# Creates intermediate FAT directories as needed then bulk-copies each file.
+copy_dir_into_esp() {
+    local src_dir="$1"
+    local dest_dir="$2"   # relative to ::/EFI/vkernel/
+
+    [ -d "${src_dir}" ] || return 0
+
+    local f rel dir fat_path
+    while IFS= read -r -d '' f; do
+        rel="${f#${src_dir}/}"
+        dir="$(dirname "${rel}")"
+        fat_path="::/EFI/vkernel/${dest_dir}"
+
+        # Create any intermediate subdirectories (mmd is idempotent with -D).
+        if [ "${dir}" != "." ]; then
+            local part=""
+            IFS='/' read -ra parts <<< "${dir}"
+            for part in "${parts[@]}"; do
+                fat_path="${fat_path}/${part}"
+                mmd -D s -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${fat_path}" 2>/dev/null || true
+            done
+            fat_path="::/EFI/vkernel/${dest_dir}"
+        fi
+
+        echo "    ${dest_dir}/${rel}"
+        mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${f}" \
+              "::/EFI/vkernel/${dest_dir}/${rel}"
+    done < <(find "${src_dir}" -type f -print0)
+}
+
 stage_clownmdemu_roms() {
     local rom
     for rom in userspace/clownmdemu/roms/*; do
@@ -143,7 +174,7 @@ mmd    -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI ::/EFI/BOOT
 mcopy  -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${EFI_FILE}" ::/EFI/BOOT/bootx64.efi
 
 echo "  Staging userspace binaries..."
-mmd -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/vkernel
+mmd -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/vkernel ::/EFI/vkernel/id1 ::/EFI/vkernel/zeusbot ::/EFI/vkernel/reaperfx
 
 manifest_file=$(mktemp)
 while IFS= read -r -d '' vbin; do
@@ -162,7 +193,12 @@ copy_into_esp "userspace/shell/shell_exec.txt" "shell.txt"
 copy_into_esp "userspace/MODPlay/makemove.mod" "makemove.mod"
 copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "UNREALPM.S3M"
 copy_into_esp "userspace/rotozoom/head.bmp" "head.bmp"
-copy_into_esp "userspace/quake/pak0.pak" "pak0.pak"
+copy_into_esp "userspace/quake/pak0.pak" "id1/pak0.pak"
+copy_into_esp "userspace/quake/progs.dat" "zeusbot/progs.dat"
+copy_into_esp "userspace/quake/zeus_pak0.pak" "zeusbot/pak0.pak"
+
+echo "  Staging reaperfx..."
+copy_dir_into_esp "userspace/quake/reaperfx" "reaperfx"
 stage_clownmdemu_roms
 stage_vnes_roms
 stage_minimp3_tracks
