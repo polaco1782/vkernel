@@ -24,7 +24,9 @@ for arg in "$@"; do
 done
 
 if [ -z "${KEEP_DISK}" ]; then
-    if [ "${DEBUG_QEMU}" -eq 1 ] || [ "${VERBOSE}" -eq 1 ]; then
+    if [ "${DEBUG_QEMU}" -eq 1 ]; then
+        make DEBUG=1 GDB_WAIT=1 disk
+    elif [ "${VERBOSE}" -eq 1 ]; then
         make DEBUG=1 disk
     else
         make disk
@@ -79,9 +81,9 @@ if [ "${DEBUG_QEMU}" = "1" ]; then
     echo "       -ex 'set breakpoint pending on' \\"
     echo "       -ex 'source .vscode/find_kernel.py' \\"
     echo "       -ex 'target remote localhost:1234'"
-    echo "  2. (continue) -> let UEFI load the kernel"
-    echo "  3. (pause) -> then run: find-kernel"
-    echo "  4. Set breakpoints by name (e.g. break vk::efi_main)"
+    echo "  2. continue once; the debug build will trap at kernel entry"
+    echo "  3. symbols auto-load on that first stop"
+    echo "  4. Set breakpoints by name or step from vk::efi_main"
 fi
 
 echo ""

@@ -9,6 +9,7 @@ BUILD_DIR := build
 EFI_FILE := $(BUILD_DIR)/$(KERNEL_NAME).efi
 ESP_DIR   := $(BUILD_DIR)/esp
 BOOT_IMG  := $(BUILD_DIR)/$(KERNEL_NAME)_boot.img
+SYMBOLS_DIR := $(BUILD_DIR)/symbols
 
 # Userspace programs
 USERSPACE_DIR  := userspace
@@ -40,6 +41,13 @@ CXX := $(CROSS_PREFIX)g++
 LD := ld
 OBJCOPY := objcopy
 OBJDUMP := objdump
+NM := nm
+
+# Text symbol maps live under build/symbols/<original-path>.map.
+symbol_map_target = $(SYMBOLS_DIR)/$(1).map
+KERNEL_SYMBOL_MAP := $(call symbol_map_target,$(BUILD_DIR)/$(KERNEL_NAME).elf)
+USERSPACE_DEBUG_BINARIES := $(USERSPACE_BINARIES)
+USERSPACE_SYMBOL_MAPS := $(foreach bin,$(USERSPACE_DEBUG_BINARIES),$(call symbol_map_target,$(bin)))
 
 # Compiler flags
 CXXFLAGS := -Wall -Wextra -Werror
@@ -59,6 +67,10 @@ ifdef DEBUG
 	CXXFLAGS += -g -O0 -fno-omit-frame-pointer -DDEBUG -DKERNEL_DEBUG=1
 else
 	CXXFLAGS += -O2 -DNDEBUG
+endif
+
+ifdef GDB_WAIT
+	CXXFLAGS += -DKERNEL_GDB_WAIT=1
 endif
 
 # Linker flags — static link; -fpic gives RIP-relative code; reloc_stub.cpp
@@ -108,10 +120,20 @@ $(BUILD_DIR)/$(KERNEL_NAME).elf: $(ALL_OBJS)
 	@echo "  LD      $@"
 	@$(LD) $(LDFLAGS) -o $@ $^
 
+# Emit a sorted text symbol map for addr2line / post-mortem work.
+$(SYMBOLS_DIR)/%.map: %
+	@echo "  MAP     $@"
+	@mkdir -p $(dir $@)
+	@$(NM) -n -C --defined-only $< > $@
+
 # Convert to PE/COFF EFI application and stage into ESP directory
 # DWARF debug sections (VMA=0) must be stripped from the PE image or the
 # UEFI firmware loader will reject / misparse the binary.  The unstripped
 # .elf is kept alongside for GDB / QEMU symbol loading.
+ifdef DEBUG
+$(EFI_FILE): | $(KERNEL_SYMBOL_MAP)
+endif
+
 $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@echo "  OBJCOPY $@"
 	@$(OBJCOPY) -O efi-app-x86_64 \
@@ -141,7 +163,12 @@ $(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh userspace
 
 # Build all userspace binaries
 .PHONY: userspace libc-glue newlib-setup
-userspace: $(USERSPACE_BINARIES)
+USERSPACE_TARGETS := $(USERSPACE_BINARIES)
+ifdef DEBUG
+USERSPACE_TARGETS += $(USERSPACE_SYMBOL_MAPS)
+endif
+
+userspace: $(USERSPACE_TARGETS)
 
 # newlib sysroot (headers + libc.a/libm.a) — run once
 newlib-setup:
@@ -253,6 +280,7 @@ info:
 	@echo "  CXX:          $(CXX)"
 	@echo "  CXXFLAGS:     $(CXXFLAGS)"
 	@echo "  LDFLAGS:      $(LDFLAGS)"
+	@echo "  Symbol maps:  $(if $(DEBUG),$(SYMBOLS_DIR),disabled)"
 	@echo "  Sources:      $(CXX_SRCS)"
 	@echo "  Objects:      $(ALL_OBJS)"
 

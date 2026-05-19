@@ -29,6 +29,33 @@ namespace vk {
 namespace ac97_driver { void register_builtin(); }
 namespace virtio_blk_driver { void register_builtin(); }
 
+#if defined(KERNEL_GDB_WAIT)
+/*
+ * Debugger mailbox in the AP trampoline page.
+ * This low-memory page is already reserved by the kernel for SMP bring-up,
+ * and these offsets are outside the fields consumed by the trampoline code.
+ */
+static constexpr usize GDB_MAILBOX_IMAGE_BASE = 0x8160;
+static constexpr usize GDB_MAILBOX_RELEASE    = 0x8168;
+static constexpr u64   GDB_RELEASE_MAGIC      = 0x564B4442474FULL; /* "VKDBGO" */
+
+static void wait_for_debugger_attach() {
+    auto* image_base_slot =
+        reinterpret_cast<volatile u64*>(GDB_MAILBOX_IMAGE_BASE);
+    auto* release_slot =
+        reinterpret_cast<volatile u64*>(GDB_MAILBOX_RELEASE);
+
+    *release_slot = 0;
+    *image_base_slot = asm_get_image_base();
+    asm_memory_barrier();
+
+    while (*release_slot != GDB_RELEASE_MAGIC) {
+        asm_pause();
+        asm_memory_barrier();
+    }
+}
+#endif
+
 /* ============================================================
  * Self-relocator for the GOT
  *
@@ -91,7 +118,12 @@ auto efi_main(
     uefi::handle image_handle,
     uefi::system_table* system_table
 ) -> uefi::status {
-    
+#if defined(KERNEL_GDB_WAIT)
+    /* In the QEMU/GDB debug flow, publish the relocated image base and
+     * wait for the debugger to acknowledge before startup runs. */
+    wait_for_debugger_attach();
+#endif
+
     /* Self-relocate: patch GOT entries before using any cross-TU pointers */
     self_relocate();
 

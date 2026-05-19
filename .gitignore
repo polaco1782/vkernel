@@ -17,6 +17,7 @@ build_vs/
 *.lib
 *.dll
 *.exe
+*.pyc
 
 # Generated dependency files
 userspace/vgui/*.d
@@ -37,7 +38,6 @@ ipch/
 *.swp
 *.swo
 *~
-.vscode/
 .idea/
 .codex
 .github
