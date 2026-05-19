@@ -57,26 +57,28 @@ static void log_backtrace_address(const char* label,
             line << "+" << log::hex(symbol.offset, 1, true, false);
         }
         line << ")";
-        return;
+    } else {
+        kernel_debug::resolved_symbol kernel_symbol {};
+        if (kernel_debug::lookup_symbol(address, &kernel_symbol)
+            && kernel_symbol.name != null) {
+            line << " (" << kernel_symbol.name;
+            if (kernel_symbol.offset != 0) {
+                line << "+" << log::hex(kernel_symbol.offset, 1, true, false);
+            }
+            line << ")";
+        } else if (ctx != null && ctx->image_base != null && ctx->image_size > 0) {
+            const u64 image_base = reinterpret_cast<u64>(ctx->image_base);
+            const u64 image_end = image_base + static_cast<u64>(ctx->image_size);
+            if (address >= image_base && address < image_end) {
+                line << " (image+" << log::hex(address - image_base, 1, true, false) << ")";
+            }
+        }
     }
 
-    kernel_debug::resolved_symbol kernel_symbol {};
-    if (kernel_debug::lookup_symbol(address, &kernel_symbol)
-        && kernel_symbol.name != null) {
-        line << " (" << kernel_symbol.name;
-        if (kernel_symbol.offset != 0) {
-            line << "+" << log::hex(kernel_symbol.offset, 1, true, false);
-        }
-        line << ")";
-        return;
-    }
-
-    if (ctx != null && ctx->image_base != null && ctx->image_size > 0) {
-        const u64 image_base = reinterpret_cast<u64>(ctx->image_base);
-        const u64 image_end = image_base + static_cast<u64>(ctx->image_size);
-        if (address >= image_base && address < image_end) {
-            line << " (image+" << log::hex(address - image_base, 1, true, false) << ")";
-        }
+    process::resolved_source_location location {};
+    if (process::lookup_source_location(ctx, address, &location)
+        && location.file_path != null && location.line != 0) {
+        line << " @ " << location.file_path << ":" << location.line;
     }
 }
 
@@ -138,6 +140,12 @@ void log_exception_backtrace(const register_state* regs,
                     line << " (image+" << log::hex(return_address - image_base, 1, true, false) << ")";
                 }
             }
+        }
+
+        process::resolved_source_location location {};
+        if (process::lookup_source_location(ctx, return_address, &location)
+            && location.file_path != null && location.line != 0) {
+            line << " @ " << location.file_path << ":" << location.line;
         }
 
         if (next_rbp <= rbp) {

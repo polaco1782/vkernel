@@ -64,6 +64,10 @@ struct process_task_context {
     usize symbol_count;
     const char* symbol_strings;
     void* symbol_storage;
+    process_line* lines;
+    usize line_count;
+    const char* line_files;
+    void* line_storage;
 };
 
 void cleanup_process_context(process_task_context* ctx, int exit_code);

@@ -315,6 +315,7 @@ static auto load_process_context(string_view filename,
     copy_command_line(ctx.get(), command_line, filename);
     if (is_elf) {
         (void)attach_symbols_from_elf(ctx.get(), data, sz);
+        (void)attach_lines_from_map(ctx.get(), filename, data, sz);
     }
     if (!remap_framebuffer_override(ctx->address_space, fb_override, ctx->fb_override, ctx->fb_override_valid)) {
         if (image_vm_mapped && image_phys != 0) {

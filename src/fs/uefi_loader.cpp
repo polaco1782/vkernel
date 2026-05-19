@@ -88,6 +88,7 @@ struct efi_file_info {
 
 static auto is_bootstrap_ramfs_name(const char* name) -> bool {
     return string_view(name).equals(string_view("shell.vbin"))
+        || string_view(name).equals(string_view("shell.vbin.lines"))
         || string_view(name).equals(string_view("vkernel.elf.map"));
 }
 

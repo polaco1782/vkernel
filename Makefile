@@ -45,9 +45,11 @@ NM := nm
 
 # Text symbol maps live under build/symbols/<original-path>.map.
 symbol_map_target = $(SYMBOLS_DIR)/$(1).map
+line_map_target = $(SYMBOLS_DIR)/$(1).lines
 KERNEL_SYMBOL_MAP := $(call symbol_map_target,$(BUILD_DIR)/$(KERNEL_NAME).elf)
 USERSPACE_DEBUG_BINARIES := $(USERSPACE_BINARIES)
 USERSPACE_SYMBOL_MAPS := $(foreach bin,$(USERSPACE_DEBUG_BINARIES),$(call symbol_map_target,$(bin)))
+USERSPACE_LINE_MAPS := $(foreach bin,$(USERSPACE_DEBUG_BINARIES),$(call line_map_target,$(bin)))
 
 # Compiler flags
 CXXFLAGS := -Wall -Wextra -Werror
@@ -126,6 +128,12 @@ $(SYMBOLS_DIR)/%.map: %
 	@mkdir -p $(dir $@)
 	@$(NM) -n -C --defined-only $< > $@
 
+# Emit a compact userspace file/line lookup table for crash backtraces.
+$(SYMBOLS_DIR)/%.lines: % scripts/generate_line_map.sh
+	@echo "  LINES   $@"
+	@mkdir -p $(dir $@)
+	@bash scripts/generate_line_map.sh $< $@
+
 # Convert to PE/COFF EFI application and stage into ESP directory
 # DWARF debug sections (VMA=0) must be stripped from the PE image or the
 # UEFI firmware loader will reject / misparse the binary.  The unstripped
@@ -157,15 +165,21 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@ls -lh $@
 
 # Create bootable GPT + EFI System Partition disk image
-$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh userspace $(KERNEL_SYMBOL_MAP)
+BOOT_DEBUG_FILES := $(KERNEL_SYMBOL_MAP)
+ifdef DEBUG
+BOOT_DEBUG_FILES += $(USERSPACE_LINE_MAPS)
+endif
+
+$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh userspace $(BOOT_DEBUG_FILES)
 	@echo "  DISK    $@"
-	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(KERNEL_SYMBOL_MAP)
+	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(BOOT_DEBUG_FILES)
 
 # Build all userspace binaries
 .PHONY: userspace libc-glue newlib-setup
 USERSPACE_TARGETS := $(USERSPACE_BINARIES)
 ifdef DEBUG
 USERSPACE_TARGETS += $(USERSPACE_SYMBOL_MAPS)
+USERSPACE_TARGETS += $(USERSPACE_LINE_MAPS)
 endif
 
 userspace: $(USERSPACE_TARGETS)
