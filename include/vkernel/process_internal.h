@@ -9,6 +9,7 @@
 #define VKERNEL_PROCESS_INTERNAL_H
 
 #include "process.h"
+#include "process_debug.h"
 #include "vk.h"
 
 namespace vk {
@@ -29,6 +30,7 @@ struct process_allocation {
 struct process_task_context {
     static constexpr usize KEY_QUEUE_SIZE = 64;
     static constexpr usize MOUSE_QUEUE_SIZE = 64;
+    static constexpr usize FRAMEBUFFER_EVENT_QUEUE_SIZE = 8;
     static constexpr usize COMMAND_LINE_CAP = 256;
 
     u64   entry;
@@ -45,15 +47,23 @@ struct process_task_context {
     vk_mouse_event_t mouse_queue[MOUSE_QUEUE_SIZE];
     usize mouse_q_head;
     usize mouse_q_tail;
+    vk_framebuffer_event_t framebuffer_event_queue[FRAMEBUFFER_EVENT_QUEUE_SIZE];
+    usize framebuffer_event_q_head;
+    usize framebuffer_event_q_tail;
     char command_line[COMMAND_LINE_CAP];
     usize command_line_len;
     vk_framebuffer_info_t fb_override;
     bool fb_override_valid;
+    bool framebuffer_resize_events_enabled;
     bool stdio_to_serial;
     u64 task_id;
     vk_u32 fb_text_col;
     vk_u32 fb_text_row;
     process_allocation* allocations;
+    process_symbol* symbols;
+    usize symbol_count;
+    const char* symbol_strings;
+    void* symbol_storage;
 };
 
 void cleanup_process_context(process_task_context* ctx, int exit_code);

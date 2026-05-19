@@ -157,9 +157,9 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@ls -lh $@
 
 # Create bootable GPT + EFI System Partition disk image
-$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh userspace
+$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh userspace $(KERNEL_SYMBOL_MAP)
 	@echo "  DISK    $@"
-	@bash scripts/make_disk.sh $(EFI_FILE) $@
+	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(KERNEL_SYMBOL_MAP)
 
 # Build all userspace binaries
 .PHONY: userspace libc-glue newlib-setup

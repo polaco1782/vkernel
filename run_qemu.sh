@@ -23,6 +23,8 @@ for arg in "$@"; do
     esac
 done
 
+make clean
+
 if [ -z "${KEEP_DISK}" ]; then
     if [ "${DEBUG_QEMU}" -eq 1 ]; then
         make DEBUG=1 GDB_WAIT=1 disk

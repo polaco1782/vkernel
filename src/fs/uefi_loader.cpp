@@ -86,8 +86,9 @@ struct efi_file_info {
     char16_t file_name[1];
 };
 
-static auto is_backup_shell_name(const char* name) -> bool {
-    return string_view(name).equals(string_view("shell.vbin"));
+static auto is_bootstrap_ramfs_name(const char* name) -> bool {
+    return string_view(name).equals(string_view("shell.vbin"))
+        || string_view(name).equals(string_view("vkernel.elf.map"));
 }
 
 constexpr u64 EFI_FILE_MODE_READ = 0x0000000000000001ULL;
@@ -294,7 +295,7 @@ auto loader::load_initrd() -> status_code {
             log::debug() << "Skipping directory: " << name;
             return status_code::success;
         }
-        if (!is_backup_shell_name(name)) {
+        if (!is_bootstrap_ramfs_name(name)) {
             return status_code::success;
         }
 

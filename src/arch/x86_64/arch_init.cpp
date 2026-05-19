@@ -13,6 +13,7 @@
 #include "scheduler.h"
 #include "panic.h"
 #include "process_internal.h"
+#include "arch/x86_64/exception_debug.h"
 #include "arch/x86_64/arch.h"
 #include "smp.h"
 #if defined(_MSC_VER)
@@ -255,6 +256,10 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
                            reinterpret_cast<const u8*>(regs->frame.rip), 16);
             log::crash() << "  Bytes @ RIP:  " << bytes_buf;
         }
+
+        auto* current_ctx = static_cast<process::process_task_context*>(
+            sched::current_task_user_data());
+        log_exception_backtrace(regs, current_ctx);
 
         /*
          * If the faulting task is a userspace process, kill just

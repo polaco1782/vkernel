@@ -26,6 +26,11 @@ namespace kernel_api {
 
 static auto current_console_interface() -> process::console_interface;
 static auto validate_fb(const vk_framebuffer_info_t* fb) -> bool;
+static void enqueue_framebuffer_event(process::process_task_context* target,
+                                      vk_u32 type,
+                                      const vk_framebuffer_info_t& framebuffer);
+static int stub_set_framebuffer_resize_events(vk_u32 enabled);
+static int stub_task_accepts_framebuffer_resize(vk_u64 task_id);
 static void route_putc(char c);
 static void route_puts(const char* str);
 static auto route_stdio_write(const char* buf, vk_usize len) -> vk_usize;
@@ -452,6 +457,27 @@ static int stub_send_mouse(vk_u64 task_id, const vk_mouse_event_t* ev) {
     return 1;
 }
 
+static void enqueue_framebuffer_event(process::process_task_context* target,
+                                      vk_u32 type,
+                                      const vk_framebuffer_info_t& framebuffer) {
+    if (target == null || !target->framebuffer_resize_events_enabled) {
+        return;
+    }
+
+    vk_framebuffer_event_t event = {};
+    event.type = type;
+    event.framebuffer = framebuffer;
+
+    usize next = (target->framebuffer_event_q_head + 1)
+               % process::process_task_context::FRAMEBUFFER_EVENT_QUEUE_SIZE;
+    if (next == target->framebuffer_event_q_tail) {
+        target->framebuffer_event_q_tail = (target->framebuffer_event_q_tail + 1)
+                                        % process::process_task_context::FRAMEBUFFER_EVENT_QUEUE_SIZE;
+    }
+    target->framebuffer_event_queue[target->framebuffer_event_q_head] = event;
+    target->framebuffer_event_q_head = next;
+}
+
 static vk_u32 stub_ticks_per_sec() {
     return SCHED_TICK_HZ;
 }
@@ -691,25 +717,23 @@ static auto remap_target_framebuffer(process::process_task_context* target,
             return false;
         }
 
-        const virt_addr old_target_base =
-            target->fb_override_valid
-            && target->fb_override.base >= vm::USER_SHARED_BASE
-            && target->fb_override.base < vm::USER_MAP_LIMIT
-                ? static_cast<virt_addr>(target->fb_override.base)
-                : vm::USER_SHARED_BASE + static_cast<usize>(source_base & (PAGE_SIZE_4K - 1));
-        const virt_addr target_start = align_down(old_target_base, PAGE_SIZE_4K);
-        const usize target_offset = static_cast<usize>(old_target_base - target_start);
         const usize source_offset = static_cast<usize>(source_base & (PAGE_SIZE_4K - 1));
-
-        if (target_offset != source_offset) {
-            log::warn() << "vmtrace: set_task_framebuffer offset mismatch old_target="
-                        << reinterpret_cast<const void*>(static_cast<usize>(old_target_base))
-                        << " source=" << reinterpret_cast<const void*>(static_cast<usize>(source_base));
-            return false;
-        }
-
-        const usize mapped_bytes = align_up(target_offset + fb_bytes, PAGE_SIZE_4K);
+        const virt_addr target_start = vm::USER_SHARED_BASE;
+        const virt_addr target_base = target_start + source_offset;
+        const usize mapped_bytes = align_up(source_offset + fb_bytes, PAGE_SIZE_4K);
         const virt_addr source_start = align_down(source_base, PAGE_SIZE_4K);
+        usize old_mapped_bytes = 0;
+
+        if (target->fb_override_valid
+            && target->fb_override.base >= vm::USER_SHARED_BASE
+            && target->fb_override.base < vm::USER_MAP_LIMIT) {
+            usize old_fb_bytes = 0;
+            if (framebuffer::byte_size(target->fb_override, old_fb_bytes)) {
+                const virt_addr old_target_base = static_cast<virt_addr>(target->fb_override.base);
+                const usize old_offset = static_cast<usize>(old_target_base - align_down(old_target_base, PAGE_SIZE_4K));
+                old_mapped_bytes = align_up(old_offset + old_fb_bytes, PAGE_SIZE_4K);
+            }
+        }
 
         for (usize offset = 0; offset < mapped_bytes; offset += PAGE_SIZE_4K) {
             phys_addr source_phys = 0;
@@ -722,7 +746,10 @@ static auto remap_target_framebuffer(process::process_task_context* target,
             }
         }
 
-        vm::unmap_range(target->address_space, target_start, mapped_bytes);
+        const usize unmap_bytes = old_mapped_bytes > mapped_bytes ? old_mapped_bytes : mapped_bytes;
+        if (unmap_bytes != 0) {
+            vm::unmap_range(target->address_space, target_start, unmap_bytes);
+        }
 
         for (usize offset = 0; offset < mapped_bytes; offset += PAGE_SIZE_4K) {
             phys_addr source_phys = 0;
@@ -752,7 +779,7 @@ static auto remap_target_framebuffer(process::process_task_context* target,
             }
         }
 
-        mapped.base = static_cast<vk_u64>(old_target_base);
+        mapped.base = static_cast<vk_u64>(target_base);
     }
 
     target->fb_override = mapped;
@@ -769,7 +796,52 @@ static int stub_set_task_framebuffer(vk_u64 task_id, const vk_framebuffer_info_t
     if (!remap_target_framebuffer(target, fb)) {
         return 0;
     }
+    if (target->fb_override_valid) {
+        enqueue_framebuffer_event(target,
+                                  VK_FRAMEBUFFER_EVENT_RESIZED,
+                                  target->fb_override);
+    }
     return target->fb_override_valid ? 1 : 0;
+}
+
+static int stub_poll_framebuffer_event(vk_framebuffer_event_t* out) {
+    if (out == null || !should_use_framebuffer()) {
+        return 0;
+    }
+
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx == null
+        || !ctx->framebuffer_resize_events_enabled
+        || ctx->framebuffer_event_q_head == ctx->framebuffer_event_q_tail) {
+        return 0;
+    }
+
+    *out = ctx->framebuffer_event_queue[ctx->framebuffer_event_q_tail];
+    ctx->framebuffer_event_q_tail = (ctx->framebuffer_event_q_tail + 1)
+                                  % process::process_task_context::FRAMEBUFFER_EVENT_QUEUE_SIZE;
+    return 1;
+}
+
+static int stub_set_framebuffer_resize_events(vk_u32 enabled) {
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx == null) {
+        return 0;
+    }
+
+    ctx->framebuffer_resize_events_enabled = (enabled != 0u);
+    if (!ctx->framebuffer_resize_events_enabled) {
+        ctx->framebuffer_event_q_head = 0;
+        ctx->framebuffer_event_q_tail = 0;
+    }
+    return 1;
+}
+
+static int stub_task_accepts_framebuffer_resize(vk_u64 task_id) {
+    auto* target = static_cast<process::process_task_context*>(sched::task_user_data(task_id));
+    if (target == null) {
+        return 0;
+    }
+    return target->framebuffer_resize_events_enabled ? 1 : 0;
 }
 
 static void route_framebuffer_info(vk_framebuffer_info_t* out) {
@@ -940,6 +1012,10 @@ void init() {
     s_api.vk_get_cmdline = stub_get_cmdline;
     s_api.vk_terminate_task = stub_terminate_task;
     s_api.vk_exec_cmdline = stub_exec_cmdline;
+    /* framebuffer events */
+    s_api.vk_poll_framebuffer_event = stub_poll_framebuffer_event;
+    s_api.vk_set_framebuffer_resize_events = stub_set_framebuffer_resize_events;
+    s_api.vk_task_accepts_framebuffer_resize = stub_task_accepts_framebuffer_resize;
 
     s_api_ready = true;
 }

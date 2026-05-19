@@ -820,6 +820,29 @@ auto sched::task_user_data(u64 task_id) -> void* {
     return user_data;
 }
 
+auto sched::current_task_stack_bounds(virt_addr* out_low,
+                                      virt_addr* out_high) -> bool {
+    if (out_low != null) {
+        *out_low = 0;
+    }
+    if (out_high != null) {
+        *out_high = 0;
+    }
+
+    usize t = cpu_current_task();
+    if (t >= g_task_count) {
+        return false;
+    }
+
+    if (out_low != null) {
+        *out_low = reinterpret_cast<virt_addr>(&g_tasks[t].stack[0]);
+    }
+    if (out_high != null) {
+        *out_high = reinterpret_cast<virt_addr>(&g_tasks[t].stack[TASK_STACK_SIZE]);
+    }
+    return true;
+}
+
 auto sched::tick_count() -> u64 {
     return g_tick_count;
 }

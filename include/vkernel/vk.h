@@ -48,6 +48,16 @@ typedef struct vk_framebuffer_info {
     vk_u32            valid;
 } vk_framebuffer_info_t;
 
+typedef enum vk_framebuffer_event_type {
+    VK_FRAMEBUFFER_EVENT_RESIZED = 1,
+} vk_framebuffer_event_type_t;
+
+typedef struct vk_framebuffer_event {
+    vk_u32                type;
+    vk_u32                _reserved;
+    vk_framebuffer_info_t framebuffer;
+} vk_framebuffer_event_t;
+
 typedef struct vk_key_event {
     vk_u32 scancode;   /* PS/2 scan code set 1 make code (0x01-0x58) */
     vk_u32 pressed;    /* 1 = key down (make), 0 = key up (break)   */
@@ -176,10 +186,15 @@ typedef struct vk_api {
     /* ---- stdio routing ---- */
     vk_usize (*vk_stdio_write)(const char* buf, vk_usize len);
 
+    /* ---- framebuffer events ---- */
+    int (*vk_poll_framebuffer_event)(vk_framebuffer_event_t* out);
+    int (*vk_set_framebuffer_resize_events)(vk_u32 enabled);
+    int (*vk_task_accepts_framebuffer_resize)(vk_u64 task_id);
+
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 29ULL
+#define VK_API_VERSION 31ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

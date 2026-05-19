@@ -23,6 +23,7 @@
 #include "elf.h"
 #include "pe.h"
 #include "process.h"
+#include "process_debug.h"
 #include "vk.h"
 #include "process_internal.h"
 #include "resource_ptr.h"
@@ -179,6 +180,8 @@ static void copy_command_line(process_task_context* ctx,
 
 static void discard_loaded_process(loaded_process& loaded) {
     auto* ctx = loaded.ctx.get();
+    cleanup_debug_metadata(ctx);
+
     if (ctx != null && ctx->image_vm_mapped && ctx->image_phys != 0 && ctx->address_space != null) {
         vm::unmap_range(ctx->address_space,
                         reinterpret_cast<virt_addr>(ctx->image_base),
@@ -301,12 +304,18 @@ static auto load_process_context(string_view filename,
     ctx->address_space   = owned_address_space.get();
     ctx->image_phys      = image_phys;
     ctx->image_vm_mapped = image_vm_mapped;
+    init_debug_metadata(ctx.get());
     ctx->interface       = interface;
     ctx->key_q_head      = 0;
     ctx->key_q_tail      = 0;
     ctx->mouse_q_head    = 0;
     ctx->mouse_q_tail    = 0;
+    ctx->framebuffer_event_q_head = 0;
+    ctx->framebuffer_event_q_tail = 0;
     copy_command_line(ctx.get(), command_line, filename);
+    if (is_elf) {
+        (void)attach_symbols_from_elf(ctx.get(), data, sz);
+    }
     if (!remap_framebuffer_override(ctx->address_space, fb_override, ctx->fb_override, ctx->fb_override_valid)) {
         if (image_vm_mapped && image_phys != 0) {
             g_phys_alloc.free_pages(image_phys,
@@ -315,6 +324,7 @@ static auto load_process_context(string_view filename,
         log::error() << "process: failed to map framebuffer override";
         return false;
     }
+    ctx->framebuffer_resize_events_enabled = false;
     ctx->stdio_to_serial = ctx->fb_override_valid;
     ctx->task_id = 0;
     ctx->fb_text_col = 0;
@@ -369,6 +379,8 @@ void cleanup_process_context(process_task_context* ctx, int exit_code) {
     for (auto* alloc = ctx->allocations; alloc != null; alloc = alloc->next) {
         sound::mix_stop_range(alloc->user_ptr, alloc->allocated_size);
     }
+
+    cleanup_debug_metadata(ctx);
 
     auto* alloc = ctx->allocations;
     while (alloc != null) {

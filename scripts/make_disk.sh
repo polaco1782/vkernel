@@ -197,6 +197,11 @@ copy_into_esp "userspace/quake/pak0.pak" "id1/pak0.pak"
 copy_into_esp "userspace/quake/progs.dat" "zeusbot/progs.dat"
 copy_into_esp "userspace/quake/zeus_pak0.pak" "zeusbot/pak0.pak"
 
+for extra in "$@"; do
+    [ -f "${extra}" ] || continue
+    copy_into_esp "${extra}" "$(basename "${extra}")"
+done
+
 echo "  Staging reaperfx..."
 copy_dir_into_esp "userspace/quake/reaperfx" "reaperfx"
 stage_clownmdemu_roms

@@ -232,6 +232,14 @@ inline auto invlpg(vaddr addr) -> void {
         static_cast<unsigned long long>(new_value)) != 0;
 }
 
+/* RIP-relative symbol address helpers */
+[[nodiscard]] inline auto image_base() -> u64 { return asm_get_image_base(); }
+[[nodiscard]] inline auto data_start() -> u64 { return asm_get_data_start(); }
+[[nodiscard]] inline auto data_end() -> u64   { return asm_get_data_end(); }
+[[nodiscard]] inline auto got_start() -> u64  { return asm_get_got_start(); }
+[[nodiscard]] inline auto got_end() -> u64    { return asm_get_got_end(); }
+[[nodiscard]] inline auto image_end() -> u64  { return asm_get_end(); }
+
 /* Architecture initialization */
 void init();           /* Prepare tables (safe during boot services) */
 void activate();       /* Load GDT/IDT/TSS (call AFTER ExitBootServices) */
