@@ -47,6 +47,7 @@ NM := nm
 symbol_map_target = $(SYMBOLS_DIR)/$(1).map
 line_map_target = $(SYMBOLS_DIR)/$(1).lines
 KERNEL_SYMBOL_MAP := $(call symbol_map_target,$(BUILD_DIR)/$(KERNEL_NAME).elf)
+KERNEL_LINE_MAP := $(call line_map_target,$(BUILD_DIR)/$(KERNEL_NAME).elf)
 USERSPACE_DEBUG_BINARIES := $(USERSPACE_BINARIES)
 USERSPACE_SYMBOL_MAPS := $(foreach bin,$(USERSPACE_DEBUG_BINARIES),$(call symbol_map_target,$(bin)))
 USERSPACE_LINE_MAPS := $(foreach bin,$(USERSPACE_DEBUG_BINARIES),$(call line_map_target,$(bin)))
@@ -139,7 +140,7 @@ $(SYMBOLS_DIR)/%.lines: % scripts/generate_line_map.sh
 # UEFI firmware loader will reject / misparse the binary.  The unstripped
 # .elf is kept alongside for GDB / QEMU symbol loading.
 ifdef DEBUG
-$(EFI_FILE): | $(KERNEL_SYMBOL_MAP)
+$(EFI_FILE): | $(KERNEL_SYMBOL_MAP) $(KERNEL_LINE_MAP)
 endif
 
 $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
@@ -167,6 +168,7 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 # Create bootable GPT + EFI System Partition disk image
 BOOT_DEBUG_FILES := $(KERNEL_SYMBOL_MAP)
 ifdef DEBUG
+BOOT_DEBUG_FILES += $(KERNEL_LINE_MAP)
 BOOT_DEBUG_FILES += $(USERSPACE_LINE_MAPS)
 endif
 

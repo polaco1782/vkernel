@@ -89,7 +89,8 @@ struct efi_file_info {
 static auto is_bootstrap_ramfs_name(const char* name) -> bool {
     return string_view(name).equals(string_view("shell.vbin"))
         || string_view(name).equals(string_view("shell.vbin.lines"))
-        || string_view(name).equals(string_view("vkernel.elf.map"));
+        || string_view(name).equals(string_view("vkernel.elf.map"))
+        || string_view(name).equals(string_view("vkernel.elf.lines"));
 }
 
 constexpr u64 EFI_FILE_MODE_READ = 0x0000000000000001ULL;
@@ -313,7 +314,7 @@ auto loader::load_initrd() -> status_code {
         }
 
         efi_pool_ptr file_data(result.data, efi_pool_deleter { .boot_services = uefi::g_system_table->boot_services });
-        if (ramfs::add_file_nocopy(name, file_data.get(), result.size) != status_code::success) {
+        if (ramfs::add_file_nocopy(string_view(name), file_data.get(), result.size) != status_code::success) {
             log::warn() << "Failed to add to RAMFS: " << name;
             return status_code::success;
         }

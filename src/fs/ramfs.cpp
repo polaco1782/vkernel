@@ -79,10 +79,6 @@ auto ramfs::add_file_nocopy(string_view name, u8* data, usize size) -> status_co
     return status_code::success;
 }
 
-auto ramfs::add_file_nocopy(const char* name, u8* data, usize size) -> status_code {
-    return add_file_nocopy(string_view(name), data, size);
-}
-
 auto ramfs::find(string_view name) -> const file_entry* {
     if (name.size() >= 2 && name[0] == '.' && name[1] == '/') {
         name.remove_prefix(2);

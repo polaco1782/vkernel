@@ -79,6 +79,13 @@ static void log_backtrace_address(const char* label,
     if (process::lookup_source_location(ctx, address, &location)
         && location.file_path != null && location.line != 0) {
         line << " @ " << location.file_path << ":" << location.line;
+        return;
+    }
+
+    kernel_debug::resolved_source_location kernel_location {};
+    if (kernel_debug::lookup_source_location(address, &kernel_location)
+        && kernel_location.file_path != null && kernel_location.line != 0) {
+        line << " @ " << kernel_location.file_path << ":" << kernel_location.line;
     }
 }
 
@@ -146,6 +153,12 @@ void log_exception_backtrace(const register_state* regs,
         if (process::lookup_source_location(ctx, return_address, &location)
             && location.file_path != null && location.line != 0) {
             line << " @ " << location.file_path << ":" << location.line;
+        } else {
+            kernel_debug::resolved_source_location kernel_location {};
+            if (kernel_debug::lookup_source_location(return_address, &kernel_location)
+                && kernel_location.file_path != null && kernel_location.line != 0) {
+                line << " @ " << kernel_location.file_path << ":" << kernel_location.line;
+            }
         }
 
         if (next_rbp <= rbp) {
