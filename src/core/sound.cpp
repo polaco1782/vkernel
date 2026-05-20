@@ -268,7 +268,6 @@ void mix_stop_range(const void* base, usize size) {
     const usize end = start + size;
     if (end < start) return;
 
-    bool changed = false;
     for (u32 i = 0; i < MIX_CHANNELS; ++i) {
         auto& ch = s_mix_ch[i];
         if (!ch.active || ch.data == null) continue;
@@ -276,12 +275,7 @@ void mix_stop_range(const void* base, usize size) {
         const usize ptr = reinterpret_cast<usize>(ch.data);
         if (ptr >= start && ptr < end) {
             ch.active = false;
-            changed = true;
         }
-    }
-
-    if (changed) {
-        mix_do_submit();
     }
 }
 
