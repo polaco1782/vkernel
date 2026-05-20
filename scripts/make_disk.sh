@@ -117,6 +117,25 @@ stage_clownmdemu_roms() {
     done
 }
 
+stage_snes9x_roms() {
+    local rom
+    for rom in userspace/snes9x/roms/*; do
+        local base
+        local ext
+
+        [ -f "${rom}" ] || continue
+        base=$(basename "${rom}")
+        ext="${base##*.}"
+        ext="${ext,,}"
+
+        case "${ext}" in
+            smc|sfc)
+                copy_into_esp "${rom}" "${base}"
+                ;;
+        esac
+    done
+}
+
 stage_vnes_roms() {
     local rom
     for rom in userspace/vnes/roms/*; do
@@ -206,6 +225,7 @@ echo "  Staging reaperfx..."
 copy_dir_into_esp "userspace/quake/reaperfx" "reaperfx"
 stage_clownmdemu_roms
 stage_vnes_roms
+stage_snes9x_roms
 stage_minimp3_tracks
 
 echo "  Done: ${OUTPUT}"

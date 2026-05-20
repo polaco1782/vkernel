@@ -90,7 +90,14 @@ void free_page_table_tree(u64* table, int level)
 
         auto* child = table_from_phys(entry);
         free_page_table_tree(child, level - 1);
-        g_phys_alloc.free_pages(entry & PA_MASK, 1);
+        /* Only free page-table structure pages (PDPT/PD/PT), never leaf data
+         * pages (level == 1).  Leaf pages are either freed explicitly by
+         * cleanup_process_context for owned allocations, or are shared pages
+         * borrowed from another process (e.g. vgui framebuffer) that must
+         * not be freed here. */
+        if (level > 1) {
+            g_phys_alloc.free_pages(entry & PA_MASK, 1);
+        }
         table[index] = 0;
     }
 }

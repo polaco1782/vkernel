@@ -55,6 +55,9 @@ struct process_task_context {
     vk_framebuffer_info_t fb_override;
     bool fb_override_valid;
     bool framebuffer_resize_events_enabled;
+    bool startup_window_size_set;
+    vk_u32 startup_window_width;
+    vk_u32 startup_window_height;
     bool stdio_to_serial;
     u64 task_id;
     vk_u32 fb_text_col;

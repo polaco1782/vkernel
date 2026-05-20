@@ -190,11 +190,13 @@ typedef struct vk_api {
     int (*vk_poll_framebuffer_event)(vk_framebuffer_event_t* out);
     int (*vk_set_framebuffer_resize_events)(vk_u32 enabled);
     int (*vk_task_accepts_framebuffer_resize)(vk_u64 task_id);
+    int (*vk_set_startup_window_size)(vk_u32 width, vk_u32 height);
+    int (*vk_get_task_startup_window_size)(vk_u64 task_id, vk_u32* out_width, vk_u32* out_height);
 
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 31ULL
+#define VK_API_VERSION 32ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

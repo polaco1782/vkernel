@@ -1,0 +1,35 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "vkernel",
+      "intelliSenseMode": "linux-gcc-x64",
+      "cStandard": "c17",
+      "cppStandard": "gnu++23",
+      "includePath": [
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/include/vkernel",
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/userspace/include",
+        "${workspaceFolder}/userspace/sysroot/include",
+        "${workspaceFolder}/userspace/cpp/include"
+      ],
+      "defines": [
+        "DEBUG",
+        "KERNEL_DEBUG=1",
+        "HAVE_STDINT_H",
+        "HAVE_STRINGS_H",
+        "RIGHTSHIFT_IS_SAR",
+        "ALLOW_CPU_OVERCLOCK"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/include",
+          "${workspaceFolder}/src",
+          "${workspaceFolder}/userspace"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ]
+}

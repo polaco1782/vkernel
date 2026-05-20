@@ -31,6 +31,8 @@ static void enqueue_framebuffer_event(process::process_task_context* target,
                                       const vk_framebuffer_info_t& framebuffer);
 static int stub_set_framebuffer_resize_events(vk_u32 enabled);
 static int stub_task_accepts_framebuffer_resize(vk_u64 task_id);
+static int stub_set_startup_window_size(vk_u32 width, vk_u32 height);
+static int stub_get_task_startup_window_size(vk_u64 task_id, vk_u32* out_width, vk_u32* out_height);
 static void route_putc(char c);
 static void route_puts(const char* str);
 static auto route_stdio_write(const char* buf, vk_usize len) -> vk_usize;
@@ -746,16 +748,19 @@ static auto remap_target_framebuffer(process::process_task_context* target,
             }
         }
 
-        const usize unmap_bytes = old_mapped_bytes > mapped_bytes ? old_mapped_bytes : mapped_bytes;
-        if (unmap_bytes != 0) {
-            vm::unmap_range(target->address_space, target_start, unmap_bytes);
-        }
-
+        // Map new pages before unmapping old ones (map-then-unmap-excess).
+        // On SMP, a timer interrupt on the target CPU can flush its TLB between
+        // an unmap and the subsequent remap, causing a fault on the next access
+        // to USER_SHARED_BASE.  vm::map_page unconditionally overwrites the PTE,
+        // so mapping first keeps the region always accessible.
         for (usize offset = 0; offset < mapped_bytes; offset += PAGE_SIZE_4K) {
             phys_addr source_phys = 0;
             u64 source_flags = 0;
             const virt_addr source_page = source_start + offset;
             if (!vm::debug_resolve(source_ctx->address_space, source_page, &source_phys, &source_flags)) {
+                if (offset > 0) {
+                    vm::unmap_range(target->address_space, target_start, offset);
+                }
                 target->fb_override = {};
                 target->fb_override_valid = false;
                 target->fb_text_col = 0;
@@ -767,7 +772,9 @@ static auto remap_target_framebuffer(process::process_task_context* target,
                               target_start + offset,
                               align_down(source_phys, PAGE_SIZE_4K),
                               vm::MAP_WRITABLE | vm::MAP_USER)) {
-                vm::unmap_range(target->address_space, target_start, mapped_bytes);
+                if (offset > 0) {
+                    vm::unmap_range(target->address_space, target_start, offset);
+                }
                 target->fb_override = {};
                 target->fb_override_valid = false;
                 target->fb_text_col = 0;
@@ -777,6 +784,13 @@ static auto remap_target_framebuffer(process::process_task_context* target,
                             << " phys=" << reinterpret_cast<const void*>(static_cast<usize>(source_phys));
                 return false;
             }
+        }
+
+        // Unmap any excess pages left over from a previously larger mapping.
+        if (old_mapped_bytes > mapped_bytes) {
+            vm::unmap_range(target->address_space,
+                            target_start + mapped_bytes,
+                            old_mapped_bytes - mapped_bytes);
         }
 
         mapped.base = static_cast<vk_u64>(target_base);
@@ -842,6 +856,43 @@ static int stub_task_accepts_framebuffer_resize(vk_u64 task_id) {
         return 0;
     }
     return target->framebuffer_resize_events_enabled ? 1 : 0;
+}
+
+static int stub_set_startup_window_size(vk_u32 width, vk_u32 height) {
+    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
+    if (ctx == null) {
+        return 0;
+    }
+
+    if (width == 0 || height == 0) {
+        ctx->startup_window_size_set = false;
+        ctx->startup_window_width = 0;
+        ctx->startup_window_height = 0;
+        return 1;
+    }
+
+    ctx->startup_window_size_set = true;
+    ctx->startup_window_width = width;
+    ctx->startup_window_height = height;
+    return 1;
+}
+
+static int stub_get_task_startup_window_size(vk_u64 task_id, vk_u32* out_width, vk_u32* out_height) {
+    if (out_width == null || out_height == null) {
+        return 0;
+    }
+
+    *out_width = 0;
+    *out_height = 0;
+
+    auto* target = static_cast<process::process_task_context*>(sched::task_user_data(task_id));
+    if (target == null || !target->startup_window_size_set) {
+        return 0;
+    }
+
+    *out_width = target->startup_window_width;
+    *out_height = target->startup_window_height;
+    return 1;
 }
 
 static void route_framebuffer_info(vk_framebuffer_info_t* out) {
@@ -1016,6 +1067,8 @@ void init() {
     s_api.vk_poll_framebuffer_event = stub_poll_framebuffer_event;
     s_api.vk_set_framebuffer_resize_events = stub_set_framebuffer_resize_events;
     s_api.vk_task_accepts_framebuffer_resize = stub_task_accepts_framebuffer_resize;
+    s_api.vk_set_startup_window_size = stub_set_startup_window_size;
+    s_api.vk_get_task_startup_window_size = stub_get_task_startup_window_size;
 
     s_api_ready = true;
 }

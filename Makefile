@@ -33,7 +33,8 @@ VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
 SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
 CPPCOMPAT_VBIN   := $(USERSPACE_DIR)/cppcompat/cppcompat.vbin
 VNES_VBIN        := $(USERSPACE_DIR)/vnes/vnes.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(QUAKE_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VNES_VBIN)
+SNES9X_VBIN      := $(USERSPACE_DIR)/snes9x/snes9x.vbin
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(QUAKE_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VNES_VBIN) $(SNES9X_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -257,6 +258,9 @@ $(VNES_VBIN): $(wildcard $(USERSPACE_DIR)/vnes/*.cpp) $(USERSPACE_DIR)/vnes/Make
 	     bash $(USERSPACE_DIR)/vgui/setup_imgui.sh)
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vnes $(_DEBUG_FLAG)
 
+$(SNES9X_VBIN): $(USERSPACE_DIR)/snes9x/Makefile libc-glue
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/snes9x CXX=$(CROSS_PREFIX)g++ CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
+
 # Disassembly for debugging
 disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@$(OBJDUMP) -d $< > $(BUILD_DIR)/$(KERNEL_NAME).dis
@@ -281,6 +285,7 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vnes clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/snes9x clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube clean
 
 # Deep clean — also remove newlib sysroot and source (requires re-running setup_newlib.sh)
