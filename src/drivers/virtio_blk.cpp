@@ -433,6 +433,7 @@ static const driver_descriptor s_virtio_blk_descriptor = {
     .type = driver_type::block,
     .sound = null,
     .block = &s_virtio_blk_driver,
+    .net = null,
 };
 
 } // namespace

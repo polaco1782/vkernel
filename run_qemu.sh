@@ -107,8 +107,9 @@ exec ${QEMU} \
     -drive if=pflash,format=${PFLASH_FMT},file="${NVRAM_FILE}" \
     -drive if=none,id=bootdisk,format=raw,file="${BOOT_IMG}" \
     -device virtio-blk-pci,drive=bootdisk,bootindex=0,disable-modern=off,disable-legacy=off \
+    -netdev user,id=net0 \
+    -device virtio-net-pci,netdev=net0,disable-modern=off,disable-legacy=off \
     -m 512M \
-    -net none \
     -device AC97 \
     -serial stdio \
     -no-reboot \

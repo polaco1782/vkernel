@@ -13,6 +13,7 @@
 #include "driver.h"
 #include "sound.h"
 #include "block.h"
+#include "net.h"
 
 namespace vk {
 namespace driver {
@@ -112,6 +113,15 @@ auto load(string_view name) -> i32 {
                         }
                     }
                     break;
+                case driver_type::network:
+                    if (s_drivers[i].desc->net) {
+                        net::init();
+                        if (!s_drivers[i].desc->net->init()) {
+                            log::error() << "driver: network init failed for " << s_drivers[i].desc->name;
+                            return -1;
+                        }
+                    }
+                    break;
                 default:
                     log::error() << "driver: unknown type for " << s_drivers[i].desc->name;
                     return -1;
@@ -149,6 +159,11 @@ auto unload(string_view name) -> i32 {
                         s_drivers[i].desc->block->shutdown();
                     }
                     break;
+                case driver_type::network:
+                    if (s_drivers[i].desc->net && s_drivers[i].desc->net->shutdown) {
+                        s_drivers[i].desc->net->shutdown();
+                    }
+                    break;
                 default:
                     break;
             }
@@ -176,6 +191,7 @@ void list_loaded() {
             switch (s_drivers[i].desc->type) {
                 case driver_type::sound: log::info() << " (sound)"; break;
                 case driver_type::block: log::info() << " (block)"; break;
+                case driver_type::network: log::info() << " (network)"; break;
                 default: log::info() << " (unknown)"; break;
             }
             any = true;
@@ -197,6 +213,7 @@ void list_available() {
             switch (s_drivers[i].desc->type) {
                 case driver_type::sound: log::info() << " (sound)"; break;
                 case driver_type::block: log::info() << " (block)"; break;
+                case driver_type::network: log::info() << " (network)"; break;
                 default: log::info() << " (unknown)"; break;
             }
         }

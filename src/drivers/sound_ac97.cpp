@@ -555,6 +555,7 @@ static const driver_descriptor ac97_descriptor = {
     .type  = driver_type::sound,
     .sound = &ac97_sound_driver,
     .block = null,
+    .net   = null,
 };
 
 } // anonymous namespace
