@@ -88,6 +88,7 @@ LDFLAGS += -T src/boot/linker.ld
 CXX_SRCS := $(wildcard src/boot/*.cpp)
 CXX_SRCS += $(wildcard src/core/*.cpp)
 CXX_SRCS += $(wildcard src/fs/*.cpp)
+CXX_SRCS += $(wildcard src/net/*.cpp)
 CXX_SRCS += $(wildcard src/drivers/*.cpp)
 CXX_SRCS += $(wildcard src/arch/x86_64/*.cpp)
 

@@ -16,7 +16,7 @@ namespace vk {
 namespace net {
 
 namespace {
-
+    
 static auto format_mac(const u8 mac[6], char* out, usize out_size) -> void {
     if (out == null || out_size < 18) {
         return;

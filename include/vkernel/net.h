@@ -37,6 +37,7 @@ namespace net {
 
 inline constexpr usize MAX_NET_DEVICES = 8;
 
+[[nodiscard]] constexpr auto bswap16(u16 value) -> u16;
 void init();
 auto register_device(const net_device& dev) -> i32;
 auto device_count() -> usize;
