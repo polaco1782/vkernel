@@ -12,6 +12,7 @@
 #include "net.h"
 #include "driver.h"
 #include "pci.h"
+#include "spinlock.h"
 #include "arch/x86_64/arch.h"
 
 namespace vk {
@@ -34,11 +35,15 @@ constexpr u8 VIRTIO_STATUS_FAILED      = 0x80;
 
 constexpr u32 VIRTIO_NET_F_MAC    = 1u << 5;
 constexpr u32 VIRTIO_NET_F_STATUS = 1u << 16;
+constexpr u32 VIRTIO_NET_TX_BUFFER_BYTES = PAGE_SIZE_4K;
+constexpr u32 VIRTIO_NET_TX_TIMEOUT_SPINS = 10000000;
 
 constexpr u16 VIRTIO_NET_S_LINK_UP = 0x0001;
 
 constexpr u16 VIRTIO_NET_QUEUE_RX = 0;
 constexpr u16 VIRTIO_NET_QUEUE_TX = 1;
+
+constexpr u16 VRING_DESC_F_NEXT = 0x01;
 
 #pragma pack(push, 1)
 struct vring_desc {
@@ -64,10 +69,20 @@ struct vring_used {
     u16 idx;
     vring_used_elem ring[1];
 };
+
+struct virtio_net_hdr {
+    u8  flags;
+    u8  gso_type;
+    u16 hdr_len;
+    u16 gso_size;
+    u16 csum_start;
+    u16 csum_offset;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(vring_desc) == 16);
 static_assert(sizeof(vring_used_elem) == 8);
+static_assert(sizeof(virtio_net_hdr) == 10);
 
 struct virtqueue_state {
     u16         size = 0;
@@ -89,8 +104,11 @@ struct virtio_net_device {
     bool            mac_valid = false;
     u16             link_status = 0;
     u16             mtu = 1500;
+    phys_addr       tx_buffer_phys = 0;
+    u8*             tx_buffer = null;
     virtqueue_state rxq = {};
     virtqueue_state txq = {};
+    spinlock        tx_lock = {};
 };
 
 static virtio_net_device s_devices[net::MAX_NET_DEVICES];
@@ -143,6 +161,15 @@ static void cleanup_queue(virtqueue_state& queue) {
     queue = {};
 }
 
+static void cleanup_tx_buffer(virtio_net_device& dev) {
+    if (dev.tx_buffer_phys != 0) {
+        g_phys_alloc.free_pages(dev.tx_buffer_phys,
+                                VIRTIO_NET_TX_BUFFER_BYTES / PAGE_SIZE_4K);
+    }
+    dev.tx_buffer_phys = 0;
+    dev.tx_buffer = null;
+}
+
 static auto setup_queue(virtio_net_device& dev, u16 queue_index, virtqueue_state& queue) -> bool {
     virtio_write16(dev, VIRTIO_PCI_QUEUE_SEL, queue_index);
     queue.size = virtio_read16(dev, VIRTIO_PCI_QUEUE_NUM);
@@ -193,6 +220,74 @@ static auto format_mac(const u8 mac[6], char* out, usize out_size) -> void {
     out[pos] = '\0';
 }
 
+static auto transmit_packet(virtio_net_device& dev, const void* packet, u32 length) -> bool {
+    if (!dev.present || packet == null || length == 0 || dev.tx_buffer == null) {
+        return false;
+    }
+    if (dev.txq.size < 2) {
+        return false;
+    }
+
+    constexpr u32 header_bytes = sizeof(virtio_net_hdr);
+    if (length > VIRTIO_NET_TX_BUFFER_BYTES - header_bytes) {
+        log::warn() << "virtio_net: packet too large for TX bounce buffer: "
+                    << static_cast<unsigned long long>(length) << " bytes";
+        return false;
+    }
+
+    dev.tx_lock.acquire();
+
+    auto* header = reinterpret_cast<virtio_net_hdr*>(dev.tx_buffer);
+    *header = {};
+    memory::copy(dev.tx_buffer + header_bytes, packet, length);
+
+    dev.txq.desc[0].addr = static_cast<u64>(dev.tx_buffer_phys);
+    dev.txq.desc[0].len = header_bytes;
+    dev.txq.desc[0].flags = VRING_DESC_F_NEXT;
+    dev.txq.desc[0].next = 1;
+
+    dev.txq.desc[1].addr = static_cast<u64>(dev.tx_buffer_phys + header_bytes);
+    dev.txq.desc[1].len = length;
+    dev.txq.desc[1].flags = 0;
+    dev.txq.desc[1].next = 0;
+
+    const u16 avail_slot = dev.txq.avail->idx % dev.txq.size;
+    dev.txq.avail->ring[avail_slot] = 0;
+    arch::memory_barrier();
+    dev.txq.avail->idx = static_cast<u16>(dev.txq.avail->idx + 1);
+    arch::memory_barrier();
+
+    virtio_write16(dev, VIRTIO_PCI_QUEUE_NOTIFY, VIRTIO_NET_QUEUE_TX);
+
+    bool success = false;
+    for (u32 spin = 0; spin < VIRTIO_NET_TX_TIMEOUT_SPINS; ++spin) {
+        arch::memory_barrier();
+        if (dev.txq.used->idx != dev.txq.last_used_idx) {
+            const u16 used_slot = dev.txq.last_used_idx % dev.txq.size;
+            const auto used = dev.txq.used->ring[used_slot];
+            dev.txq.last_used_idx = static_cast<u16>(dev.txq.last_used_idx + 1);
+            (void)virtio_read8(dev, VIRTIO_PCI_ISR);
+            success = used.id == 0;
+            break;
+        }
+        arch::cpu_pause();
+    }
+
+    dev.tx_lock.release();
+    return success;
+}
+
+static bool virtio_net_send_packet(net_device* net_dev, const void* packet, u32 length) {
+    if (net_dev == null) {
+        return false;
+    }
+    auto* dev = static_cast<virtio_net_device*>(net_dev->driver_data);
+    if (dev == null) {
+        return false;
+    }
+    return transmit_packet(*dev, packet, length);
+}
+
 static auto init_device(const pci_device& pci_dev, virtio_net_device& dev, usize net_index) -> bool {
     if ((pci_dev.bar[0] & 0x1u) == 0) {
         log::warn() << "virtio_net: BAR0 is not an I/O BAR";
@@ -230,6 +325,20 @@ static auto init_device(const pci_device& pci_dev, virtio_net_device& dev, usize
         return false;
     }
 
+    dev.tx_buffer_phys = g_phys_alloc.allocate_pages(
+        VIRTIO_NET_TX_BUFFER_BYTES / PAGE_SIZE_4K,
+        PAGE_SIZE_4K,
+        0x100000000ULL);
+    if (dev.tx_buffer_phys == 0) {
+        cleanup_queue(dev.rxq);
+        cleanup_queue(dev.txq);
+        virtio_write8(dev, VIRTIO_PCI_STATUS, VIRTIO_STATUS_FAILED);
+        return false;
+    }
+    arch::make_region_writable(dev.tx_buffer_phys, VIRTIO_NET_TX_BUFFER_BYTES);
+    dev.tx_buffer = reinterpret_cast<u8*>(dev.tx_buffer_phys);
+    memory::set(dev.tx_buffer, 0, VIRTIO_NET_TX_BUFFER_BYTES);
+
     if ((dev.negotiated_features & VIRTIO_NET_F_MAC) != 0) {
         for (usize i = 0; i < 6; ++i) {
             dev.mac[i] = virtio_config_read8(dev, static_cast<u16>(i));
@@ -261,8 +370,13 @@ static auto init_device(const pci_device& pci_dev, virtio_net_device& dev, usize
     net_dev.mtu = dev.mtu;
     net_dev.link_up = (dev.link_status & VIRTIO_NET_S_LINK_UP) != 0;
     net_dev.driver_data = &dev;
+    static const net_ops s_virtio_net_ops = {
+        .send_packet = virtio_net_send_packet,
+    };
+    net_dev.ops = &s_virtio_net_ops;
 
     if (net::register_device(net_dev) < 0) {
+        cleanup_tx_buffer(dev);
         cleanup_queue(dev.rxq);
         cleanup_queue(dev.txq);
         virtio_write8(dev, VIRTIO_PCI_STATUS, VIRTIO_STATUS_FAILED);
@@ -321,6 +435,7 @@ static void virtio_net_shutdown() {
         if (dev.present) {
             virtio_write8(dev, VIRTIO_PCI_STATUS, 0);
         }
+        cleanup_tx_buffer(dev);
         cleanup_queue(dev.rxq);
         cleanup_queue(dev.txq);
         dev = {};

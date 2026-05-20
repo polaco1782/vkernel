@@ -91,6 +91,37 @@ auto find(const char* name) -> net_device* {
     return null;
 }
 
+auto primary_device() -> net_device* {
+    net_device* first = null;
+    for (usize i = 0; i < s_device_count; ++i) {
+        auto* dev = &s_devices[i];
+        if (first == null) {
+            first = dev;
+        }
+        if (dev->link_up) {
+            return dev;
+        }
+    }
+    return first;
+}
+
+bool send_packet(net_device* dev, const void* packet, u32 length) {
+    if (dev == null || packet == null || length == 0 || dev->ops == null ||
+        dev->ops->send_packet == null) {
+        return false;
+    }
+    return dev->ops->send_packet(dev, packet, length);
+}
+
+bool send_default(const void* packet, u32 length) {
+    auto* dev = primary_device();
+    if (dev == null) {
+        log::warn() << "net: no network device available for packet send";
+        return false;
+    }
+    return send_packet(dev, packet, length);
+}
+
 void list_devices() {
     log::info() << "Network devices:";
     if (s_device_count == 0) {

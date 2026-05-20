@@ -12,12 +12,19 @@
 
 namespace vk {
 
+struct net_device;
+
+struct net_ops {
+    bool (*send_packet)(net_device* dev, const void* packet, u32 length);
+};
+
 struct net_device {
     static_string<32> name;
     u8                mac[6] = {};
     u16               mtu = 1500;
     bool              link_up = false;
     void*             driver_data = null;
+    const net_ops*    ops = null;
 };
 
 struct net_driver_t {
@@ -35,6 +42,9 @@ auto register_device(const net_device& dev) -> i32;
 auto device_count() -> usize;
 auto get_device(usize index) -> net_device*;
 auto find(const char* name) -> net_device*;
+auto primary_device() -> net_device*;
+bool send_packet(net_device* dev, const void* packet, u32 length);
+bool send_default(const void* packet, u32 length);
 void list_devices();
 
 } // namespace net
