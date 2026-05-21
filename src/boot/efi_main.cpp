@@ -22,6 +22,7 @@
 #include "pci.h"
 #include "acpi.h"
 #include "smp.h"
+#include "ipv4.h"
 
 namespace vk {
 
@@ -29,6 +30,9 @@ namespace vk {
 namespace ac97_driver { void register_builtin(); }
 namespace virtio_blk_driver { void register_builtin(); }
 namespace virtio_net_driver { void register_builtin(); }
+
+static constexpr net::ipv4_address DEFAULT_KERNEL_IPV4 =
+    net::make_ipv4(10, 0, 0, 2);
 
 #if defined(KERNEL_GDB_WAIT)
 /*
@@ -311,6 +315,9 @@ auto efi_main(
     (void)sched::create_task("idle", [](void*) {
         while (true) { arch::cpu_halt(); }
     });
+
+    (void)net::ipv4::configure_default(DEFAULT_KERNEL_IPV4);
+    (void)net::start_background_rx();
 
     /* Launch the serial shell first so scheduler startup is visible on COM1. */
     log::info() << "Launching serial shell...";

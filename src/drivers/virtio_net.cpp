@@ -35,6 +35,7 @@ constexpr u8 VIRTIO_STATUS_FAILED      = 0x80;
 
 constexpr u32 VIRTIO_NET_F_MAC    = 1u << 5;
 constexpr u32 VIRTIO_NET_F_STATUS = 1u << 16;
+constexpr u32 VIRTIO_NET_RX_BUFFER_BYTES = PAGE_SIZE_4K;
 constexpr u32 VIRTIO_NET_TX_BUFFER_BYTES = PAGE_SIZE_4K;
 constexpr u32 VIRTIO_NET_TX_TIMEOUT_SPINS = 10000000;
 
@@ -44,6 +45,7 @@ constexpr u16 VIRTIO_NET_QUEUE_RX = 0;
 constexpr u16 VIRTIO_NET_QUEUE_TX = 1;
 
 constexpr u16 VRING_DESC_F_NEXT = 0x01;
+constexpr u16 VRING_DESC_F_WRITE = 0x02;
 
 #pragma pack(push, 1)
 struct vring_desc {
@@ -100,14 +102,17 @@ struct virtio_net_device {
     pci_address     pci_addr = {};
     u16             io_base = 0;
     u32             negotiated_features = 0;
-    u8              mac[6] = {};
+    net::mac_address mac {};
     bool            mac_valid = false;
     u16             link_status = 0;
     u16             mtu = 1500;
+    phys_addr       rx_buffer_phys = 0;
+    u8*             rx_buffer = null;
     phys_addr       tx_buffer_phys = 0;
     u8*             tx_buffer = null;
     virtqueue_state rxq = {};
     virtqueue_state txq = {};
+    spinlock        rx_lock = {};
     spinlock        tx_lock = {};
 };
 
@@ -170,6 +175,15 @@ static void cleanup_tx_buffer(virtio_net_device& dev) {
     dev.tx_buffer = null;
 }
 
+static void cleanup_rx_buffer(virtio_net_device& dev) {
+    if (dev.rx_buffer_phys != 0) {
+        g_phys_alloc.free_pages(dev.rx_buffer_phys,
+                                VIRTIO_NET_RX_BUFFER_BYTES / PAGE_SIZE_4K);
+    }
+    dev.rx_buffer_phys = 0;
+    dev.rx_buffer = null;
+}
+
 static auto setup_queue(virtio_net_device& dev, u16 queue_index, virtqueue_state& queue) -> bool {
     virtio_write16(dev, VIRTIO_PCI_QUEUE_SEL, queue_index);
     queue.size = virtio_read16(dev, VIRTIO_PCI_QUEUE_NUM);
@@ -202,22 +216,24 @@ static auto setup_queue(virtio_net_device& dev, u16 queue_index, virtqueue_state
     return true;
 }
 
-static auto format_mac(const u8 mac[6], char* out, usize out_size) -> void {
-    if (out == null || out_size < 18) {
-        return;
+static auto prime_receive_buffer(virtio_net_device& dev) -> bool {
+    if (dev.rx_buffer == null || dev.rxq.size == 0) {
+        return false;
     }
 
-    static constexpr char hex_digits[] = "0123456789ABCDEF";
-    usize pos = 0;
-    for (usize i = 0; i < 6; ++i) {
-        const u8 byte = mac[i];
-        out[pos++] = hex_digits[byte >> 4];
-        out[pos++] = hex_digits[byte & 0x0F];
-        if (i + 1 < 6) {
-            out[pos++] = ':';
-        }
-    }
-    out[pos] = '\0';
+    dev.rxq.desc[0].addr = static_cast<u64>(dev.rx_buffer_phys);
+    dev.rxq.desc[0].len = VIRTIO_NET_RX_BUFFER_BYTES;
+    dev.rxq.desc[0].flags = VRING_DESC_F_WRITE;
+    dev.rxq.desc[0].next = 0;
+
+    const u16 avail_slot = dev.rxq.avail->idx % dev.rxq.size;
+    dev.rxq.avail->ring[avail_slot] = 0;
+    arch::memory_barrier();
+    dev.rxq.avail->idx = static_cast<u16>(dev.rxq.avail->idx + 1);
+    arch::memory_barrier();
+
+    virtio_write16(dev, VIRTIO_PCI_QUEUE_NOTIFY, VIRTIO_NET_QUEUE_RX);
+    return true;
 }
 
 static auto transmit_packet(virtio_net_device& dev, const void* packet, u32 length) -> bool {
@@ -288,6 +304,45 @@ static bool virtio_net_send_packet(net_device* net_dev, const void* packet, u32 
     return transmit_packet(*dev, packet, length);
 }
 
+static bool virtio_net_poll_packet(net_device* net_dev, void* packet_out,
+                                   u32 packet_capacity, u32* packet_length_out) {
+    if (net_dev == null || packet_out == null || packet_length_out == null ||
+        packet_capacity == 0) {
+        return false;
+    }
+
+    auto* dev = static_cast<virtio_net_device*>(net_dev->driver_data);
+    if (dev == null || !dev->present || dev->rx_buffer == null) {
+        return false;
+    }
+
+    dev->rx_lock.acquire();
+
+    bool ok = false;
+    *packet_length_out = 0;
+    if (dev->rxq.used->idx != dev->rxq.last_used_idx) {
+        const u16 used_slot = dev->rxq.last_used_idx % dev->rxq.size;
+        const auto used = dev->rxq.used->ring[used_slot];
+        dev->rxq.last_used_idx = static_cast<u16>(dev->rxq.last_used_idx + 1);
+        (void)virtio_read8(*dev, VIRTIO_PCI_ISR);
+
+        constexpr u32 header_bytes = sizeof(virtio_net_hdr);
+        if (used.id == 0 && used.len > header_bytes) {
+            const u32 payload_length = used.len - header_bytes;
+            *packet_length_out = payload_length;
+            if (payload_length <= packet_capacity) {
+                memory::copy(packet_out, dev->rx_buffer + header_bytes, payload_length);
+                ok = true;
+            }
+        }
+
+        (void)prime_receive_buffer(*dev);
+    }
+
+    dev->rx_lock.release();
+    return ok;
+}
+
 static auto init_device(const pci_device& pci_dev, virtio_net_device& dev, usize net_index) -> bool {
     if ((pci_dev.bar[0] & 0x1u) == 0) {
         log::warn() << "virtio_net: BAR0 is not an I/O BAR";
@@ -325,11 +380,26 @@ static auto init_device(const pci_device& pci_dev, virtio_net_device& dev, usize
         return false;
     }
 
+    dev.rx_buffer_phys = g_phys_alloc.allocate_pages(
+        VIRTIO_NET_RX_BUFFER_BYTES / PAGE_SIZE_4K,
+        PAGE_SIZE_4K,
+        0x100000000ULL);
+    if (dev.rx_buffer_phys == 0) {
+        cleanup_queue(dev.rxq);
+        cleanup_queue(dev.txq);
+        virtio_write8(dev, VIRTIO_PCI_STATUS, VIRTIO_STATUS_FAILED);
+        return false;
+    }
+    arch::make_region_writable(dev.rx_buffer_phys, VIRTIO_NET_RX_BUFFER_BYTES);
+    dev.rx_buffer = reinterpret_cast<u8*>(dev.rx_buffer_phys);
+    memory::set(dev.rx_buffer, 0, VIRTIO_NET_RX_BUFFER_BYTES);
+
     dev.tx_buffer_phys = g_phys_alloc.allocate_pages(
         VIRTIO_NET_TX_BUFFER_BYTES / PAGE_SIZE_4K,
         PAGE_SIZE_4K,
         0x100000000ULL);
     if (dev.tx_buffer_phys == 0) {
+        cleanup_rx_buffer(dev);
         cleanup_queue(dev.rxq);
         cleanup_queue(dev.txq);
         virtio_write8(dev, VIRTIO_PCI_STATUS, VIRTIO_STATUS_FAILED);
@@ -339,9 +409,18 @@ static auto init_device(const pci_device& pci_dev, virtio_net_device& dev, usize
     dev.tx_buffer = reinterpret_cast<u8*>(dev.tx_buffer_phys);
     memory::set(dev.tx_buffer, 0, VIRTIO_NET_TX_BUFFER_BYTES);
 
+    if (!prime_receive_buffer(dev)) {
+        cleanup_rx_buffer(dev);
+        cleanup_tx_buffer(dev);
+        cleanup_queue(dev.rxq);
+        cleanup_queue(dev.txq);
+        virtio_write8(dev, VIRTIO_PCI_STATUS, VIRTIO_STATUS_FAILED);
+        return false;
+    }
+
     if ((dev.negotiated_features & VIRTIO_NET_F_MAC) != 0) {
         for (usize i = 0; i < 6; ++i) {
-            dev.mac[i] = virtio_config_read8(dev, static_cast<u16>(i));
+            dev.mac.bytes[i] = virtio_config_read8(dev, static_cast<u16>(i));
         }
         dev.mac_valid = true;
     }
@@ -365,17 +444,19 @@ static auto init_device(const pci_device& pci_dev, virtio_net_device& dev, usize
 
     (void)net_dev.name.assign(name);
     if (dev.mac_valid) {
-        memory::copy(net_dev.mac, dev.mac, sizeof(net_dev.mac));
+        net_dev.mac = dev.mac;
     }
     net_dev.mtu = dev.mtu;
     net_dev.link_up = (dev.link_status & VIRTIO_NET_S_LINK_UP) != 0;
     net_dev.driver_data = &dev;
     static const net_ops s_virtio_net_ops = {
         .send_packet = virtio_net_send_packet,
+        .poll_packet = virtio_net_poll_packet,
     };
     net_dev.ops = &s_virtio_net_ops;
 
     if (net::register_device(net_dev) < 0) {
+        cleanup_rx_buffer(dev);
         cleanup_tx_buffer(dev);
         cleanup_queue(dev.rxq);
         cleanup_queue(dev.txq);
@@ -385,7 +466,7 @@ static auto init_device(const pci_device& pci_dev, virtio_net_device& dev, usize
     }
 
     char mac_buf[18];
-    format_mac(dev.mac, mac_buf, sizeof(mac_buf));
+    net::format_mac(dev.mac, mac_buf, sizeof(mac_buf));
     log::info() << "virtio_net: registered " << net_dev.name.c_str()
                 << " io_base=" << log::hex(static_cast<u64>(dev.io_base), 1, true, false)
                 << " mac=" << mac_buf
@@ -435,6 +516,7 @@ static void virtio_net_shutdown() {
         if (dev.present) {
             virtio_write8(dev, VIRTIO_PCI_STATUS, 0);
         }
+        cleanup_rx_buffer(dev);
         cleanup_tx_buffer(dev);
         cleanup_queue(dev.rxq);
         cleanup_queue(dev.txq);

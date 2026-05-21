@@ -8,8 +8,10 @@ BUILD_DIR="build"
 EFI_FILE="${BUILD_DIR}/vkernel.efi"
 BOOT_IMG="${BUILD_DIR}/vkernel_boot.img"
 NVRAM_FILE="ovmf_vars.fd"
+TAP_IF="tap0"
 DEBUG_QEMU=0
 VERBOSE=0
+NET_MODE="tap"
 
 set -x
 set -e
@@ -18,8 +20,10 @@ set -e
 for arg in "$@"; do
     case "$arg" in
         --debug|-d) DEBUG_QEMU=1 ;;
-        --verbose|-d) VERBOSE=1 ;;
+        --verbose|-v) VERBOSE=1 ;;
         --keep-disk) KEEP_DISK=1 ;;
+        --tap) NET_MODE="tap" ;;
+        --usernet) NET_MODE="user" ;;
     esac
 done
 
@@ -97,6 +101,21 @@ echo ""
 echo "Mouse: press Ctrl+Alt+G to grab/release the mouse inside the VM."
 echo ""
 
+NETDEV_ARGS="-netdev user,id=net0"
+if [ "${NET_MODE}" = "tap" ]; then
+    if ! ip link show "${TAP_IF}" >/dev/null 2>&1; then
+        echo "Error: TAP interface '${TAP_IF}' not found."
+        echo "Create it with:"
+        echo "  sudo ip tuntap add dev ${TAP_IF} mode tap user \"$USER\""
+        echo "  sudo ip link set ${TAP_IF} up"
+        echo ""
+        echo "Or run this script with --usernet to use QEMU user networking."
+        exit 1
+    fi
+
+    NETDEV_ARGS="-netdev tap,id=net0,ifname=${TAP_IF},script=no,downscript=no"
+fi
+
 exec ${QEMU} \
     -display sdl \
     -machine q35 \
@@ -107,7 +126,7 @@ exec ${QEMU} \
     -drive if=pflash,format=${PFLASH_FMT},file="${NVRAM_FILE}" \
     -drive if=none,id=bootdisk,format=raw,file="${BOOT_IMG}" \
     -device virtio-blk-pci,drive=bootdisk,bootindex=0,disable-modern=off,disable-legacy=off \
-    -netdev user,id=net0 \
+    ${NETDEV_ARGS} \
     -device virtio-net-pci,netdev=net0,disable-modern=off,disable-legacy=off \
     -m 512M \
     -device AC97 \

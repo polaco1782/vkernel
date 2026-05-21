@@ -11,28 +11,78 @@
 #include "log.h"
 #include "memory.h"
 #include "net.h"
+#include "net_packet.h"
+#include "net_wire.h"
+#include "arp.h"
+#include "ipv4.h"
+#include "scheduler.h"
 
 namespace vk {
 namespace net {
 
 namespace {
-    
-static auto format_mac(const u8 mac[6], char* out, usize out_size) -> void {
-    if (out == null || out_size < 18) {
+
+constexpr u32 NET_RX_FRAME_BUFFER_BYTES = 2048;
+
+static bool s_background_rx_started = false;
+
+static void dispatch_frame(net_device* dev, const void* frame, u32 frame_length) {
+    if (dev == null || frame == null || frame_length < wire::ETHERNET_HEADER_BYTES) {
         return;
     }
 
-    static constexpr char hex_digits[] = "0123456789ABCDEF";
-    usize pos = 0;
-    for (usize i = 0; i < 6; ++i) {
-        const u8 byte = mac[i];
-        out[pos++] = hex_digits[byte >> 4];
-        out[pos++] = hex_digits[byte & 0x0F];
-        if (i + 1 < 6) {
-            out[pos++] = ':';
+    const auto* eth = static_cast<const wire::ethernet_header*>(frame);
+    switch (net::bswap16(eth->ether_type_be)) {
+        case static_cast<u16>(packet::ether_type::arp):
+            (void)arp::observe_frame(dev, frame, frame_length);
+            break;
+        case static_cast<u16>(packet::ether_type::ipv4):
+            (void)ipv4::observe_frame(dev, frame, frame_length);
+            break;
+        default:
+            break;
+    }
+}
+
+static void background_rx_task(void*) {
+    u8 frame_buffer[NET_RX_FRAME_BUFFER_BYTES];
+
+    while (true) {
+        bool any_packets = false;
+
+        const usize count = device_count();
+        for (usize i = 0; i < count; ++i) {
+            auto* dev = get_device(i);
+            if (dev == null) {
+                continue;
+            }
+
+            while (true) {
+                u32 frame_length = 0;
+                if (!poll_packet(dev, frame_buffer, sizeof(frame_buffer), &frame_length)) {
+                    break;
+                }
+                any_packets = true;
+                dispatch_frame(dev, frame_buffer, frame_length);
+
+                {
+                    auto* eth = reinterpret_cast<const wire::ethernet_header*>(frame_buffer);
+
+                    log::debug() << "net: received packet on " << dev->name.c_str()
+                                << " length=" << frame_length
+                                << " mac_src=" << mac2str(eth->src)
+                                << " mac_dst=" << mac2str(eth->dst)
+                                << " ether_type="
+                                << log::hex(
+                                    net::bswap16(eth->ether_type_be), 4, true, false);
+                }
+            }
+        }
+
+        if (!any_packets) {
+            sched::sleep(1);
         }
     }
-    out[pos] = '\0';
 }
 
 } // namespace
@@ -120,6 +170,39 @@ bool send_default(const void* packet, u32 length) {
         return false;
     }
     return send_packet(dev, packet, length);
+}
+
+bool poll_packet(net_device* dev, void* packet_out, u32 packet_capacity,
+                 u32* packet_length_out) {
+    if (dev == null || packet_out == null || packet_capacity == 0 ||
+        packet_length_out == null || dev->ops == null ||
+        dev->ops->poll_packet == null) {
+        return false;
+    }
+    return dev->ops->poll_packet(dev, packet_out, packet_capacity, packet_length_out);
+}
+
+bool start_background_rx() {
+    if (s_background_rx_started) {
+        return true;
+    }
+    if (device_count() == 0) {
+        return false;
+    }
+
+    const i64 task_id = sched::create_task("net_rx", background_rx_task, null);
+    if (task_id < 0) {
+        log::warn() << "net: failed to create background RX task";
+        return false;
+    }
+
+    s_background_rx_started = true;
+    log::info() << "net: background RX task started";
+    return true;
+}
+
+bool background_rx_running() {
+    return s_background_rx_started;
 }
 
 void list_devices() {

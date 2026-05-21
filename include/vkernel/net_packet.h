@@ -13,13 +13,8 @@
 
 namespace vk::net::packet {
 
-struct mac_address {
-    u8 bytes[6];
-};
-
-struct ipv4_address {
-    u8 bytes[4];
-};
+using mac_address = vk::net::mac_address;
+using ipv4_address = vk::net::ipv4_address;
 
 enum class ether_type : u16 {
     ipv4 = 0x0800,
@@ -31,24 +26,11 @@ enum class arp_operation : u16 {
     reply   = 2,
 };
 
-[[nodiscard]] constexpr auto make_mac(u8 b0, u8 b1, u8 b2,
-                                      u8 b3, u8 b4, u8 b5) -> mac_address {
-    return { { b0, b1, b2, b3, b4, b5 } };
-}
-
-[[nodiscard]] constexpr auto make_ipv4(u8 a, u8 b, u8 c, u8 d) -> ipv4_address {
-    return { { a, b, c, d } };
-}
-
-[[nodiscard]] constexpr auto broadcast_mac() -> mac_address {
-    return make_mac(0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF);
-}
-
-[[nodiscard]] constexpr auto zero_mac() -> mac_address {
-    return make_mac(0, 0, 0, 0, 0, 0);
-}
-
-[[nodiscard]] auto device_mac(const net_device& dev) -> mac_address;
+using vk::net::broadcast_mac;
+using vk::net::device_mac;
+using vk::net::make_ipv4;
+using vk::net::make_mac;
+using vk::net::zero_mac;
 [[nodiscard]] bool send_ethernet(net_device* dev, mac_address dst,
                                  ether_type type,
                                  const void* payload, u32 payload_length);
