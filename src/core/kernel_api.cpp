@@ -94,6 +94,8 @@ static void* stub_malloc(vk_usize size) {
         return null;
     }
 
+    log::debug() << "malloc: req size=" << static_cast<unsigned long long>(size);
+
     auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
     if (ctx == null) {
         return g_kernel_heap.allocate_zero(size);
@@ -175,6 +177,10 @@ static void* stub_malloc(vk_usize size) {
     rec->next = ctx->allocations;
     ctx->allocations = rec;
 
+    log::debug() << "malloc: allocated " << static_cast<unsigned long long>(allocated)
+                 << " bytes at " << user
+                 << " (raw: " << raw << ", phys: " << (from_phys ? raw : 0) << ")";
+
     return rec->user_ptr;
 }
 
@@ -182,6 +188,8 @@ static void stub_free(void* ptr) {
     if (ptr == null) {
         return;
     }
+
+    log::debug() << "free: ptr=" << ptr;
 
     auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
     if (ctx == null) {
@@ -216,14 +224,6 @@ static void stub_free(void* ptr) {
     }
 
     log::warn() << "process: ignoring free of unowned pointer " << reinterpret_cast<const void*>(ptr);
-}
-
-static void* stub_memset(void* dest, int c, vk_usize n) {
-    return memory::set(dest, c, n);
-}
-
-static void* stub_memcpy(void* dest, const void* src, vk_usize n) {
-    return memory::copy(dest, src, n);
 }
 
 /* ---- filesystem ---- */
@@ -915,40 +915,6 @@ static void route_framebuffer_info(vk_framebuffer_info_t* out) {
     out->valid  = fb.valid ? 1u : 0u;
 }
 
-static void* stub_memmove(void* dest, const void* src, vk_usize n) {
-    auto* dst = static_cast<unsigned char*>(dest);
-    const auto* s = static_cast<const unsigned char*>(src);
-
-    if (dst == s || n == 0) {
-        return dest;
-    }
-
-    if (dst < s) {
-        for (vk_usize i = 0; i < n; ++i) {
-            dst[i] = s[i];
-        }
-    } else {
-        for (vk_usize i = n; i > 0; --i) {
-            dst[i - 1] = s[i - 1];
-        }
-    }
-
-    return dest;
-}
-
-static int stub_memcmp(const void* lhs, const void* rhs, vk_usize n) {
-    const auto* a = static_cast<const unsigned char*>(lhs);
-    const auto* b = static_cast<const unsigned char*>(rhs);
-
-    for (vk_usize i = 0; i < n; ++i) {
-        if (a[i] != b[i]) {
-            return static_cast<int>(a[i]) - static_cast<int>(b[i]);
-        }
-    }
-
-    return 0;
-}
-
 static vk_file_handle_t stub_file_open(const char* path, const char* mode) {
     return static_cast<vk_file_handle_t>(fs::file_open(path, mode));
 }
@@ -1004,10 +970,6 @@ void init() {
     /* memory */
     s_api.vk_malloc = stub_malloc;
     s_api.vk_free = stub_free;
-    s_api.vk_memset = stub_memset;
-    s_api.vk_memcpy = stub_memcpy;
-    s_api.vk_memmove = stub_memmove;
-    s_api.vk_memcmp = stub_memcmp;
     /* filesystem */
     s_api.vk_file_exists = stub_file_exists;
     s_api.vk_file_size = stub_file_size;

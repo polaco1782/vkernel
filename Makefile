@@ -219,7 +219,7 @@ $(FRAMEBUFFER_TEXT_VBIN): $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.c $
 $(RAYTRACER_VBIN): $(USERSPACE_DIR)/raytracer/raytracer.c $(USERSPACE_DIR)/raytracer/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer $(_DEBUG_FLAG)
 
-$(SHELL_VBIN): $(USERSPACE_DIR)/shell/shell.c $(USERSPACE_DIR)/shell/Makefile
+$(SHELL_VBIN): $(USERSPACE_DIR)/shell/shell.cpp $(USERSPACE_DIR)/shell/Makefile
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell $(_DEBUG_FLAG)
 
 $(DOOM_VBIN): $(USERSPACE_DIR)/doom/Makefile libc-glue
