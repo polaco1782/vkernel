@@ -87,7 +87,8 @@ if [ "${DEBUG_QEMU}" = "1" ]; then
     echo "       -ex 'target remote localhost:1234'"
     echo "  2. continue once; the debug build will trap at kernel entry"
     echo "  3. symbols auto-load on that first stop"
-    echo "  4. Set breakpoints by name or step from vk::efi_main"
+    echo "  4. Use 'find-process userspace/shell/shell.vbin' for a loaded app"
+    echo "  5. Prefer 'hbreak <symbol>' for the first userspace breakpoint"
 fi
 
 echo ""

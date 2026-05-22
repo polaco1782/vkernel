@@ -365,6 +365,50 @@ symbols at the relocated runtime address.
 Useful breakpoints include `vk::efi_main`, `sched::start`, `ap_init_secondary`,
 `vk::panic`, `elf::load_into_address_space`, and `process::create_task`.
 
+For userspace `.vbin` programs, the same helper script can load symbols at the
+fixed process image base:
+
+```gdb
+find-process userspace/shell/shell.vbin
+```
+
+That lets GDB resolve userspace names and source lines using the binary you
+built locally. For the first stop inside a userspace task, prefer hardware
+breakpoints because software breakpoints depend on the task address space being
+active:
+
+```gdb
+hbreak main
+continue
+```
+
+VS Code also has a dedicated launch profile named
+`Attach to vkernel userspace shell (QEMU/GDB, Linux)`. It auto-continues to a
+temporary breakpoint at `vk::process::process_task_main`, then the Debug
+Console only needs:
+
+```text
+-exec find-process userspace/shell/shell.vbin
+-exec hbreak main
+-exec continue
+```
+
+For arbitrary apps, use `Attach to vkernel userspace app (QEMU/GDB, Linux)`.
+It prompts for a `.vbin` path such as `userspace/snes9x/snes9x.vbin`, arms
+automatic symbol loading for that target, and stops at
+`vk::process::process_task_main` when that specific app is launched inside the
+guest.
+
+If you want to stop before the app runs, a useful sequence is:
+
+```gdb
+b vk::process::process_task_main
+continue
+find-process userspace/shell/shell.vbin
+hbreak main
+continue
+```
+
 ## Design Notes
 
 **Position-independent PE.** The kernel is linked at base 0 and loaded by UEFI

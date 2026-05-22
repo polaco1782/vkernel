@@ -35,6 +35,102 @@
           "text": "-interpreter-exec console \"source ${workspaceFolder}/.vscode/find_kernel.py\""
         }
       ]
+    },
+    {
+      "name": "Attach to vkernel userspace shell (QEMU/GDB, Linux)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/vkernel.efi",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "miDebuggerServerAddress": "localhost:1234",
+      "externalConsole": false,
+      "launchCompleteCommand": "exec-continue",
+      "setupCommands": [
+        {
+          "description": "Disable confirmation prompts for scripted GDB commands",
+          "text": "-interpreter-exec console \"set confirm off\""
+        },
+        {
+          "description": "Keep breakpoints pending until kernel symbols are loaded",
+          "text": "-interpreter-exec console \"set breakpoint pending on\""
+        },
+        {
+          "description": "Substitute source code path",
+          "text": "-interpreter-exec console \"set substitute-path /src ${workspaceFolder}\""
+        },
+        {
+          "description": "Set disassembly flavor to Intel",
+          "text": "-interpreter-exec console \"set disassembly-flavor intel\""
+        },
+        {
+          "description": "Load find_kernel helper script",
+          "text": "-interpreter-exec console \"source ${workspaceFolder}/.vscode/find_kernel.py\""
+        },
+        {
+          "description": "Arm automatic shell symbol loading",
+          "text": "-interpreter-exec console \"auto-process-symbols userspace/shell/shell.vbin\""
+        },
+        {
+          "description": "Print the next userspace-debug step",
+          "text": "-interpreter-exec console \"echo VS Code shell debug: shell.vbin symbols will auto-load when that app enters process_task_main.\\\\nSet your shell.cpp breakpoint in the editor now, or run\\\\n  -exec hbreak main\\\\n  -exec continue\\\\n\""
+        }
+      ]
+    },
+    {
+      "name": "Attach to vkernel userspace app (QEMU/GDB, Linux)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/vkernel.efi",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "miDebuggerServerAddress": "localhost:1234",
+      "externalConsole": false,
+      "launchCompleteCommand": "exec-continue",
+      "setupCommands": [
+        {
+          "description": "Disable confirmation prompts for scripted GDB commands",
+          "text": "-interpreter-exec console \"set confirm off\""
+        },
+        {
+          "description": "Keep breakpoints pending until kernel symbols are loaded",
+          "text": "-interpreter-exec console \"set breakpoint pending on\""
+        },
+        {
+          "description": "Substitute source code path",
+          "text": "-interpreter-exec console \"set substitute-path /src ${workspaceFolder}\""
+        },
+        {
+          "description": "Set disassembly flavor to Intel",
+          "text": "-interpreter-exec console \"set disassembly-flavor intel\""
+        },
+        {
+          "description": "Load find_kernel helper script",
+          "text": "-interpreter-exec console \"source ${workspaceFolder}/.vscode/find_kernel.py\""
+        },
+        {
+          "description": "Arm automatic app symbol loading",
+          "text": "-interpreter-exec console \"auto-process-symbols ${input:userspaceBinaryPath}\""
+        },
+        {
+          "description": "Print the next userspace-debug step",
+          "text": "-interpreter-exec console \"echo VS Code app debug: ${input:userspaceBinaryPath} symbols will auto-load when that app enters process_task_main.\\\\nSet your app breakpoint in the editor now, then launch the app inside the guest.\\\\nIf you want a first-entry stop, run\\\\n  -exec hbreak main\\\\n  -exec continue\\\\n\""
+        }
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "userspaceBinaryPath",
+      "type": "promptString",
+      "description": "Userspace .vbin path relative to the workspace",
+      "default": "userspace/snes9x/snes9x.vbin"
     }
   ]
 }
