@@ -38,12 +38,7 @@ static void route_puts(const char* str);
 static auto route_stdio_write(const char* buf, vk_usize len) -> vk_usize;
 static auto dequeue_ascii_key(process::process_task_context* ctx) -> char;
 
-/* ============================================================
- * Kernel-side API stub functions
- * These are plain C-linkage functions assigned into vk_api_t.
- * Keeping them as named statics (not lambdas) means the compiler
- * can take their address directly without a trampoline.
- * ============================================================ */
+/* Named statics keep vk_api_t entries addressable without trampolines. */
 
 /* ---- memory ---- */
 
@@ -112,12 +107,7 @@ static void* stub_malloc(vk_usize size) {
         return null;
     }
 
-    /*
-     * VM-backed processes need consecutive vk_malloc calls to remain exactly
-     * contiguous because userspace newlib implements _sbrk by growing one
-     * monotonic arena.  A guard gap here makes large malloc users, like Quake,
-     * fail even though the virtual heap can grow correctly.
-     */
+    /* _sbrk expects contiguous growth in VM-backed processes. */
     const usize allocated = uses_process_vm ? rounded : rounded + PROCESS_ALLOC_GUARD_SIZE;
     bool from_phys = false;
     void* raw = null;
@@ -748,11 +738,7 @@ static auto remap_target_framebuffer(process::process_task_context* target,
             }
         }
 
-        // Map new pages before unmapping old ones (map-then-unmap-excess).
-        // On SMP, a timer interrupt on the target CPU can flush its TLB between
-        // an unmap and the subsequent remap, causing a fault on the next access
-        // to USER_SHARED_BASE.  vm::map_page unconditionally overwrites the PTE,
-        // so mapping first keeps the region always accessible.
+        /* Map first so USER_SHARED_BASE never goes transiently unmapped. */
         for (usize offset = 0; offset < mapped_bytes; offset += PAGE_SIZE_4K) {
             phys_addr source_phys = 0;
             u64 source_flags = 0;
@@ -786,7 +772,7 @@ static auto remap_target_framebuffer(process::process_task_context* target,
             }
         }
 
-        // Unmap any excess pages left over from a previously larger mapping.
+        /* Drop any stale tail pages from the old shared mapping. */
         if (old_mapped_bytes > mapped_bytes) {
             vm::unmap_range(target->address_space,
                             target_start + mapped_bytes,

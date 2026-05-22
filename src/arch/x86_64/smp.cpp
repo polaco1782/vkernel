@@ -3,15 +3,6 @@
  * Copyright (C) 2026 vkernel authors
  *
  * smp.cpp - Symmetric Multi-Processing initialization (x86_64)
- *
- * Discovers all logical processors via the ACPI MADT (type-0 Local APIC
- * entries), sets up the AP startup trampoline at physical address 0x8000,
- * and brings each AP up with the Intel INIT-SIPI-SIPI protocol.
- *
- * APs share the BSP's GDT/IDT and page tables (identity-mapped UEFI
- * layout).  Each AP gets its own private kernel stack.
- *
- * Reference: Intel SDM Vol. 3A §8.4 — MP Initialization Protocol
  */
 
 #include "config.h"
@@ -31,12 +22,11 @@ namespace smp {
  * Local APIC (LAPIC) MMIO access
  * ============================================================ */
 
-/* IA32_APIC_BASE MSR */
 static constexpr u32 MSR_IA32_APIC_BASE = 0x1B;
 static constexpr u64 APIC_BASE_ENABLE   = (1ULL << 11);
 static constexpr u64 APIC_BASE_PHYS_MASK = 0x0000'0000'FFFF'F000ULL;
 
-/* LAPIC register offsets (byte offsets from LAPIC MMIO base) */
+/* LAPIC register offsets from the MMIO base. */
 static constexpr u32 LAPIC_ID          = 0x020;  /* Identification */
 static constexpr u32 LAPIC_VER         = 0x030;  /* Version */
 static constexpr u32 LAPIC_SVR         = 0x0F0;  /* Spurious Interrupt Vector */
@@ -44,27 +34,22 @@ static constexpr u32 LAPIC_ESR         = 0x280;  /* Error Status */
 static constexpr u32 LAPIC_ICR_LOW     = 0x300;  /* Interrupt Command (low)  */
 static constexpr u32 LAPIC_ICR_HIGH    = 0x310;  /* Interrupt Command (high) */
 
-/* SVR bits */
 static constexpr u32 LAPIC_SVR_ENABLE  = (1u << 8);
 static constexpr u32 LAPIC_SVR_VECTOR  = 0xFF;   /* spurious vector */
 
-/* ICR delivery modes */
 static constexpr u32 LAPIC_ICR_INIT   = 0x00000500u; /* INIT IPI */
 static constexpr u32 LAPIC_ICR_SIPI   = 0x00000600u; /* Startup IPI */
 
-/* ICR level/trigger flags */
 static constexpr u32 LAPIC_ICR_ASSERT  = (1u << 14);
 static constexpr u32 LAPIC_ICR_LEVEL   = (1u << 15);
 
-/* ICR_LOW encoding for INIT assert */
 static constexpr u32 ICR_INIT_ASSERT =
     LAPIC_ICR_INIT | LAPIC_ICR_ASSERT | LAPIC_ICR_LEVEL;
 
-/* ICR_LOW encoding for SIPI (OR in trampoline page vector) */
 static constexpr u32 ICR_SIPI_BASE =
     LAPIC_ICR_SIPI | LAPIC_ICR_ASSERT;
 
-/* Trampoline SIPI vector: page 0x08 → physical base 0x8000 */
+/* SIPI vector for the trampoline page at 0x8000. */
 static constexpr u8  SIPI_VECTOR      = 0x08;
 
 static volatile u32* s_lapic_base = null;
@@ -75,32 +60,22 @@ static inline auto lapic_read(u32 offset) -> u32 {
 
 static inline void lapic_write(u32 offset, u32 value) {
     s_lapic_base[offset / 4] = value;
-    (void)lapic_read(LAPIC_ID);   /* serialising read-back */
+    (void)lapic_read(LAPIC_ID);   /* serialize the MMIO write */
 }
 
 static void lapic_init_local() {
-    /* Enable LAPIC via SVR register; set spurious vector to 0xFF */
     u32 svr = lapic_read(LAPIC_SVR);
     svr &= ~LAPIC_SVR_VECTOR;
     svr |= LAPIC_SVR_VECTOR | LAPIC_SVR_ENABLE;
     lapic_write(LAPIC_SVR, svr);
 
-    /* Clear any pending errors */
     lapic_write(LAPIC_ESR, 0);
     (void)lapic_read(LAPIC_ESR);
 }
 
-/* ============================================================
- * Trampoline page physical layout
- *
- * The AP trampoline blob (from ap_trampoline.S) is copied to the
- * physical page at 0x8000.  The BSP then writes per-AP data into
- * the second half of that page (offsets 0x100–0x154).
- * ============================================================ */
-
+/* Low page used for the AP trampoline and per-AP handoff data. */
 static constexpr u64  TRAM_PHYS_BASE  = 0x8000;
 
-/* Byte offsets within the trampoline page */
 static constexpr u64 TRAM_GDT_DESC  = TRAM_PHYS_BASE + 0x100;
 static constexpr u64 TRAM_GDT_DATA  = TRAM_PHYS_BASE + 0x110; /* 5 × 8 = 40 bytes */
 static constexpr u64 TRAM_CR3       = TRAM_PHYS_BASE + 0x138;
@@ -108,32 +83,14 @@ static constexpr u64 TRAM_STACK     = TRAM_PHYS_BASE + 0x140;
 static constexpr u64 TRAM_JUMP_FP   = TRAM_PHYS_BASE + 0x148; /* { u32 addr, u16 sel } */
 static constexpr u64 TRAM_READY     = TRAM_PHYS_BASE + 0x150;
 
-/* Pointer helper to a physical address (identity mapped) */
 template<typename T>
 static inline T* phys_ptr(u64 addr) {
     return reinterpret_cast<T*>(static_cast<usize>(addr));
 }
 
-/* ============================================================
- * Temporary GDT written into the trampoline page
- *
- * We build a minimal 5-entry GDT in the trampoline data area so the
- * AP can switch from real mode → 32-bit PM → 64-bit LM without
- * depending on the kernel's GDT location before page tables are stable.
- *
- * Entry layout (standard x86 8-byte descriptor):
- *   [15: 0]  limit[15:0]
- *   [31:16]  base[15:0]
- *   [39:32]  base[23:16]
- *   [47:40]  access byte
- *   [51:48]  limit[19:16]
- *   [55:52]  flags (G, D/B, L, AVL)
- *   [63:56]  base[31:24]
- * ============================================================ */
-
+/* Build the tiny GDT the trampoline needs before long mode is stable. */
 static void build_gdt_entry(u64* entry, u32 base, u32 limit,
                               u8 access, u8 flags) {
-    /* limit[15:0] | base[15:0] | base[23:16] | access | flags|limit[19:16] | base[31:24] */
     *entry =
         ( static_cast<u64>(limit  & 0xFFFF)      )       |
         ( static_cast<u64>(base   & 0xFFFF) << 16 )       |
@@ -144,36 +101,19 @@ static void build_gdt_entry(u64* entry, u32 base, u32 limit,
 }
 
 static void write_trampoline_gdt() {
-    /*
-     * GDT descriptor at TRAM_GDT_DESC:
-     *   limit = 5 * 8 - 1 = 39
-     *   base  = TRAM_GDT_DATA (physical)
-     */
     auto* gdt_desc_limit = phys_ptr<u16>(TRAM_GDT_DESC);
     auto* gdt_desc_base  = phys_ptr<u32>(TRAM_GDT_DESC + 2);
     *gdt_desc_limit = 5 * 8 - 1;
     *gdt_desc_base  = static_cast<u32>(TRAM_GDT_DATA);
 
-    /* GDT entries */
     auto* gdt = phys_ptr<u64>(TRAM_GDT_DATA);
 
-    /* [0] Null descriptor */
     gdt[0] = 0;
 
-    /* [1] 32-bit kernel code: selector 0x08
-     *     access=0x9A (present|ring0|code|readable), flags=0xCF (32-bit, 4KB) */
+    /* 32-bit code/data first, then 64-bit selectors for the final jump. */
     build_gdt_entry(&gdt[1], 0, 0xFFFFF, 0x9A, 0xCF);
-
-    /* [2] 32-bit kernel data: selector 0x10
-     *     access=0x92 (present|ring0|data|writable), flags=0xCF */
     build_gdt_entry(&gdt[2], 0, 0xFFFFF, 0x92, 0xCF);
-
-    /* [3] 64-bit kernel code: selector 0x18
-     *     access=0x9A, flags=0xA0 (L=1, D=0 = 64-bit code, 4KB gran.) */
     build_gdt_entry(&gdt[3], 0, 0xFFFFF, 0x9A, 0xA0);
-
-    /* [4] 64-bit kernel data: selector 0x20
-     *     access=0x92, flags=0x00 (base/limit ignored in 64-bit) */
     build_gdt_entry(&gdt[4], 0, 0xFFFFF, 0x92, 0x00);
 }
 
@@ -189,8 +129,7 @@ extern "C" u8 ap_trampoline_start[];
 extern "C" u8 ap_trampoline_end[];
 #endif
 
-/* ap_entry_64 is defined in gcc_asm.S; it sets up RSP then calls
- * ap_init_secondary().                                              */
+/* Defined in assembly; loads RSP and tail-calls ap_init_secondary(). */
 extern "C" void ap_entry_64();
 
 /* ============================================================
@@ -201,7 +140,6 @@ static cpu_info s_cpus[MAX_CPUS];
 static u32      s_cpu_count = 0;
 static u8       s_bsp_apic_id = 0;
 
-/* Per-AP kernel stacks */
 static constexpr usize AP_STACK_SIZE = 65536;  /* 64 KB per AP */
 #if defined(_MSC_VER)
 static __declspec(align(16)) u8 s_ap_stacks[MAX_CPUS][AP_STACK_SIZE];
@@ -209,15 +147,8 @@ static __declspec(align(16)) u8 s_ap_stacks[MAX_CPUS][AP_STACK_SIZE];
 static u8 s_ap_stacks[MAX_CPUS][AP_STACK_SIZE] __attribute__((aligned(16)));
 #endif
 
-/* ============================================================
- * I/O delay used for INIT/SIPI timing
- *
- * Each write to port 0x80 (BIOS POST code port) takes ~1–2 µs on a PC.
- * For the coarse delays needed here (10 ms, 200 µs) this is adequate.
- * ============================================================ */
-
+/* Coarse delay for INIT/SIPI timing via the POST port. */
 static void io_delay_us(u32 us) {
-    /* Conservative: assume each outb takes 0.5 µs → 2 writes per µs */
     for (u32 i = 0; i < us * 2; ++i) {
         arch::outb(0x80, 0x00);
     }
@@ -239,7 +170,7 @@ static void send_sipi(u8 target_apic_id, u8 vector) {
     lapic_write(LAPIC_ICR_LOW, ICR_SIPI_BASE | static_cast<u32>(vector));
 }
 
-/* Wait up to timeout_ms for the AP at ap_idx to set its ready flag */
+/* Wait for the trampoline handshake to report the AP online. */
 static bool wait_ap_ready(u32 ap_idx, u32 timeout_ms) {
     auto* flag = phys_ptr<volatile u32>(TRAM_READY);
     for (u32 i = 0; i < timeout_ms * 1000; ++i) {
@@ -258,32 +189,16 @@ static bool wait_ap_ready(u32 ap_idx, u32 timeout_ms) {
  * ============================================================ */
 
 extern "C" void ap_init_secondary() {
-    /*
-     * We are now in 64-bit long mode, running on an AP.
-     * RSP was loaded from TRAM_STACK by ap_entry_64.
-     *
-     * Step 1: load the kernel's real GDT/IDT and reload segment selectors.
-     */
+    /* Switch from the trampoline tables to the kernel's real CPU state. */
     arch::ap_activate();
 
-    /*
-     * Step 2: enable the LAPIC on this AP.
-     */
     lapic_init_local();
 
-    /*
-     * Step 3: signal the BSP that this AP is ready to schedule.
-     */
     arch::memory_barrier();
     *phys_ptr<volatile u32>(TRAM_READY) = 1;
 
     log::info() << "AP APIC " << current_cpu_apic_id() << ": online, entering scheduler AP loop";
 
-    /*
-     * Step 4: enter the AP scheduler loop.  The AP will wait until the BSP
-     * scheduler is active, then arm its LAPIC timer and begin preempting
-     * runnable work on this CPU.
-     */
     sched::start_ap();
 }
 
@@ -356,9 +271,7 @@ void init() {
         return;
     }
 
-    /* ── Prepare the AP trampoline page ── */
-
-    /* Copy the blob to physical 0x8000 */
+    /* Copy the trampoline into low memory and fill its handoff slots. */
     #if defined(_MSC_VER)
     const u8* trampoline_blob = g_ap_trampoline_blob;
     const usize blob_size = g_ap_trampoline_blob_size;
@@ -371,16 +284,11 @@ void init() {
                         trampoline_blob, blob_size);
     log::debug() << "SMP: trampoline blob (" << blob_size << " bytes) copied to " << log::hex(static_cast<u64>(static_cast<unsigned long long>(TRAM_PHYS_BASE)), 1, true, false);
 
-    /* Write the temporary GDT into the data area */
     write_trampoline_gdt();
 
-    /* Write BSP's CR3 */
     *phys_ptr<u64>(TRAM_CR3) = arch::read_cr3();
 
-    /* Write the 64-bit far-jump descriptor:
-     *   { u32 physical_address_of_ap_entry_64, u16 SEL_CODE64=0x18 }
-     * Since UEFI loads images below 4 GB, ap_entry_64's address fits
-     * in 32 bits and can be used as a 32-bit far-jump target.         */
+    /* Real-mode trampoline uses a 32-bit far pointer into ap_entry_64. */
     const u64 entry_addr = reinterpret_cast<u64>(&ap_entry_64);
     *phys_ptr<u32>(TRAM_JUMP_FP)     = static_cast<u32>(entry_addr);
     *phys_ptr<u16>(TRAM_JUMP_FP + 4) = 0x18; /* SEL_CODE64 */
@@ -396,29 +304,23 @@ void init() {
         const u8 apic_id = s_cpus[i].apic_id;
         const u32 ap_idx = i;
 
-        /* Allocate and wire this AP's stack (top of stack) */
         const u64 stack_top =
             reinterpret_cast<u64>(&s_ap_stacks[ap_idx][AP_STACK_SIZE]);
         *phys_ptr<u64>(TRAM_STACK) = stack_top;
 
-        /* Clear the ready flag */
         *phys_ptr<volatile u32>(TRAM_READY) = 0;
         arch::memory_barrier();
 
         log::debug() << "SMP: starting AP APIC ID " << apic_id << " (stack top " << log::hex(static_cast<u64>(static_cast<unsigned long long>(stack_top)), 1, true, false) << ")...";
 
-        /* INIT IPI */
         send_init_ipi(apic_id);
         io_delay_us(10000);   /* 10 ms */
 
-        /* First SIPI */
         send_sipi(apic_id, SIPI_VECTOR);
         io_delay_us(200);     /* 200 µs */
 
-        /* Second SIPI (in case the first was missed) */
+        /* Send the architectural second SIPI in case the first was missed. */
         send_sipi(apic_id, SIPI_VECTOR);
-
-        /* Wait up to 1 s for the AP to set its ready flag */
         if (wait_ap_ready(ap_idx, 1000)) {
             ++ap_count;
             log::info() << "SMP: AP APIC " << apic_id << " up";

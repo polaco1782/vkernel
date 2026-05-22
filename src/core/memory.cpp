@@ -19,8 +19,7 @@ namespace vk {
 static memory_map_entry g_memory_map[config::max_memory_map_entries];
 static u32 g_memory_map_count = 0;
 
-/* Pool of memory_region nodes for the physical allocator.
- * A slot with size == 0 is unallocated (static storage = zero-init). */
+/* size == 0 marks an unused region node. */
 static constexpr u32 REGION_POOL_SIZE = 512;
 static memory_region g_region_pool[REGION_POOL_SIZE];
 
@@ -186,17 +185,13 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
     used_pages_ = 0;
     free_pages_ = 0;
     
-    /* Build the free list from all conventional memory regions in the map.
-     * Memory map entries from UEFI are already sorted by physical address. */
+    /* UEFI already reports these regions in ascending physical order. */
     memory_region* tail = null;
 
     for (const auto& entry : map) {
         total_pages_ += entry.number_of_pages;
 
-        /* After ExitBootServices (which runs before memory::init()),
-         * boot-services regions are fully reclaimed and available as
-         * general-purpose memory.  Treat them as free.
-         * (Loader regions contain our own image — not reclaimable.) */
+        /* Boot-services memory is ours after EBS; loader memory still holds us. */
         const bool is_free =
             entry.type == memory_type::conventional ||
             entry.type == memory_type::boot_services_code ||
@@ -216,8 +211,7 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
         node->used  = false;
         node->next  = null;
 
-        /* Never hand out physical page 0 — it holds the real-mode IVT/BDA
-         * and 0 is used as the "allocation failed" sentinel.  Trim it. */
+        /* Keep page 0 reserved and preserve 0 as the failure sentinel. */
         if (node->start == 0) {
             if (node->size <= PAGE_SIZE_4K) {
                 free_region_node(node);
@@ -241,8 +235,7 @@ auto phys_allocator::init(span<const memory_map_entry> map) -> status_code {
     return status_code::success;
 }
 
-/* Allocate physical pages - first-fit with alignment and optional upper-bound.
- * Returns the physical address of the first page, or 0 on failure. */
+/* First-fit physical allocation with alignment and an optional ceiling. */
 auto phys_allocator::allocate_pages(u32 page_count, u32 alignment, phys_addr max_addr) -> phys_addr {
     if (page_count == 0) return 0;
 
@@ -253,7 +246,6 @@ auto phys_allocator::allocate_pages(u32 page_count, u32 alignment, phys_addr max
     for (auto region = free_list_; region != null; region = region->next) {
         if (region->used) continue;
 
-        /* Find the lowest aligned start address inside this region */
         phys_addr aligned_start = align_up(region->start, static_cast<usize>(alignment));
         phys_addr region_end    = region->start + region->size;
 
@@ -264,7 +256,7 @@ auto phys_allocator::allocate_pages(u32 page_count, u32 alignment, phys_addr max
         size_phys post_size = region_end - (aligned_start + req_size);
 
         if (pre_size == 0) {
-            /* Region is already aligned - reuse its node for the allocation */
+            /* Reuse the existing node when the aligned chunk starts at the front. */
             if (post_size > 0) {
                 auto tail_node = alloc_region_node();
                 if (tail_node) {
@@ -275,11 +267,11 @@ auto phys_allocator::allocate_pages(u32 page_count, u32 alignment, phys_addr max
                     region->next     = tail_node;
                     region->size     = req_size;
                 }
-                /* If pool is exhausted the tail bytes are folded into the allocation */
+                /* If nodes run out, absorb the tail into the allocation. */
             }
             region->used = true;
         } else {
-            /* Need a new node for the aligned allocation chunk */
+            /* Split out a new node for the aligned subrange. */
             auto alloc_node = alloc_region_node();
             if (!alloc_node) continue; /* try the next region */
 
@@ -313,7 +305,7 @@ auto phys_allocator::allocate_pages(u32 page_count, u32 alignment, phys_addr max
     return 0; /* out of memory */
 }
 
-/* Free physical pages - marks the region free and coalesces adjacent free regions */
+/* Mark the region free and merge adjacent gaps. */
 void phys_allocator::free_pages(phys_addr addr, u32 page_count) {
     if (addr == 0 || page_count == 0) return;
 
@@ -326,7 +318,7 @@ void phys_allocator::free_pages(phys_addr addr, u32 page_count) {
             used_pages_ -= page_count;
             free_pages_ += page_count;
 
-            /* Coalesce with the next region if it is free and contiguous */
+            /* Merge with the following free run first. */
             if (region->next != null && !region->next->used &&
                 region->start + region->size == region->next->start) {
                 auto next = region->next;
@@ -335,7 +327,7 @@ void phys_allocator::free_pages(phys_addr addr, u32 page_count) {
                 free_region_node(next);
             }
 
-            /* Coalesce with the previous region if it is free and contiguous */
+            /* Then merge backward if the previous run is also adjacent. */
             if (prev != null && !prev->used &&
                 prev->start + prev->size == region->start) {
                 prev->size += region->size;
@@ -516,8 +508,7 @@ auto kernel_heap::allocate(size_phys size) -> void* {
         return null;
     }
 
-    /* Align size to 16 bytes so every allocation starts on a 16-byte boundary
-     * (required by SSE/XMM constants in PE .rdata that use MOVAPS/XORPS). */
+    /* Keep allocations 16-byte aligned for SSE-friendly loads. */
     size = align_up(size, static_cast<usize>(HEAP_MIN_ALIGNMENT));
 
     while (true) {
@@ -773,13 +764,7 @@ auto memory::init(span<const memory_map_entry> map) -> status_code {
         return status;
     }
 
-    /* ---------------------------------------------------------------
-     * Initialize the kernel heap from the fixed .heap reservation.
-     *
-     * This matches Serenity's boot-heap model more closely: allocator
-     * metadata lives in kernel-owned image memory instead of reclaiming
-     * arbitrary physical regions during early boot.
-     * --------------------------------------------------------------- */
+    /* Bootstrap from the linker-reserved .heap window first. */
     void* const heap_base = g_initial_kernel_heap;
     const size_phys heap_size = sizeof(g_initial_kernel_heap);
 

@@ -20,6 +20,7 @@ constexpr u64 PA_MASK = 0x000FFFFFFFFFF000ULL;
 constexpr u32 ENTRIES_PER_TABLE = 512;
 constexpr u32 USER_PML4_FIRST = static_cast<u32>((USER_IMAGE_BASE >> 39) & 0x1FF);
 constexpr u32 USER_PML4_LIMIT = static_cast<u32>((USER_MAP_LIMIT >> 39) & 0x1FF);
+/* Keep paging structures inside the identity-mapped bootstrap window. */
 constexpr phys_addr IDENTITY_BRIDGE_ALLOC_MAX = 0x80000000ULL;
 
 phys_addr g_kernel_cr3 = 0;
@@ -52,6 +53,7 @@ phys_addr g_kernel_cr3 = 0;
     }
 
     arch::make_region_writable(phys, PAGE_SIZE_4K);
+    /* Fresh page tables must start zeroed before we publish parent entries. */
     memory::set(reinterpret_cast<void*>(static_cast<usize>(phys)), 0, PAGE_SIZE_4K);
     return phys;
 }
@@ -90,11 +92,7 @@ void free_page_table_tree(u64* table, int level)
 
         auto* child = table_from_phys(entry);
         free_page_table_tree(child, level - 1);
-        /* Only free page-table structure pages (PDPT/PD/PT), never leaf data
-         * pages (level == 1).  Leaf pages are either freed explicitly by
-         * cleanup_process_context for owned allocations, or are shared pages
-         * borrowed from another process (e.g. vgui framebuffer) that must
-         * not be freed here. */
+        /* Only free paging structures here; mapped leaf pages are owned elsewhere. */
         if (level > 1) {
             g_phys_alloc.free_pages(entry & PA_MASK, 1);
         }
@@ -134,6 +132,7 @@ auto create_address_space() -> address_space*
 
     auto* dst = table_from_phys(pml4_phys);
     auto* src = table_from_phys(g_kernel_cr3);
+    /* Clone the kernel half, then clear the user slot range. */
     memory::copy(dst, src, PAGE_SIZE_4K);
 
     for (u32 index = USER_PML4_FIRST; index < USER_PML4_LIMIT; ++index) {
@@ -156,6 +155,7 @@ void destroy_address_space(address_space* as)
 
     if (as->pml4_phys != 0) {
         auto* pml4 = table_from_phys(as->pml4_phys);
+        /* Tear down only user-owned branches; kernel mappings stay shared. */
         for (u32 index = USER_PML4_FIRST; index < USER_PML4_LIMIT; ++index) {
             if ((pml4[index] & arch::PTE_PRESENT) != 0 && (pml4[index] & arch::PTE_HUGE) == 0) {
                 auto* pdpt = table_from_phys(pml4[index]);
@@ -301,6 +301,7 @@ auto map_page(address_space* as, virt_addr virt, phys_addr phys, u64 flags) -> b
         return false;
     }
 
+    /* Overwrite-friendly by design so shared windows can be remapped in place. */
     pt[pt_idx] = (phys & PA_MASK) | page_flags(flags);
     if (active_cr3() == as->pml4_phys) {
         arch::invlpg(virt);
@@ -338,6 +339,7 @@ void unmap_range(address_space* as, virt_addr virt, usize size)
     const virt_addr end = align_up(virt + size, PAGE_SIZE_4K);
     auto* pml4 = table_from_phys(as->pml4_phys);
 
+    /* Empty intermediate tables are left in place; callers churn this range often. */
     for (virt_addr addr = start; addr < end; addr += PAGE_SIZE_4K) {
         const u32 pml4_idx = static_cast<u32>((addr >> 39) & 0x1FF);
         const u32 pdpt_idx = static_cast<u32>((addr >> 30) & 0x1FF);
@@ -394,6 +396,7 @@ auto allocate_user_pages(address_space* as,
     }
 
     arch::make_region_writable(phys, bytes);
+    /* Zero the backing pages before the process can observe the mapping. */
     memory::set(reinterpret_cast<void*>(static_cast<usize>(phys)), 0, bytes);
     if (!map_contiguous(as, virt, phys, bytes, flags)) {
         log::debug() << "vm: allocate_user_pages map failed virt="

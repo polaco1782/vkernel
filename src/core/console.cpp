@@ -167,7 +167,7 @@ struct fb_state {
 
 static fb_state g_fb;
 
-/* Convert an RGB triplet to the framebuffer's native pixel word */
+/* Convert RGB into the firmware's pixel layout. */
 static auto rgb_to_pixel(uefi::pixel_format fmt, u8 r, u8 g, u8 b) -> u32 {
     if (fmt == uefi::pixel_format::rgbx_8bpp) {
         return (static_cast<u32>(r)) |
@@ -190,10 +190,8 @@ static auto vk_to_uefi_format(vk_pixel_format_t fmt) -> uefi::pixel_format {
     }
 }
 
-/* Scroll the framebuffer up one text row */
+/* Scroll up by one text row. */
 static void fb_scroll(fb_state& fb) {
-    u32 row_pixels = FONT_H * fb.stride;
-    /* Move all rows up by one */
     for (u32 y = 0; y < (fb.rows - 1) * FONT_H; ++y) {
         u32* dst = fb.base + y * fb.stride;
         const u32* src = fb.base + (y + FONT_H) * fb.stride;
@@ -201,17 +199,15 @@ static void fb_scroll(fb_state& fb) {
             dst[x] = src[x];
         }
     }
-    /* Clear the last row */
     for (u32 y = (fb.rows - 1) * FONT_H; y < fb.rows * FONT_H; ++y) {
         u32* row = fb.base + y * fb.stride;
         for (u32 x = 0; x < fb.width; ++x) {
             row[x] = fb.bg;
         }
     }
-    (void)row_pixels;
 }
 
-/* Draw one glyph at (col, row) in text-cell coordinates */
+/* Draw one glyph at text-cell coordinates. */
 static void fb_draw_char(fb_state& fb, u32 col, u32 row, char c) {
     u32 glyph_idx = (static_cast<u8>(c) >= 32 && static_cast<u8>(c) <= 127)
                   ? static_cast<u8>(c) - 32 : 0;
@@ -229,7 +225,7 @@ static void fb_draw_char(fb_state& fb, u32 col, u32 row, char c) {
     }
 }
 
-/* Advance the cursor, scrolling if necessary */
+/* Advance the cursor, scrolling when needed. */
 static void fb_advance(fb_state& fb) {
     ++fb.col;
     if (fb.col >= fb.cols) {
@@ -435,7 +431,7 @@ void console::clear_framebuffer_surface(const vk_framebuffer_info_t& fb,
     row = surface.row;
 }
 
-/* Initialize the UEFI ConOut subsystem (pre-EBS phase) */
+/* Pre-EBS UEFI ConOut setup. */
 auto console::init() -> status_code {
     if (uefi::g_system_table == null) {
         return status_code::error;
@@ -449,7 +445,7 @@ auto console::init() -> status_code {
     return status_code::success;
 }
 
-/* Core character output — writes to every active backend */
+/* Fan out one byte to the active output backends. */
 void console::putc(char c) {
     if (g_use_serial) {
         if (c == '\n') serial_putc_raw('\r');
@@ -476,13 +472,11 @@ void console::putc(char c) {
     }
 }
 
-/* Output a null-terminated ASCII string */
 void console::puts(const char* str) {
     if (str == null) return;
     while (*str != '\0') putc(*str++);
 }
 
-/* Output a null-terminated UCS-2 string */
 void console::putw(const char16_t* str) {
     if (str == null || uefi::g_system_table == null) {
         return;
@@ -494,14 +488,12 @@ void console::putw(const char16_t* str) {
     con_out->output_string(con_out, str);
 }
 
-/* Print a 64-bit value as "0x" + 16 hex digits */
 void console::put_hex(u64 value) {
     char buf[19];
     log::hex(buf, sizeof(buf), value);
     puts(buf);
 }
 
-/* Print a 64-bit value as unsigned decimal */
 void console::put_dec(u64 value) {
     if (value == 0) { putc('0'); return; }
     char buf[21];
@@ -513,7 +505,6 @@ void console::put_dec(u64 value) {
     for (i32 j = i - 1; j >= 0; --j) putc(buf[j]);
 }
 
-/* Clear the console */
 void console::clear() {
     if (g_use_fb) {
         for (u32 y = 0; y < g_fb.height; ++y) {
@@ -528,10 +519,9 @@ void console::clear() {
     if (con_out != null) con_out->clear_screen(con_out);
 }
 
-/* Set text colour — maps UEFI palette to 24-bit RGB on the framebuffer */
+/* Map the 16-color console palette onto the current backend. */
 void console::set_color(console_color foreground, console_color background) {
     if (g_use_fb) {
-        /* Map the 16-colour UEFI palette to RGB */
         static constexpr u32 palette[16] = {
             0x000000, 0x0000AA, 0x00AA00, 0x00AAAA,
             0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA,
@@ -551,7 +541,7 @@ void console::set_color(console_color foreground, console_color background) {
         return;
     }
 
-    // serial does not supports framebuffer-like color attributes, so we skip it
+    /* Serial has no matching color model. */
     if (g_use_serial)
         return;
     if (uefi::g_system_table == null)
@@ -564,7 +554,6 @@ void console::set_color(console_color foreground, console_color background) {
     con_out->set_attribute(con_out, attribute);
 }
 
-/* Get cursor position */
 auto console::get_position() -> console_state {
     if (g_use_fb) {
         return { g_fb.col, g_fb.row, g_fb.cols, g_fb.rows,
@@ -581,7 +570,6 @@ auto console::get_position() -> console_state {
              80, 25, console_color::white, console_color::black, mode->cursor_visible };
 }
 
-/* Set cursor position */
 void console::set_position(u32 column, u32 row) {
     if (g_use_fb) {
         g_fb.col = column < g_fb.cols ? column : g_fb.cols - 1;

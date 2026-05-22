@@ -59,22 +59,12 @@ static const char* const s_exception_names[32] = {
     "Reserved",                 /* 31 */
 };
 
-/* ============================================================
- * GDT — 7 entries (long mode, 16-byte TSS descriptor)
- *
- *  [0] Null
- *  [1] Kernel Code  (ring 0, 64-bit)
- *  [2] Kernel Data  (ring 0)
- *  [3] User Code    (ring 3, 64-bit)
- *  [4] User Data    (ring 3)
- *  [5-6] TSS        (16-byte system segment descriptor)
- * ============================================================ */
+/* Per-CPU GDTs: null, kernel/user code+data, and a 16-byte TSS entry. */
 
 static gdt_entry g_gdt[smp::MAX_CPUS][7];
 static gdt_ptr g_gdt_ptr[smp::MAX_CPUS];
 static tss g_tss[smp::MAX_CPUS];
 
-/* Helper: install a standard (8-byte) GDT descriptor */
 static void gdt_set_entry(u32 cpu, u32 idx, u32 base, u32 limit,
                            u8 access, u8 granularity) {
     g_gdt[cpu][idx].limit_low    = limit & 0xFFFF;
@@ -85,9 +75,8 @@ static void gdt_set_entry(u32 cpu, u32 idx, u32 base, u32 limit,
     g_gdt[cpu][idx].base_high    = (base >> 24) & 0xFF;
 }
 
-/* Install the 16-byte TSS descriptor at g_gdt[5..6] */
+/* TSS descriptors consume two adjacent GDT slots. */
 static void gdt_set_tss(u32 cpu, u32 idx, u64 base, u32 limit) {
-    /* Low 8 bytes — identical to a normal descriptor */
     g_gdt[cpu][idx].limit_low   = limit & 0xFFFF;
     g_gdt[cpu][idx].base_low    = base & 0xFFFF;
     g_gdt[cpu][idx].base_middle = (base >> 16) & 0xFF;
@@ -95,7 +84,6 @@ static void gdt_set_tss(u32 cpu, u32 idx, u64 base, u32 limit) {
     g_gdt[cpu][idx].granularity = static_cast<u8>(((limit >> 16) & 0x0F));
     g_gdt[cpu][idx].base_high   = (base >> 24) & 0xFF;
 
-    /* High 8 bytes — base[63:32] + reserved */
     auto* high = reinterpret_cast<u32*>(&g_gdt[cpu][idx + 1]);
     high[0] = static_cast<u32>(base >> 32);
     high[1] = 0;
@@ -105,15 +93,7 @@ static void init_gdt_for_cpu(u32 cpu) {
     /* Null descriptor */
     gdt_set_entry(cpu, 0, 0, 0, 0, 0);
 
-    /*
-     * Long-mode code segments:
-     *   access  = 0x9A (Present, ring 0, code, readable)
-     *   gran    = 0xA0 (L=1 64-bit, D=0)
-     *
-     * Long-mode data segments:
-     *   access  = 0x92 (Present, ring 0, data, writable)
-     *   gran    = 0x00 (L and D ignored for data in long mode)
-     */
+    /* Long-mode code uses L=1; data segments keep the usual writable bit. */
     gdt_set_entry(cpu, 1, 0, 0xFFFFF, 0x9A, 0xA0); /* Kernel Code 64-bit */
     gdt_set_entry(cpu, 2, 0, 0xFFFFF, 0x92, 0x00); /* Kernel Data */
     gdt_set_entry(cpu, 3, 0, 0xFFFFF, 0xFA, 0xA0); /* User Code 64-bit */
@@ -138,20 +118,16 @@ void init_gdt() {
     log::info() << "GDT prepared";
 }
 
-/* Load the GDT descriptor table register only.
- * Keep this separate from selector/TSS reload so activate() can
- * place additional diagnostics around the risky transition steps. */
+/* Split from selector reload so activate() can log around the transition. */
 static void load_gdt() {
     asm_lgdt(&g_gdt_ptr[smp::current_cpu_index()]);
 }
 
-/* Reload CS/DS/ES/SS to the kernel descriptors from our GDT. */
 static void reload_kernel_segments() {
     asm_reload_segments(static_cast<u64>(SEG_KERNEL_CODE), static_cast<u64>(SEG_KERNEL_DATA));
 }
 
-/* Load the task register with our TSS selector.
- * Seed rsp0 so privilege transitions have a valid ring-0 stack. */
+/* Seed rsp0 before loading the task register. */
 static void activate_tss() {
     g_tss[smp::current_cpu_index()].rsp0 = read_rsp();
     asm_ltr(SEG_TSS);
@@ -175,16 +151,11 @@ static void idt_set_gate(u32 vector, u64 handler, u8 ist, u8 type_attr) {
     g_idt[vector].zero          = 0;
 }
 
-/*
- * C-level interrupt dispatcher — called from the assembly ISR stubs.
- * The stubs push a uniform register_state onto the stack.
- */
+/* Assembly stubs hand us a uniform register_state frame. */
 extern "C" register_state* interrupt_dispatch(register_state* regs) {
     u64 vec = regs->int_no;
 
-    /* Vector 2: NMI \u2014 used by vk_panic() to stop other CPUs.
-     * Just disable interrupts and halt; do not log (the BSP holds
-     * the log lock printing the panic message). */
+    /* Panic NMIs stop sibling CPUs quietly while the BSP prints the crash. */
     if (vec == 2) {
         disable_interrupts();
         while (true) { cpu_halt(); }
@@ -194,14 +165,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
         u8 self_apic = smp::current_cpu_apic_id();
         u32 self_idx = smp::current_cpu_index();
 
-        /*
-         * Per-CPU re-entry guard FIRST.  If THIS CPU is already
-         * handling an exception and another fires (e.g. cleanup
-         * code itself faulted on corrupted heap), state is
-         * compromised — halt this CPU.  We may still hold the
-         * global exception lock at this point; release it so
-         * other CPUs can make progress.
-         */
+        /* A second fault on the same CPU means recovery is no longer safe. */
         static volatile bool s_in_exception[smp::MAX_CPUS] = {};
         static spinlock s_exception_lock;  /* serialises exception handling across CPUs */
 
@@ -215,16 +179,10 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
         }
         s_in_exception[self_idx] = true;
 
-        /*
-         * Global exception serializer: only one CPU at a time may
-         * be in the exception dispatch / recovery path.  This
-         * prevents two crashing CPUs from interleaving their
-         * diagnostic output and from racing on shared cleanup
-         * paths (heap free, scheduler state).
-         */
+        /* Keep crash logging and cleanup single-threaded across CPUs. */
         s_exception_lock.acquire();
 
-        /* CPU exception \u2014 dump diagnostics */
+        /* Dump the fault before deciding whether this is recoverable. */
         log::crash() << "\n*** EXCEPTION on CPU " << self_apic << ": " << s_exception_names[vec] << " (vector " << static_cast<unsigned long long>(vec) << ") ***";
 
         log::crash() << "  Error code: " << log::hex(static_cast<u64>(static_cast<unsigned long long>(regs->error_code)), 1, true, false);
@@ -249,7 +207,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
             log::crash() << "  CR2 (fault addr): " << log::hex(static_cast<u64>(static_cast<unsigned long long>(read_cr2())), 1, true, false);
         }
 
-        /* Print instruction bytes at RIP for diagnosis */
+        /* Include the instruction bytes at RIP for quick triage. */
         {
             char bytes_buf[16 * 3 + 1];
             log::hex_bytes(bytes_buf, sizeof(bytes_buf),
@@ -261,16 +219,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
             sched::current_task_user_data());
         log_exception_backtrace(regs, current_ctx);
 
-        /*
-         * If the faulting task is a userspace process, kill just
-         * that process instead of bringing down the whole kernel.
-         *
-         * Atomically detach the task from its ctx FIRST: this
-         * read-and-clears user_data under the scheduler lock so two
-         * CPUs cannot both observe the same non-null ctx and race
-         * to free it twice.  Only the CPU that gets a non-null ctx
-         * back is responsible for cleanup.
-         */
+        /* User faults should kill just the task, not the whole kernel. */
         auto* ctx = static_cast<process::process_task_context*>(
             sched::detach_current_task());
         if (ctx != null) {
@@ -278,13 +227,7 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
 
             process::cleanup_process_context(ctx, -static_cast<int>(vec));
 
-            /*
-             * Cleanup completed without re-faulting.  Clear the
-             * per-CPU re-entry guard and release the global
-             * exception serializer so other CPUs can recover from
-             * their own faults.  exit_task() switches to another
-             * task and never returns to this dispatcher.
-             */
+            /* exit_task() switches away permanently, so release guards first. */
             s_in_exception[self_idx] = false;
             s_exception_lock.release();
 
@@ -312,15 +255,12 @@ extern "C" register_state* interrupt_dispatch(register_state* regs) {
     return regs;
 }
 
-/* ISR stub anchor — defined in interrupts.S.
- * All 256 stubs are .align 16, so stub[i] = isr_stub_0 + i * 16. */
+/* All ISR stubs are 16-byte aligned, so vector i lives at base + i * stride. */
 extern "C" void isr_stub_0();
 
 static constexpr usize ISR_STUB_STRIDE = 16;
 
-/* Force RIP-relative addressing to get the runtime address of isr_stub_0.
- * The compiler/linker will otherwise use an absolute link-time constant
- * because we're not linked as -pie. */
+/* GCC/Clang need help to materialize the runtime stub base, not the link-time one. */
 static inline auto get_isr_stub_base() -> u64 {
 #if defined(_MSC_VER)
     return reinterpret_cast<u64>(&isr_stub_0);
@@ -358,15 +298,7 @@ static void activate_idt() {
  * FPU / SSE / AVX
  * ============================================================ */
 
-/*
- * Check CPUID for SSE, XSAVE and AVX support.
- * Returns 0 on success, or a non-zero error code:
- *   1 = no SSE
- *   2 = no XSAVE  (required to write XCR0)
- *   3 = no AVX
- */
-
-/* Phase 1: pure hardware capability — called before any CR4 write */
+/* Hardware capability probe before any CR4 writes. */
 static u32 fpu_avx_check_support() {
     u32 eax, ebx, ecx_out, edx_out;
     asm_cpuid(1, &eax, &ebx, &ecx_out, &edx_out);
@@ -379,19 +311,14 @@ static u32 fpu_avx_check_support() {
     return 0;
 }
 
-/* Phase 2: verify CR4.OSXSAVE actually took effect — call AFTER the write */
+/* CPUID bit 27 reflects whether OSXSAVE really became active. */
 static bool fpu_osxsave_active() {
     u32 eax, ebx, ecx_out, edx_out;
     asm_cpuid(1, &eax, &ebx, &ecx_out, &edx_out);
     return (ecx_out & (1u << 27)) != 0; /* bit 27 mirrors CR4.OSXSAVE */
 }
 
-/*
- * Full FPU / SSE / AVX initialization.
- * Must be called in ring 0, after ExitBootServices.
- */
 static void activate_fpu_state() {
-    /* ── CPUID check ──────────────────────────────────────────── */
     log::info() << "FPU: checking CPUID...";
     u32 err = fpu_avx_check_support();
 
@@ -439,8 +366,7 @@ static void activate_fpu_state() {
             write_cr4(cr4 | (u64)(1u << 18));
         }
 
-        /* Verify via CPUID bit 27 — more reliable than reading CR4 back,
-        * as a hypervisor may shadow CR4 reads but not CPUID              */
+        /* Trust CPUID here: hypervisors may virtualize CR4 reads differently. */
         if (!fpu_osxsave_active()) {
             log::warn() << "FPU: OSXSAVE did not become active after CR4 write — skipping AVX init";
             return;
@@ -461,21 +387,10 @@ static void activate_fpu_state() {
     log::info() << "FPU/SSE/AVX initialized";
 }
 
-/* ============================================================
- * Paging — validate and harden the UEFI-provided page tables
- * ============================================================ */
-
 void init_paging() {
     log::info() << "Initializing paging...";
 
-    /*
-     * UEFI has already set up identity-mapped page tables in long mode
-     * (CR0.PG=1, CR4.PAE=1, EFER.LME=1 are all already active).
-     *
-     * We just ensure additional protective features are turned on:
-     *   CR0.WP  — write-protect supervisor pages
-     *   EFER.NXE — enable execute-disable (NX) bit
-     */
+    /* Firmware already enabled paging; we just turn on stricter protections. */
 
     /* CR0: enable Write-Protect */
     u64 cr0 = read_cr0();
@@ -495,38 +410,19 @@ void init_paging() {
     log::debug() << "Paging hardened (WP + NXE)";
 }
 
-/* ============================================================
- * make_region_writable — set R/W=1 in the UEFI identity-mapped
- * 4-level page tables for a physical address range.
- *
- * UEFI maps EFI_BOOT_SERVICES_CODE regions as non-writable
- * (R/W=0) in its page tables.  With CR0.WP active these pages
- * cause a protection fault on any supervisor write.  This
- * function walks the PML4→PDPT→PD→PT chain for every page
- * in [base, base+size) and sets the R/W bit at every level.
- * Non-present entries are skipped.  TLB entries for modified
- * pages are flushed with INVLPG.
- *
- * Assumes identity mapping (virtual address == physical address).
- * ============================================================ */
+/* Turn on R/W for an identity-mapped physical range in the firmware tables. */
 void make_region_writable(phys_addr base, size_phys size) {
     if (size == 0) return;
 
-    /* Strip flags/XD bit; keep bits [51:12] as physical address. */
     static constexpr u64 PA_MASK = 0x000FFFFFFFFFF000ULL;
 
-    /* Temporarily clear CR0.WP so we can write to page-table pages that
-     * UEFI itself mapped read-only (e.g. the PML4 / PDPT / PD pages).
-     * Without this, the first store to a PT entry faults because the page
-     * containing that PT entry may itself be non-writable.  We restore CR0
-     * exactly as we found it immediately after the walk. */
+    /* Firmware may also map the page-table pages read-only, so drop WP briefly. */
     const u64 saved_cr0 = read_cr0();
     write_cr0(saved_cr0 & ~CR0_WRITE_PROTECT);
 
     auto* pml4 = reinterpret_cast<pml4e*>(
         static_cast<usize>(read_cr3() & PA_MASK));
 
-    /* Align start down to a page boundary. */
     phys_addr addr = align_down(base, static_cast<usize>(PAGE_SIZE_4K));
     const phys_addr end = base + size;
 
@@ -536,16 +432,13 @@ void make_region_writable(phys_addr base, size_phys size) {
         const u32 pd_idx   = static_cast<u32>((addr >> 21) & 0x1FF);
         const u32 pt_idx   = static_cast<u32>((addr >> 12) & 0x1FF);
 
-        /* ---- PML4 ---- */
         if (!(pml4[pml4_idx] & PTE_PRESENT)) {
-            /* No PML4 entry — advance past entire 512 GB slot. */
             addr = align_down(addr, static_cast<usize>(0x8000000000ULL))
                    + 0x8000000000ULL;
             continue;
         }
         pml4[pml4_idx] |= PTE_WRITABLE;
 
-        /* ---- PDPT ---- */
         auto* pdpt = reinterpret_cast<pdpe*>(
             static_cast<usize>(pml4[pml4_idx] & PA_MASK));
 
@@ -555,7 +448,6 @@ void make_region_writable(phys_addr base, size_phys size) {
             continue;
         }
         if (pdpt[pdpt_idx] & PTE_HUGE) {
-            /* 1 GB huge page */
             pdpt[pdpt_idx] |= PTE_WRITABLE;
             invlpg(addr);
             addr = align_down(addr, static_cast<usize>(PAGE_SIZE_1GB))
@@ -564,7 +456,6 @@ void make_region_writable(phys_addr base, size_phys size) {
         }
         pdpt[pdpt_idx] |= PTE_WRITABLE;
 
-        /* ---- PD ---- */
         auto* pd = reinterpret_cast<pde*>(
             static_cast<usize>(pdpt[pdpt_idx] & PA_MASK));
 
@@ -574,7 +465,6 @@ void make_region_writable(phys_addr base, size_phys size) {
             continue;
         }
         if (pd[pd_idx] & PTE_HUGE) {
-            /* 2 MB huge page (most common in OVMF) */
             pd[pd_idx] |= PTE_WRITABLE;
             invlpg(addr);
             addr = align_down(addr, static_cast<usize>(PAGE_SIZE_2MB))
@@ -583,7 +473,6 @@ void make_region_writable(phys_addr base, size_phys size) {
         }
         pd[pd_idx] |= PTE_WRITABLE;
 
-        /* ---- PT ---- */
         auto* pt = reinterpret_cast<pte*>(
             static_cast<usize>(pd[pd_idx] & PA_MASK));
 
@@ -594,7 +483,6 @@ void make_region_writable(phys_addr base, size_phys size) {
         addr += PAGE_SIZE_4K;
     }
 
-    /* Restore CR0 (re-enables WP if it was set on entry). */
     write_cr0(saved_cr0);
 }
 

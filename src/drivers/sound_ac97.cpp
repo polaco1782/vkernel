@@ -3,13 +3,6 @@
  * Copyright (C) 2026 vkernel authors
  *
  * sound_ac97.cpp - Intel AC'97 (ICH) PCI sound driver
- *
- * Drives the AC'97 codec via PCI I/O BARs.
- * BAR0 = Native Audio Mixer (NAM) — codec register access
- * BAR1 = Native Audio Bus Master (NABM) — DMA engine
- *
- * QEMU's default audio device on q35 is the ICH AC'97
- * (vendor 0x8086, device 0x2415).
  */
 
 #include "config.h"
@@ -77,10 +70,7 @@ constexpr u32 GC_GIE     = (1u << 0);  /* GPI Interrupt Enable */
 constexpr u32 GC_COLD_RST = (1u << 1); /* Cold reset */
 constexpr u32 GC_WARM_RST = (1u << 2); /* Warm reset */
 
-/* ============================================================
- * Buffer Descriptor List (BDL) entry — 8 bytes each
- * Hardware requires the BDL array to be 8-byte aligned.
- * ============================================================ */
+/* Hardware BDL entries are 8 bytes each and must stay 8-byte aligned. */
 
 #pragma pack(push, 1)
 struct ac97_bd {
@@ -113,7 +103,7 @@ static u16  s_nam_base  = 0;    /* BAR0 I/O base */
 static u16  s_nabm_base = 0;    /* BAR1 I/O base */
 static pci_address s_pci_addr = {};
 
-/* BDL and DMA buffer — identity-mapped physical memory */
+/* BDL and DMA buffers live in identity-mapped physical memory. */
 static ac97_bd* s_bdl       = null;
 static u32      s_bdl_phys  = 0;
 static u8*      s_dma_buf[STREAM_BUFFER_COUNT]  = {};
@@ -304,20 +294,16 @@ static bool ac97_init() {
     /* Enable I/O space access + bus mastering */
     pci::enable_bus_master(s_pci_addr);
 
-    /* ---- Cold reset the AC'97 controller ---- */
-    /* Set cold reset bit in Global Control */
+    /* Cold-reset the controller, then reset the PCM-out channel. */
     nabm_write32(NABM_GLOB_CNT, GC_COLD_RST);
-    /* Wait for codec ready — spin for a while */
     for (int i = 0; i < 100000; ++i) {
         arch::cpu_nop();
     }
 
-    /* Reset the PCM Out channel */
     nabm_write8(PO_CR, CR_RR);
     for (int i = 0; i < 10000; ++i) arch::cpu_nop();
     nabm_write8(PO_CR, 0);
 
-    /* ---- Reset codec via NAM ---- */
     nam_write16(NAM_RESET, 0xFFFF);
     for (int i = 0; i < 100000; ++i) arch::cpu_nop();
 
@@ -327,10 +313,8 @@ static bool ac97_init() {
     nam_write16(NAM_MONO_VOL, 0x0000);
     nam_write16(NAM_PCM_OUT_VOL, 0x0808);  /* Low attenuation */
 
-    /* ---- Enable variable-rate audio if supported ---- */
     u16 ext_id = nam_read16(NAM_EXT_AUDIO_ID);
     if (ext_id & 0x0001) {
-        /* VRA supported — enable it */
         u16 ext_ctrl = nam_read16(NAM_EXT_AUDIO_CTRL);
         ext_ctrl |= 0x0001;  /* VRA bit */
         nam_write16(NAM_EXT_AUDIO_CTRL, ext_ctrl);
@@ -340,8 +324,7 @@ static bool ac97_init() {
     /* Set default sample rate */
     nam_write16(NAM_PCM_FRONT_RATE, static_cast<u16>(s_sample_rate));
 
-    /* ---- Allocate BDL and DMA buffer ---- */
-    /* BDL: 32 entries × 8 bytes = 256 bytes, needs to be below 4 GB for 32-bit addresses */
+    /* BDL must stay below 4 GiB because the hardware stores 32-bit addresses. */
     physical_pages_ptr<ac97_bd> bdl(
         reinterpret_cast<ac97_bd*>(g_phys_alloc.allocate_pages(1, 0x1000u, 0)),
         physical_pages_deleter { .page_count = 1 });
@@ -353,8 +336,7 @@ static bool ac97_init() {
     s_bdl      = bdl.get();
     memory::set(s_bdl, 0, 0x1000u);
 
-    /* DMA buffers — two full-size windows so userspace can queue the next
-     * block before the current one drains and avoid stop/start pops. */
+    /* Double-buffer so the next block can queue before the current one drains. */
     for (u32 slot = 0; slot < STREAM_BUFFER_COUNT; ++slot) {
         physical_pages_ptr<u8> dma_buf(
             reinterpret_cast<u8*>(g_phys_alloc.allocate_pages(
@@ -462,30 +444,24 @@ static bool ac97_play(const u8* samples, u32 length, sound_format fmt) {
     /* Set sample rate */
     nam_write16(NAM_PCM_FRONT_RATE, static_cast<u16>(s_sample_rate));
 
-    /* AC'97 is a stereo 16-bit device.  The BDL 'length' field is the
-     * total number of 16-bit words in the buffer (both channels combined),
-     * i.e. frames × 2.  Duration = (length / 2) frames / sample_rate. */
-
-    u32 sample_count;  /* Total 16-bit words handed to AC97 (frames × 2) */
+    /* BDL length is measured in 16-bit words, not bytes. */
+    u32 sample_count;
 
     if (fmt == sound_format::unsigned_8) {
-        /* Each 8-bit mono input sample → one stereo frame (2 × i16).
-         * Clamp so the expanded buffer still fits in the DMA window. */
+        /* Expand unsigned 8-bit mono into signed 16-bit stereo frames. */
         u32 num_frames = transfer;
         if (num_frames * 4 > DMA_BUFFER_SIZE) {
             num_frames = DMA_BUFFER_SIZE / 4;
         }
         auto* dst = reinterpret_cast<i16*>(s_dma_buf[slot]);
-        /* Expand backwards: each src byte → two i16 words (L = R = sample). */
         for (i32 i = static_cast<i32>(num_frames) - 1; i >= 0; --i) {
             i16 s = static_cast<i16>((static_cast<i16>(samples[i]) - 128) << 8);
-            dst[i * 2]     = s;   /* left  */
-            dst[i * 2 + 1] = s;   /* right */
+            dst[i * 2]     = s;
+            dst[i * 2 + 1] = s;
         }
-        sample_count = num_frames * 2;   /* total 16-bit words = frames × 2 */
-        transfer     = num_frames * 4;   /* total bytes = frames × 4 */
+        sample_count = num_frames * 2;
+        transfer     = num_frames * 4;
     } else {
-        /* signed_16 stereo: transfer bytes / 2 = total 16-bit words */
         memory::copy(s_dma_buf[slot], samples, transfer);
         sample_count = transfer / 2;
     }

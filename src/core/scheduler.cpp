@@ -3,10 +3,6 @@
  * Copyright (C) 2026 vkernel authors
  *
  * scheduler.cpp - Round-robin preemptive scheduler
- *
- * Uses the PIT (8254) on the BSP and the local APIC timer on APs
- * for preemption (both on vector 32).  Context switches save/restore
- * RSP; the full register file is pushed by the ISR stub in interrupts.S.
  */
 
 #include "config.h"
@@ -34,12 +30,7 @@ static volatile bool g_scheduler_active = false;
 static volatile u64  g_tick_count       = 0;
 static constexpr usize CPU_IDLE_STACK_SIZE = 4096;
 
-/*
- * Per-CPU current-task index.
- * Indexed by APIC ID (0-based, matches smp::MAX_CPUS).
- * The BSP is always APIC ID 0 on a standard PC; on unusual hardware
- * the BSP's APIC ID might differ — we map via smp::current_cpu_apic_id().
- */
+/* Indexed by APIC ID, not by smp::current_cpu_index(). */
 static constexpr u32 MAX_APIC_IDS = 256;
 static usize g_per_cpu_task[MAX_APIC_IDS];   /* current task index per CPU */
 static u64 g_cpu_idle_rsp[MAX_APIC_IDS];
@@ -50,16 +41,13 @@ static __declspec(align(16)) u8 g_cpu_idle_stacks[MAX_APIC_IDS][CPU_IDLE_STACK_S
 static u8 g_cpu_idle_stacks[MAX_APIC_IDS][CPU_IDLE_STACK_SIZE] __attribute__((aligned(16)));
 #endif
 
-/* Global scheduler spinlock — held only during the brief task-pick window */
+/* Held only across the small task-pick/update window. */
 static spinlock g_sched_lock;
 
-/* Per-CPU yield-in-progress flag.  Must not be a single global because
- * one CPU's yield flag would be consumed by another CPU's timer ISR. */
+/* Per-CPU so one core cannot consume another core's synthetic yield. */
 static volatile bool g_yield_in_progress[MAX_APIC_IDS];
 
-/* APIC ID of the Bootstrap Processor — only the BSP drives g_tick_count
- * via the PIT (IRQ0).  APs use their LAPIC timer for preemption only;
- * they must not increment the global tick or sleep timers will run N× fast. */
+/* Only the BSP advances g_tick_count; AP LAPIC timers preempt only. */
 static u8 g_bsp_apic_id = 0;
 
 static constexpr usize FXSAVE_MXCSR_OFFSET      = 24;
@@ -270,9 +258,7 @@ static inline auto cpu_allows_shared_idle() -> bool {
     return smp::current_cpu_apic_id() == g_bsp_apic_id;
 }
 
-/* Keep a task on the CPU that most recently owned its stack.  During an SMP
- * switch the outgoing CPU marks the task ready before the interrupt epilogue
- * has finished unwinding from that stack, so another CPU must not pick it yet. */
+/* Keep a task on the CPU that still owns its unwinding kernel stack. */
 static inline auto task_matches_cpu_affinity(usize task_index, u8 this_apic) -> bool {
     const u32 affinity = g_tasks[task_index].affinity_cpu;
     return affinity == SCHED_CPU_NONE || affinity == this_apic;
@@ -290,26 +276,9 @@ static void init_task_stack_frame(task& t, task_entry_fn entry, void* user_data)
     t.user_data = user_data;
 
     /*
-     * Set up the initial stack frame so the first context switch
-     * "returns" into task_trampoline.
-     *
-     * Keep a full interrupt-frame-shaped tail here.  Same-CPL iretq only
-     * consumes RIP, CS and RFLAGS, leaving the saved RSP/SS as harmless stack
-     * scratch space; the full shape also matches the rest of the saved-state
-     * model used by diagnostics and context switching.
-     *
-     * Because iretq is not a call, we must also arrange the post-iret stack
-     * exactly like a normal SysV function entry: %rsp % 16 == 8.  The padding
-     * slot above SS makes the same-CPL iretq leave RSP at stack_top - 24.
-     *
-     * Stack layout:
-     *          alignment padding
-     *          SS, RSP, RFLAGS, CS, RIP
-     *          error_code, int_no
-     *          FS, GS
-     *          R15..R8, RBP, RDI, RSI, RDX, RCX, RBX, RAX
-     *
-     * Total saved frame: 1 + 5 + 2 + 2 + 15 = 25 u64s.
+     * Prebuild an interrupt-shaped frame so the first switch can iretq into
+     * task_trampoline().  The extra padding keeps the post-iret stack at the
+     * normal SysV function-entry alignment.
      */
     auto* stack_top = reinterpret_cast<u64*>(
         reinterpret_cast<usize>(&t.stack[TASK_STACK_SIZE]) & ~0xFull);
@@ -398,8 +367,7 @@ static auto pick_next_task(usize cur) -> usize {
         return SCHED_NO_TASK;
     }
 
-    /* Task 0 is the idle task. Keep it out of normal round-robin so it
-     * only consumes CPU when every real task is blocked or terminated. */
+    /* Task 0 is idle and only runs when no real task is runnable. */
     if (g_task_count > 1) {
         usize start = (cur > 0 && cur < g_task_count) ? cur : 0;
         for (usize i = 1; i < g_task_count; ++i) {
@@ -602,28 +570,17 @@ void sched::yield() {
 }
 
 auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
-    /* Only count real PIT hardware ticks, not software yields.
-     * Note: on APs the LAPIC timer fires on vector 32 as well;  the
-     * PIT only fires on the BSP (IRQ0 is wired to the BSP by the PIC). */
+    /* Count real timer interrupts, not synthetic yield-triggered entries. */
     u8 this_apic = smp::current_cpu_apic_id();
     const bool timer_tick = !g_yield_in_progress[this_apic];
     if (g_yield_in_progress[this_apic]) {
         g_yield_in_progress[this_apic] = false;
     } else if (this_apic == g_bsp_apic_id) {
-        /* Only the BSP's PIT (IRQ0) advances the global clock.
-         * APs fire vector 32 from their LAPIC timers for scheduling only;
-         * if they also incremented g_tick_count, ticks would run N× fast. */
+        /* AP timer interrupts schedule work but must not advance sleep time. */
         (void)arch::atomic_add(&g_tick_count, 1);
     }
 
-    /* Send EOI.
-     * - The BSP receives IRQ0 via the 8259 PIC (pic_eoi() writes port 0x20).
-     * - APs receive vector 32 from their local LAPIC timer.
-     *   The LAPIC requires a write to its EOI register (offset 0xB0) to
-     *   acknowledge the interrupt; the 8259 EOI is a no-op for LAPIC sources.
-     * Writing both is safe: the PIC ignores spurious EOIs and the LAPIC
-     * ignores the PIC port write.
-     */
+    /* BSP needs the 8259 EOI; APs need the LAPIC EOI. Writing both is safe. */
     pic_eoi();
     lapic_write(LAPIC_EOI, 0);
 
@@ -640,22 +597,12 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         ++g_tasks[cur].cpu_ticks;
     }
 
-    /* Save current task only if this CPU is actually running one.
-     * cur == SCHED_NO_TASK on an AP that has never been assigned a task yet
-     * (set in start_ap() before the first LAPIC-timer preemption).  Saving
-     * into g_tasks[SCHED_NO_TASK] would be an out-of-bounds write and would
-     * also corrupt another task's saved RSP if two CPUs happen to both have
-     * SCHED_NO_TASK simultaneously. */
+    /* Fresh APs start with no current task; avoid indexing g_tasks with that. */
     process::process_task_context* terminated_ctx = null;
 
     if (cur < g_task_count) {
         g_tasks[cur].rsp = reinterpret_cast<u64>(regs);
-        /* Save x87/SSE state.  Without this, XMM register contents
-         * leak across context switches and corrupt user processes
-         * that use SSE (e.g. doom, anything compiled with -msse2).
-         *
-         * FXSAVE/FXRSTOR is enough for the current userspace ABI and avoids
-         * XRSTOR #GPs if the extended-state header is stale or corrupted. */
+        /* FXSAVE/FXRSTOR keeps SSE state isolated without depending on XRSTOR. */
         arch::fxsave(g_tasks[cur].xsave_area);
         sanitize_fxsave_area(g_tasks[cur].xsave_area);
         g_tasks[cur].xsave_valid = true;
@@ -695,10 +642,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     g_tasks[next].current_cpu = this_apic;
     const u64 next_rsp = g_tasks[next].rsp;
 
-    /* Restore the next task's x87/SSE state.  On the very first
-     * dispatch the task has never run yet, so xsave_valid is false
-     * and we leave the FPU in its boot-time state (which the task
-     * trampoline / entry point will initialise as needed). */
+    /* Brand-new tasks start with boot-time FPU state until first save. */
     if (g_tasks[next].xsave_valid) {
         sanitize_fxsave_area(g_tasks[next].xsave_area);
         arch::fxrstor(g_tasks[next].xsave_area);
@@ -754,16 +698,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     sched_switch_to(g_tasks[first].rsp);
 }
 
-/* ============================================================
- * AP entry point — called from ap_init_secondary() after
- * arch::ap_activate() and smp::lapic_init_local().
- *
- * Each AP:
- *   1. Waits for the BSP scheduler to go live.
- *   2. Calibrates its local LAPIC timer against the BSP PIT tick.
- *   3. Enables interrupts and idles with no current task.  Vector 32
- *      timer interrupts will dispatch runnable non-idle work onto this CPU.
- * ============================================================ */
+/* APs arm their LAPIC timer, then idle until runnable work appears. */
 [[noreturn]] void sched::start_ap() {
     g_sched_lock.acquire();
     cpu_set_current_task(SCHED_NO_TASK);
@@ -884,18 +819,14 @@ void sched::sleep(u64 ticks) {
         return;
     }
 
-    /* Set wake_tick and state under the spinlock so that another CPU's
-     * preempt() → wake_sleeping_tasks() cannot observe state==blocked
-     * with a stale wake_tick (which would wake us immediately). */
+    /* Publish wake_tick and blocked state together to avoid instant wakeups. */
     g_sched_lock.acquire();
     usize cur = cpu_current_task();
     g_tasks[cur].wake_tick = g_tick_count + ticks;
     g_tasks[cur].state = task_state::blocked;
     g_sched_lock.release();
 
-    /* Yield repeatedly until woken.  In practice the first yield()
-     * will not return until wake_sleeping_tasks() marks us ready
-     * and preempt() dispatches us back. */
+    /* Keep yielding until preempt() marks us runnable again. */
     while (g_tasks[cpu_current_task()].state == task_state::blocked) {
         yield();
     }

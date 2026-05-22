@@ -35,11 +35,7 @@ static constexpr net::ipv4_address DEFAULT_KERNEL_IPV4 =
     net::make_ipv4(10, 0, 0, 2);
 
 #if defined(KERNEL_GDB_WAIT)
-/*
- * Debugger mailbox in the AP trampoline page.
- * This low-memory page is already reserved by the kernel for SMP bring-up,
- * and these offsets are outside the fields consumed by the trampoline code.
- */
+/* Reuse unused trampoline bytes as a simple GDB handshake mailbox. */
 static constexpr usize GDB_MAILBOX_IMAGE_BASE = 0x8160;
 static constexpr usize GDB_MAILBOX_RELEASE    = 0x8168;
 static constexpr u64   GDB_RELEASE_MAGIC      = 0x564B4442474FULL; /* "VKDBGO" */
@@ -61,15 +57,7 @@ static void wait_for_debugger_attach() {
 }
 #endif
 
-/* ============================================================
- * Self-relocator for the GOT
- *
- * Our PE is loaded at an arbitrary base by UEFI but has NO
- * base relocations (the .reloc section is an empty stub).
- * Code is fully RIP-relative (-fpic), but the Global Offset
- * Table (.got) contains absolute link-time addresses that the
- * linker baked in.  We patch them here by adding the load delta.
- * ============================================================ */
+/* Fix absolute GOT entries when the firmware loads us away from RVA 0. */
 
 extern "C" {
     extern char ImageBase[];   /* linker script: ImageBase = 0 */
@@ -77,30 +65,17 @@ extern "C" {
 
 static void self_relocate() {
 #if defined(_MSC_VER)
-    /*
-     * On MSVC/PE the linker generates proper base relocations when
-     * /FIXED:NO is used (the default for EFI Application subsystem).
-     * The UEFI firmware applies them at load time, so there is nothing
-     * for us to do here.  The function is kept as a no-op so the call
-     * site in efi_main() compiles unchanged.
-     */
+    /* MSVC emits normal PE relocations, so firmware already fixed this up. */
     (void)ImageBase;
 #else
-    /* Runtime address of ImageBase via RIP-relative LEA */
     u64 runtime_base = asm_get_image_base();
-
-    /* Link-time base is 0 (from linker script: ImageBase = 0) */
     const u64 delta = runtime_base;
 
     if (delta == 0) return;  /* Loaded at link-time base — nothing to do */
 
-    /* Scan ALL of .data for pointer-like values.
-     * A value is a link-time pointer if it falls within the
-     * image range [0x1000, _edata).  We add delta to relocate. */
+    /* Relocate pointer-like values still pointing at link-time image RVAs. */
     u64* data_start = reinterpret_cast<u64*>(asm_get_data_start());
     u64* data_end   = reinterpret_cast<u64*>(asm_get_data_end());
-    /* _end includes BSS — use it as upper bound for pointer detection.
-     * Compute link-time value: runtime__end - delta */
     u64* end_ptr = reinterpret_cast<u64*>(asm_get_end());
     u64  end_val = reinterpret_cast<u64>(end_ptr) - delta;
 
@@ -113,23 +88,16 @@ static void self_relocate() {
 #endif
 }
 
-/*
- * UEFI Entry Point
- * 
- * This is the entry point for the UEFI application.
- * It is called by the UEFI firmware when the image is loaded.
- */
 auto efi_main(
     uefi::handle image_handle,
     uefi::system_table* system_table
 ) -> uefi::status {
 #if defined(KERNEL_GDB_WAIT)
-    /* In the QEMU/GDB debug flow, publish the relocated image base and
-     * wait for the debugger to acknowledge before startup runs. */
+    /* Pause early so GDB can attach before init runs. */
     wait_for_debugger_attach();
 #endif
 
-    /* Self-relocate: patch GOT entries before using any cross-TU pointers */
+    /* Fix GOT entries before using cross-TU data. */
     self_relocate();
 
     /* Store the system table pointer */
@@ -212,9 +180,7 @@ auto efi_main(
     /* Load files from ESP into ramfs (must happen before ExitBootServices) */
     loader::load_initrd();
 
-    /* Locate ACPI tables via UEFI configuration table while boot services
-     * are still active.  The RSDP and all referenced SDTs reside in
-     * ACPI-reclaimable memory and remain valid after ExitBootServices.  */
+    /* ACPI discovery still needs the UEFI configuration table here. */
     log::info() << "Initializing ACPI...";
     acpi::init(uefi::g_system_table);
 
@@ -224,13 +190,10 @@ auto efi_main(
 
     log::info() << "Exiting UEFI boot services...";
 
-    /* Disable interrupts: prevents UEFI timer callbacks from modifying
-     * the memory map between GetMemoryMap and ExitBootServices, which
-     * would invalidate the map key and cause EBS to fail. */
+    /* Keep the memory map stable across the GetMemoryMap -> EBS window. */
     arch::disable_interrupts();
 
-    // Critical section: GetMemoryMap → ExitBootServices.
-    // Absolutely no other UEFI calls between these two.
+    /* No other UEFI calls may happen inside this window. */
     {
         auto fresh = uefi::query_memory_map();
         auto ebs_status = uefi::do_exit_boot_services(image_handle, fresh.map_key);
@@ -250,13 +213,11 @@ auto efi_main(
         }
     }
 
-    /* Boot services are now terminated. Switch to serial console — ConOut
-     * is a boot service and must NOT be called after ExitBootServices. */
+    /* ConOut is gone after EBS, so switch to kernel-owned backends. */
     console::switch_to_serial();
 
     if (fb_info.valid) {
         console::switch_to_framebuffer();
-		//console::clear();
     }
     log::printk() << "Boot services exited. Serial + framebuffer console active.\n";
 
@@ -293,9 +254,7 @@ auto efi_main(
     ac97_driver::register_builtin();
     log::info() << "Driver framework initialised (3 built-in drivers registered)";
 
-    /* Bring up the virtio block backend while keeping the RAMFS boot path
-     * active.  FAT32/VFS will start consuming block devices in the next
-     * layer. */
+    /* Keep RAMFS alive while block-backed VFS comes up. */
     (void)driver::load("virtio_blk");
     (void)driver::load("virtio_net");
     (void)fs::mount_boot_filesystem();
@@ -325,10 +284,7 @@ auto efi_main(
         vk_panic(__FILE__, __LINE__, "Failed to launch serial shell!");
     }
 
-    /* Launch the graphical shell when framebuffer output is available.
-     * Prefer vGUI: it owns framebuffer composition and routes input to
-     * managed app windows.  The classic shell remains the serial console
-     * and a graphical fallback for minimal builds. */
+    /* Prefer vGUI for framebuffer sessions; fall back to the classic shell. */
     if (fb_info.valid) {
         log::info() << "Launching graphical shell...";
         if (process::run("vgui.vbin", process::console_interface::graphical) < 0 &&

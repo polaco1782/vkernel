@@ -3,15 +3,6 @@
  * Copyright (C) 2026 vkernel authors
  *
  * pe.h - PE32+ (PE64) loader (freestanding, x86-64)
- *
- * Loads freestanding PE32+ executables from an in-memory buffer into
- * the kernel heap, applies DIR64 base relocations, and returns the
- * resolved entry-point address for the caller to invoke.
- *
- * Calling convention note:
- *   PE32+ programs compiled with MSVC use the Microsoft x64 ABI.
- *   The kernel (also MSVC) calls the entry point with the first
- *   argument in RCX — an exact match with no ABI bridging needed.
  */
 
 #ifndef VKERNEL_PE_H
@@ -155,23 +146,9 @@ struct load_result {
  * Public API
  * ============================================================ */
 
-/*
- * Load a PE32+ binary from a raw byte buffer into the kernel heap.
- *
- * Steps performed:
- *  1. Validate DOS / NT / optional headers
- *  2. Allocate SizeOfImage zeroed bytes
- *  3. Copy SizeOfHeaders (mapped image headers)
- *  4. Copy each section from its PointerToRawData to its VirtualAddress
- *  5. Apply IMAGE_REL_BASED_DIR64 base relocations
- *  6. Return entry = alloc_base + AddressOfEntryPoint
- *
- * On success, result.error == pe_error::ok.
- * The caller is responsible for freeing result.image_base when done.
- */
+/* Caller owns result.image_base on success. */
 auto load(const u8* file_data, usize file_size) -> load_result;
 
-/* Human-readable error string */
 auto error_string(pe_error err) -> const char*;
 
 } // namespace pe

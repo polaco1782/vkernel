@@ -22,7 +22,7 @@ using u16 = unsigned short;
 using u32 = unsigned int;
 using u64 = unsigned long long;
 
-/* Alternate names (s = signed, u = unsigned) */
+/* Short aliases. */
 using s8  = i8;
 using s16 = i16;
 using s32 = i32;
@@ -36,16 +36,12 @@ using usize  = unsigned long;
 using isize  = long;
 #endif
 
-/* Physical and virtual address types */
+/* Address aliases used across the kernel. */
 using phys_addr = u64;
 using virt_addr = u64;
 using paddr     = u64;
 using vaddr     = u64;
 using size_phys = u64;
-
-/* ============================================================
- * Freestanding std::nullptr_t equivalent
- * ============================================================ */
 
 using nullptr_t = decltype(nullptr);
 inline constexpr nullptr_t null = nullptr;
@@ -127,7 +123,7 @@ struct conditional<false, T, F> { using type = F; };
 template<bool B, typename T, typename F>
 using conditional_t = typename conditional<B, T, F>::type;
 
-/* Simple is_class (uses sizeof trick) */
+/* Compiler intrinsic wrapper. */
 template<typename T>
 struct is_class {
     static constexpr bool value = __is_class(T);
@@ -135,10 +131,6 @@ struct is_class {
 
 template<typename T>
 inline constexpr bool is_class_v = is_class<T>::value;
-
-/* ============================================================
- * Freestanding concepts (no <concepts>)
- * ============================================================ */
 
 template<typename T>
 concept Integral = is_integral_v<T>;
@@ -289,10 +281,6 @@ private:
 
 } // namespace vk
 
-/* ============================================================
- * Status codes
- * ============================================================ */
-
 enum class status_code : i32 {
     success         =  0,
     error           = -1,
@@ -303,10 +291,6 @@ enum class status_code : i32 {
     busy            = -6,
 };
 
-/* ============================================================
- * Attributes and macros
- * ============================================================ */
-
 #if defined(_MSC_VER)
 #include <stddef.h>
 #define container_of(ptr, type, member) \
@@ -316,7 +300,6 @@ enum class status_code : i32 {
     (type*)((char*)(ptr) - __builtin_offsetof(type, member))
 #endif
 
-/* Min/Max - constexpr */
 template<typename T>
 [[nodiscard]] constexpr auto min(T a, T b) noexcept -> T {
     return a < b ? a : b;
@@ -332,7 +315,6 @@ template<typename T, usize N>
     return N;
 }
 
-/* Round up/down */
 template<typename T>
 [[nodiscard]] constexpr auto align_up(T val, usize align) noexcept -> T {
     return static_cast<T>((static_cast<usize>(val) + align - 1) & ~(align - 1));
@@ -348,15 +330,12 @@ template<typename T>
     return (static_cast<usize>(val) & (align - 1)) == 0;
 }
 
-/* Page size constants */
 inline constexpr usize PAGE_SIZE_4K  = 0x1000ULL;
 inline constexpr usize PAGE_SIZE_2MB = 0x200000ULL;
 inline constexpr usize PAGE_SIZE_1GB = 0x40000000ULL;
 
-/* Forward declarations */
 [[noreturn]] void vk_panic(const char* file, unsigned int line, const char* condition);
 
-/* Compiler-specific unreachable hint */
 #if defined(_MSC_VER)
 #define VK_UNREACHABLE() __assume(false)
 #else

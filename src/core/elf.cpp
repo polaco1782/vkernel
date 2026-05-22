@@ -3,10 +3,6 @@
  * Copyright (C) 2026 vkernel authors
  *
  * elf.cpp - ELF64 loader implementation
- *
- * Loads statically-linked ET_EXEC and position-independent ET_DYN
- * binaries from an in-memory buffer into the kernel heap, then
- * returns the resolved entry-point address for the caller to invoke.
  */
 
 #include "config.h"
@@ -25,13 +21,12 @@ namespace elf {
  * Internal helpers
  * ============================================================ */
 
-/* Align a value up to the nearest multiple of align (must be power-of-2) */
+/* align must be a power of two. */
 static constexpr auto align_up(u64 value, u64 align) -> u64 {
     if (align == 0) return value;
     return (value + align - 1) & ~(align - 1);
 }
 
-/* Safe read: verify [offset, offset+len) lies within [0, file_size) */
 static bool range_ok(usize file_size, u64 offset, u64 len) {
     if (offset > file_size) return false;
     if (len > file_size - offset) return false;
@@ -137,16 +132,7 @@ static auto load_impl(const u8* file_data,
     }
 
     /* ---- 7. Allocate contiguous image buffer ---- */
-    /*
-     * For ET_DYN (PIE) we use the virtual addresses relative to vaddr_min
-     * as offsets into the allocation (load bias = image_base - vaddr_min).
-     * For ET_EXEC the kernel is identity-mapped, so we still allocate a
-     * heap buffer and copy segments there; the load bias shifts the entry
-     * point accordingly.  This works for simple programs that do not rely
-     * on hard-coded absolute virtual addresses for data (e.g. no global
-     * pointer tables without relocation).  A full user-mode environment
-     * would map these at their requested virtual addresses via paging.
-     */
+    /* ET_DYN uses a normal load bias; ET_EXEC is staged the same way here. */
     u64 image_size = align_up(vaddr_max - vaddr_min, 4096ULL);
     kernel_allocation_ptr<u8> image_owner;
     u8* image_runtime_base = null;
@@ -188,9 +174,7 @@ static auto load_impl(const u8* file_data,
             return result;
         }
 
-        /* Heap too small — fall back to the physical allocator.  The
-         * physical allocator works in pages; cast the phys_addr to a
-         * pointer (valid because the kernel runs identity-mapped). */
+        /* Fall back to page allocation when the heap cannot fit the image. */
         log::warn() << "elf: heap allocation failed, trying physical allocator";
         u32 page_count = static_cast<u32>(
             (image_size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K);
@@ -214,19 +198,13 @@ static auto load_impl(const u8* file_data,
                 .size = static_cast<usize>(image_size),
                 .from_phys = true,
             });
-        /* Physical pages are not guaranteed to be zeroed — clear them now. */
         memory::set(image_owner.get(), 0, image_size);
         image_runtime_base = image_owner.get();
         image_write_base = image_owner.get();
         result.image_from_phys = true;
     }
 
-    /*
-     * load_bias produces values that the process will observe at runtime.
-     * write_bias points at the kernel-accessible backing memory being filled.
-     * Keeping them separate is important for VM-backed processes: relocation
-     * slots must contain virtual addresses, not the physical staging buffer.
-     */
+    /* VM-backed loads write through a physical alias but relocate to virtual VAs. */
     i64 load_bias = static_cast<i64>(
         reinterpret_cast<u64>(image_runtime_base)) - static_cast<i64>(vaddr_min);
     i64 write_bias = static_cast<i64>(
@@ -244,8 +222,7 @@ static auto load_impl(const u8* file_data,
         if (ph.p_filesz > 0) {
             memory::copy(dest, file_data + ph.p_offset, ph.p_filesz);
         }
-        /* Zero-fill BSS region (p_memsz > p_filesz) — already zeroed by
-         * allocate_zero, but be explicit for clarity */
+        /* Be explicit about BSS even when the allocation already started zeroed. */
         if (ph.p_memsz > ph.p_filesz) {
             memory::set(dest + ph.p_filesz, 0,
                                ph.p_memsz - ph.p_filesz);
@@ -253,13 +230,7 @@ static auto load_impl(const u8* file_data,
     }
 
     /* ---- 9. Process dynamic relocations (ET_DYN / PIE only) ---- */
-    /*
-     * Walk PT_DYNAMIC to find DT_RELA / DT_RELASZ, then apply every
-     * R_X86_64_RELATIVE entry:  *loc += load_bias
-     * This fixes up any absolute pointer slots (vtables, fn-pointer tables,
-     * initialised pointer globals) that the static linker baked in at
-     * link-time-zero-base addresses.
-     */
+    /* Apply R_X86_64_RELATIVE relocations from PT_DYNAMIC when present. */
     if (ehdr->e_type == ET_DYN) {
         u64 rela_vaddr = 0;
         u64 rela_size  = 0;

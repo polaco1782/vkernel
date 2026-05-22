@@ -3,12 +3,6 @@
  * Copyright (C) 2026 vkernel authors
  *
  * Linker script for x86_64 UEFI application (PIC / static)
- *
- * The kernel is compiled with -fpic so all internal references use
- * RIP-relative addressing.  reloc_stub.cpp injects an 8-byte
- * .reloc section with an empty base-relocation block, which:
- *   1. Prevents objcopy from setting IMAGE_FILE_RELOCS_STRIPPED.
- *   2. Tells the UEFI PE loader "zero fixups to apply — load anywhere".
  */
 
 OUTPUT_FORMAT("elf64-x86-64", "elf64-x86-64", "elf64-x86-64")
@@ -18,11 +12,7 @@ ENTRY(efi_main)
 
 SECTIONS
 {
-    /*
-     * Base at 0 — image is fully position-independent.
-     * Start sections at 0x1000 so RVA 0 is reserved for the PE header
-     * (SizeOfHeaders ≤ 0x1000).
-     */
+    /* Keep RVA 0 reserved for PE headers; sections start at 0x1000. */
     . = 0;
     ImageBase = .;
     . = 0x1000;

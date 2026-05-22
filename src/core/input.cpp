@@ -3,15 +3,6 @@
  * Copyright (C) 2026 vkernel authors
  *
  * input.cpp - Kernel input subsystem implementation
- *
- * Polls two sources:
- *   1. PS/2 keyboard — 8042 controller (ports 0x60/0x64)
- *      Scan code set 1, with shift / caps-lock state tracking.
- *   2. COM1 serial  — 0x3F8
- *      Any byte arriving on the serial line is forwarded directly.
- *
- * input::getc() sleeps briefly between polls so the idle task can HLT
- * and other tasks can make progress.
  */
 
 #include "config.h"
@@ -100,13 +91,7 @@ static bool s_ext   = false;   /* consumed 0xE0 prefix */
 /* Forward declaration: defined in the PS/2 mouse section below. */
 static void ps2_pump_mouse_byte(u8 byte);
 
-/*
- * Try to read one character from the PS/2 port.
- * Returns '\0' if nothing is available or the scancode is a modifier.
- *
- * Aux (mouse) bytes are consumed immediately and fed into ps2_pump_mouse_byte()
- * so the controller output buffer is never blocked by unread mouse data.
- */
+/* Returns '\0' for no key, modifiers, or unhandled extended scancodes. */
 static auto ps2_try_read() -> char {
     while (true) {
         /* Bit 0 of status: output buffer full */
@@ -155,10 +140,7 @@ static auto ps2_try_read() -> char {
     }
 }
 
-/* ============================================================
- * Raw PS/2 scancode reader — for poll_key()
- * Returns the full scancode with make/break info preserved.
- * ============================================================ */
+/* Raw scancode path for poll_key(), with make/break state preserved. */
 
 static bool s_ctrl = false;
 static bool s_alt  = false;
@@ -226,14 +208,7 @@ static auto serial_try_read() -> char {
     return '\0';
 }
 
-/* ============================================================
- * PS/2 Mouse — i8042 auxiliary port
- *
- * Protocol: 3-byte packets
- *   Byte 0: [YO|XO|YS|XS|1|MB|RB|LB]  (bit 3 always 1)
- *   Byte 1: X movement (two's complement, sign in byte 0 bit 4)
- *   Byte 2: Y movement (two's complement, sign in byte 0 bit 5, +Y = up)
- * ============================================================ */
+/* Standard 3-byte PS/2 mouse packets from the i8042 aux port. */
 
 static constexpr u8  PS2_CMD_ENABLE_AUX    = 0xA8;
 static constexpr u8  PS2_CMD_GET_CONFIG    = 0x20;
@@ -246,13 +221,7 @@ static bool s_mouse_ready = false;
 static u8   s_mouse_buf[3];
 static int  s_mouse_phase = 0;   /* which byte within a 3-byte packet */
 
-/*
- * Ring buffer of fully-decoded mouse packets.
- * ps2_pump_mouse_byte() assembles bytes into packets and enqueues them.
- * Both the keyboard readers and poll_mouse() call pump, so the PS/2
- * output buffer is always drained immediately — keyboard bytes are never
- * blocked by pending mouse data.
- */
+/* Queue decoded mouse packets so keyboard reads can drain aux bytes eagerly. */
 static constexpr int    MOUSE_QUEUE_SIZE = 8;
 static vk_mouse_event_t s_mouse_queue[MOUSE_QUEUE_SIZE];
 static int              s_mouse_q_head = 0;   /* next write slot */
@@ -277,10 +246,7 @@ static bool mouse_q_pop(vk_mouse_event_t& ev)
     return true;
 }
 
-/*
- * Feed one raw byte from the aux device into the 3-byte packet state machine.
- * Enqueues a decoded vk_mouse_event_t when a complete packet is ready.
- */
+/* Assemble one aux byte into a decoded mouse packet. */
 static void ps2_pump_mouse_byte(u8 byte)
 {
     /* Re-sync: first byte of a packet always has bit 3 set. */
@@ -373,11 +339,7 @@ auto mouse_init() -> status_code {
     return status_code::success;
 }
 
-/*
- * poll_mouse: drain any remaining aux bytes from port 0x60 (in case
- * poll_key hasn't been called recently), then pop one packet from the
- * internal queue assembled by ps2_pump_mouse_byte().
- */
+/* Drain pending aux bytes, then pop one decoded packet if available. */
 auto poll_mouse(vk_mouse_event_t& ev) -> bool {
     if (!s_mouse_ready) return false;
 
