@@ -63,6 +63,8 @@ struct task {
     bool          allow_secondary_cpu;     /* tasks created before scheduler start stay on BSP */
     u32           affinity_cpu;            /* CPU that owns this task's stack after first dispatch */
     u32           current_cpu;             /* APIC ID while running, SCHED_CPU_NONE otherwise */
+    u32           last_cpu;                /* Most recent CPU that ran this task */
+    u64           run_tick_start;          /* g_tick_count when the current run slice started */
     u64           cpu_ticks;               /* Timer ticks consumed while running */
 
     [[nodiscard]] constexpr auto is_runnable() const -> bool {
@@ -149,6 +151,7 @@ auto detach_current_task() -> void*;
                                              virt_addr* out_high) -> bool;
 [[nodiscard]] auto tick_count() -> u64;
 [[nodiscard]] auto snapshot_tasks(task_snapshot* out, usize max_tasks) -> usize;
+[[nodiscard]] auto snapshot_task(u64 task_id, task_snapshot* out) -> bool;
 
 /* Debug: print task list */
 void dump_tasks();

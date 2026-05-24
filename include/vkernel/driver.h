@@ -74,6 +74,10 @@ auto load(const char* name) -> i32;
 auto unload(string_view name) -> i32;
 auto unload(const char* name) -> i32;
 
+auto registered_count() -> usize;
+auto get_registered(usize index) -> const driver_descriptor*;
+bool is_loaded(const char* name);
+
 /* List loaded drivers to console. */
 void list_loaded();
 

@@ -77,10 +77,44 @@ typedef vk_u64 vk_file_handle_t;
 typedef struct vk_task_info {
     vk_u64 id;
     vk_u32 state;       /* 0=ready, 1=running, 2=blocked, 3=terminated */
-    vk_u32 cpu;         /* APIC ID while running, VK_TASK_CPU_NONE otherwise */
-    vk_u64 cpu_ticks;   /* Scheduler ticks spent running on any CPU */
+    vk_u32 cpu;         /* Current or most recent APIC ID for this task */
+    vk_u64 cpu_ticks;   /* Scheduler ticks charged while running on any CPU */
     char   name[32];
 } vk_task_info_t;
+
+typedef enum vk_kobj_type {
+    VK_KOBJ_TYPE_U64 = 0,
+    VK_KOBJ_TYPE_I64 = 1,
+    VK_KOBJ_TYPE_BOOL = 2,
+    VK_KOBJ_TYPE_STR = 3,
+    VK_KOBJ_TYPE_ENUM = 4,
+    VK_KOBJ_TYPE_STRUCT = 5,
+    VK_KOBJ_TYPE_STREAM = 6,
+    VK_KOBJ_TYPE_ERR = 7,
+} vk_kobj_type_t;
+
+#define VK_KOBJ_NAME_MAX 64u
+#define VK_KOBJ_UNIT_MAX 32u
+#define VK_KOBJ_ENUM_MAX 8u
+#define VK_KOBJ_ENUM_LABEL_MAX 32u
+
+typedef struct vk_kobj_child {
+    char   name[VK_KOBJ_NAME_MAX];
+    vk_u32 type;
+} vk_kobj_child_t;
+
+typedef struct vk_kobj_node_info {
+    char   name[VK_KOBJ_NAME_MAX];
+    char   unit[VK_KOBJ_UNIT_MAX];
+    vk_u32 type;
+    vk_u32 readable;
+    vk_u32 writable;
+    vk_u32 volatile_node;
+    vk_u64 range_min;
+    vk_u64 range_max;
+    vk_u32 enum_count;
+    char   enum_labels[VK_KOBJ_ENUM_MAX][VK_KOBJ_ENUM_LABEL_MAX];
+} vk_kobj_node_info_t;
 
 /* ============================================================
  * Add new fields only at the END to preserve ABI compatibility.
@@ -188,6 +222,15 @@ typedef struct vk_api {
     int (*vk_task_accepts_framebuffer_resize)(vk_u64 task_id);
     int (*vk_set_startup_window_size)(vk_u32 width, vk_u32 height);
     int (*vk_get_task_startup_window_size)(vk_u64 task_id, vk_u32* out_width, vk_u32* out_height);
+    int (*vk_kobj_query)(const char* path,
+                         char* out_value,
+                         vk_usize out_value_cap,
+                         vk_kobj_node_info_t* out_info);
+    vk_usize (*vk_kobj_list)(const char* path, vk_kobj_child_t* out_items, vk_usize max_items);
+    int (*vk_kobj_set_value)(const char* path, const char* value);
+    int (*vk_driver_load)(const char* name);
+    int (*vk_driver_unload)(const char* name);
+    void (*vk_reboot)(void);
 
 } vk_api_t;
 

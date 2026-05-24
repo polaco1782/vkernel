@@ -183,6 +183,31 @@ auto unload(const char* name) -> i32 {
     return unload(string_view(name));
 }
 
+auto registered_count() -> usize {
+    return s_driver_count;
+}
+
+auto get_registered(usize index) -> const driver_descriptor* {
+    if (index >= s_driver_count) {
+        return null;
+    }
+    return s_drivers[index].desc;
+}
+
+bool is_loaded(const char* name) {
+    if (name == null) {
+        return false;
+    }
+
+    const string_view query(name);
+    for (usize i = 0; i < s_driver_count; ++i) {
+        if (s_drivers[i].desc != null && name_match(query, s_drivers[i].desc->name)) {
+            return s_drivers[i].loaded;
+        }
+    }
+    return false;
+}
+
 void list_loaded() {
     bool any = false;
     for (usize i = 0; i < s_driver_count; ++i) {

@@ -258,6 +258,40 @@ static inline auto cpu_allows_shared_idle() -> bool {
     return smp::current_cpu_apic_id() == g_bsp_apic_id;
 }
 
+static inline auto task_display_cpu(const task& t) -> u32 {
+    if (t.current_cpu != SCHED_CPU_NONE) {
+        return t.current_cpu;
+    }
+    if (t.last_cpu != SCHED_CPU_NONE) {
+        return t.last_cpu;
+    }
+    return t.affinity_cpu;
+}
+
+static inline auto task_live_tick_delta(const task& t) -> u64 {
+    if (t.state != task_state::running || t.current_cpu == SCHED_CPU_NONE) {
+        return 0;
+    }
+
+    const u64 now = g_tick_count;
+    return now > t.run_tick_start ? now - t.run_tick_start : 0;
+}
+
+static inline void account_task_ticks(task& t, u8 this_apic, bool timer_tick) {
+    if (t.current_cpu == SCHED_CPU_NONE) {
+        return;
+    }
+
+    const u64 now = g_tick_count;
+    u64 elapsed = now > t.run_tick_start ? now - t.run_tick_start : 0;
+    if (elapsed == 0 && timer_tick && this_apic != g_bsp_apic_id) {
+        /* AP timer interrupts do not advance g_tick_count, so charge the local quantum. */
+        elapsed = 1;
+    }
+
+    t.cpu_ticks += elapsed;
+}
+
 /* Keep a task on the CPU that still owns its unwinding kernel stack. */
 static inline auto task_matches_cpu_affinity(usize task_index, u8 this_apic) -> bool {
     const u32 affinity = g_tasks[task_index].affinity_cpu;
@@ -498,6 +532,8 @@ auto sched::create_task(string_view name, task_entry_fn entry, void* user_data) 
     t.allow_secondary_cpu = g_scheduler_active;
     t.affinity_cpu = SCHED_CPU_NONE;
     t.current_cpu = SCHED_CPU_NONE;
+    t.last_cpu = SCHED_CPU_NONE;
+    t.run_tick_start = 0;
     t.cpu_ticks = 0;
     if (user_data != null) {
         static_cast<process::process_task_context*>(user_data)->task_id = t.id;
@@ -593,14 +629,11 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     wake_sleeping_tasks();
 
     usize cur = cpu_current_task();
-    if (timer_tick && cur < g_task_count && g_tasks[cur].state == task_state::running) {
-        ++g_tasks[cur].cpu_ticks;
-    }
-
     /* Fresh APs start with no current task; avoid indexing g_tasks with that. */
     process::process_task_context* terminated_ctx = null;
 
     if (cur < g_task_count) {
+        account_task_ticks(g_tasks[cur], this_apic, timer_tick);
         g_tasks[cur].rsp = reinterpret_cast<u64>(regs);
         /* FXSAVE/FXRSTOR keeps SSE state isolated without depending on XRSTOR. */
         arch::fxsave(g_tasks[cur].xsave_area);
@@ -614,6 +647,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
             g_tasks[cur].state = task_state::ready;
         }
         g_tasks[cur].current_cpu = SCHED_CPU_NONE;
+        g_tasks[cur].run_tick_start = 0;
     }
 
     usize next = pick_next_task(cur);
@@ -640,6 +674,8 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         g_tasks[next].affinity_cpu = this_apic;
     }
     g_tasks[next].current_cpu = this_apic;
+    g_tasks[next].last_cpu = this_apic;
+    g_tasks[next].run_tick_start = g_tick_count;
     const u64 next_rsp = g_tasks[next].rsp;
 
     /* Brand-new tasks start with boot-time FPU state until first save. */
@@ -685,6 +721,8 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
         g_tasks[first].affinity_cpu = g_bsp_apic_id;
     }
     g_tasks[first].current_cpu = g_bsp_apic_id;
+    g_tasks[first].last_cpu = g_bsp_apic_id;
+    g_tasks[first].run_tick_start = g_tick_count;
     g_scheduler_active = true;
     activate_task_address_space(g_tasks[first]);
     g_sched_lock.release();
@@ -804,13 +842,39 @@ auto sched::snapshot_tasks(task_snapshot* out, usize max_tasks) -> usize {
 
         out[count].id = g_tasks[i].id;
         out[count].state = g_tasks[i].state;
-        out[count].cpu = g_tasks[i].current_cpu;
-        out[count].cpu_ticks = g_tasks[i].cpu_ticks;
+        out[count].cpu = task_display_cpu(g_tasks[i]);
+        out[count].cpu_ticks = g_tasks[i].cpu_ticks + task_live_tick_delta(g_tasks[i]);
         out[count].name = g_tasks[i].name.view();
         ++count;
     }
     g_sched_lock.release();
     return total;
+}
+
+auto sched::snapshot_task(u64 task_id, task_snapshot* out) -> bool {
+    if (out != null) {
+        *out = {};
+    }
+
+    g_sched_lock.acquire();
+    for (usize i = 0; i < g_task_count; ++i) {
+        if (g_tasks[i].id != task_id || g_tasks[i].state == task_state::terminated) {
+            continue;
+        }
+
+        if (out != null) {
+            out->id = g_tasks[i].id;
+            out->state = g_tasks[i].state;
+            out->cpu = task_display_cpu(g_tasks[i]);
+            out->cpu_ticks = g_tasks[i].cpu_ticks + task_live_tick_delta(g_tasks[i]);
+            out->name = g_tasks[i].name.view();
+        }
+        g_sched_lock.release();
+        return true;
+    }
+
+    g_sched_lock.release();
+    return false;
 }
 
 void sched::sleep(u64 ticks) {
@@ -866,6 +930,10 @@ auto sched::terminate_task(u64 task_id) -> bool {
         g_tasks[i].state = task_state::terminated;
         g_tasks[i].wake_tick = 0;
         g_tasks[i].affinity_cpu = SCHED_CPU_NONE;
+        if (g_tasks[i].current_cpu == SCHED_CPU_NONE) {
+            g_tasks[i].last_cpu = SCHED_CPU_NONE;
+            g_tasks[i].run_tick_start = 0;
+        }
         if (g_tasks[i].current_cpu == SCHED_CPU_NONE && g_tasks[i].user_data != null) {
             terminated_ctx = static_cast<process::process_task_context*>(g_tasks[i].user_data);
             g_tasks[i].user_data = null;
@@ -889,7 +957,6 @@ auto sched::terminate_task(u64 task_id) -> bool {
     usize cur = cpu_current_task();
     g_tasks[cur].state = task_state::terminated;
     g_tasks[cur].affinity_cpu = SCHED_CPU_NONE;
-    g_tasks[cur].current_cpu = SCHED_CPU_NONE;
     g_tasks[cur].user_data = null;
     log::debug() << "Task terminated: " << g_tasks[cur].name.c_str();
     g_sched_lock.release();
@@ -907,7 +974,6 @@ auto sched::detach_current_task() -> void* {
         g_tasks[cur].user_data = null;
         g_tasks[cur].state     = task_state::terminated;
         g_tasks[cur].affinity_cpu = SCHED_CPU_NONE;
-        g_tasks[cur].current_cpu = SCHED_CPU_NONE;
     }
     g_sched_lock.release();
     return prev;
@@ -921,14 +987,15 @@ void sched::dump_tasks() {
             (g_tasks[i].state == task_state::running) ? "running" :
             (g_tasks[i].state == task_state::blocked) ? "blocked" :
             (g_tasks[i].state == task_state::terminated) ? "terminated" : "unknown";
-        if (g_tasks[i].current_cpu == SCHED_CPU_NONE) {
+        const u32 display_cpu = task_display_cpu(g_tasks[i]);
+        if (display_cpu == SCHED_CPU_NONE) {
             log::info() << "  [" << static_cast<unsigned long long>(g_tasks[i].id)
                         << "] " << g_tasks[i].name.c_str() << " - " << state
                         << " cpu=-";
         } else {
             log::info() << "  [" << static_cast<unsigned long long>(g_tasks[i].id)
                         << "] " << g_tasks[i].name.c_str() << " - " << state
-                        << " cpu=" << static_cast<unsigned long long>(g_tasks[i].current_cpu);
+                        << " cpu=" << static_cast<unsigned long long>(display_cpu);
         }
     }
 }

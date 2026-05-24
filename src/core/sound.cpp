@@ -18,6 +18,9 @@ namespace sound {
 
 static const sound_driver_t* s_active = null;
 static bool s_initialised = false;
+static u8 s_volume_left = 255;
+static u8 s_volume_right = 255;
+static u32 s_requested_sample_rate = 0;
 
 void register_driver(const sound_driver_t* drv) {
     if (s_active && s_initialised) {
@@ -30,6 +33,10 @@ void register_driver(const sound_driver_t* drv) {
 
 auto active_driver() -> const sound_driver_t* {
     return s_active;
+}
+
+bool initialized() {
+    return s_initialised;
 }
 
 bool init_active() {
@@ -48,11 +55,16 @@ void shutdown_active() {
     }
     s_initialised = false;
     s_active = null;
+    s_requested_sample_rate = 0;
 }
 
 bool set_sample_rate(u32 rate_hz) {
     if (!s_active || !s_initialised || !s_active->set_sample_rate) return false;
-    return s_active->set_sample_rate(rate_hz);
+    if (!s_active->set_sample_rate(rate_hz)) {
+        return false;
+    }
+    s_requested_sample_rate = rate_hz;
+    return true;
 }
 
 bool play(const u8* samples, u32 length, sound_format fmt) {
@@ -72,8 +84,23 @@ bool is_playing() {
 }
 
 void set_volume(u8 left, u8 right) {
+    s_volume_left = left;
+    s_volume_right = right;
     if (s_active && s_initialised && s_active->set_volume) {
         s_active->set_volume(left, right);
+    }
+}
+
+auto sample_rate() -> u32 {
+    return s_requested_sample_rate;
+}
+
+void volume(u8* out_left, u8* out_right) {
+    if (out_left != null) {
+        *out_left = s_volume_left;
+    }
+    if (out_right != null) {
+        *out_right = s_volume_right;
     }
 }
 
@@ -201,6 +228,7 @@ static void mix_do_submit() {
     }
 
     /* Submit the mixed stereo buffer to hardware at the fixed output rate */
+    s_requested_sample_rate = MIX_OUTPUT_RATE;
     s_active->set_sample_rate(MIX_OUTPUT_RATE);
     s_active->play(reinterpret_cast<const u8*>(s_mix_out),
                    out_frames * 4u, sound_format::signed_16);
@@ -244,6 +272,16 @@ bool mix_is_playing(int ch_idx) {
         return false;
     }
     return true;
+}
+
+auto active_mix_channels() -> u32 {
+    u32 count = 0;
+    for (u32 i = 0; i < MIX_CHANNELS; ++i) {
+        if (mix_is_playing(static_cast<int>(i))) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 void mix_update() {

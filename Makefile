@@ -87,6 +87,7 @@ LDFLAGS += -T src/boot/linker.ld
 # Source files
 CXX_SRCS := $(wildcard src/boot/*.cpp)
 CXX_SRCS += $(wildcard src/core/*.cpp)
+CXX_SRCS += $(wildcard src/core/kobj/*.cpp)
 CXX_SRCS += $(wildcard src/fs/*.cpp)
 CXX_SRCS += $(wildcard src/net/*.cpp)
 CXX_SRCS += $(wildcard src/drivers/*.cpp)

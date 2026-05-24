@@ -130,6 +130,44 @@ void insert(ipv4_address ip, mac_address mac) {
     s_cache_lock.release();
 }
 
+auto cache_entry_count() -> usize {
+    if (!s_initialised) init();
+
+    usize count = 0;
+    s_cache_lock.acquire();
+    for (usize i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+        if (s_cache[i].valid) {
+            ++count;
+        }
+    }
+    s_cache_lock.release();
+    return count;
+}
+
+bool cache_entry(usize index, cache_entry_info* out_entry) {
+    if (out_entry == null) {
+        return false;
+    }
+    if (!s_initialised) init();
+
+    usize visible = 0;
+    s_cache_lock.acquire();
+    for (usize i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+        if (!s_cache[i].valid) {
+            continue;
+        }
+        if (visible == index) {
+            out_entry->ip = s_cache[i].ip;
+            out_entry->mac = s_cache[i].mac;
+            s_cache_lock.release();
+            return true;
+        }
+        ++visible;
+    }
+    s_cache_lock.release();
+    return false;
+}
+
 bool observe_frame(net_device* dev, const void* frame, u32 frame_length) {
     if (!s_initialised) init();
 

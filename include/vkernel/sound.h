@@ -67,6 +67,7 @@ void register_driver(const sound_driver_t* drv);
 
 /* Return the currently active sound driver (may be null). */
 auto active_driver() -> const sound_driver_t*;
+bool initialized();
 
 /* Convenience wrappers that go through the active driver (no-op if none). */
 bool init_active();
@@ -76,6 +77,9 @@ bool play(const u8* samples, u32 length, sound_format fmt);
 void stop();
 bool is_playing();
 void set_volume(u8 left, u8 right);
+auto sample_rate() -> u32;
+void volume(u8* out_left, u8* out_right);
+auto active_mix_channels() -> u32;
 
 /* ---- Software mixer ----
  *

@@ -16,10 +16,13 @@
 #include "scheduler.h"
 #include "sound.h"
 #include "process.h"
+#include "driver.h"
 #include "kobj.h"
+#include "kobj/detail.h"
 #include "vk.h"
 #include "process_internal.h"
 #include "virtual_memory.h"
+#include "arch/x86_64/arch.h"
 
 namespace vk {
 namespace kernel_api {
@@ -37,6 +40,7 @@ static void route_putc(char c);
 static void route_puts(const char* str);
 static auto route_stdio_write(const char* buf, vk_usize len) -> vk_usize;
 static auto dequeue_ascii_key(process::process_task_context* ctx) -> char;
+static void copy_cstr(char* out, usize out_cap, const char* src);
 
 /* Named statics keep vk_api_t entries addressable without trampolines. */
 
@@ -474,6 +478,20 @@ static vk_u32 stub_ticks_per_sec() {
     return SCHED_TICK_HZ;
 }
 
+static void copy_cstr(char* out, usize out_cap, const char* src) {
+    if (out == null || out_cap == 0) {
+        return;
+    }
+    usize index = 0;
+    if (src != null) {
+        while (src[index] != '\0' && index + 1 < out_cap) {
+            out[index] = src[index];
+            ++index;
+        }
+    }
+    out[index] = '\0';
+}
+
 static vk_usize stub_kobj_rpc(const char* req_json, char* out, vk_usize out_cap) {
     if (out == null || out_cap == 0) return 0;
     static usize s_kobj_trace_budget = 64;
@@ -486,6 +504,114 @@ static vk_usize stub_kobj_rpc(const char* req_json, char* out, vk_usize out_cap)
     vk_usize len = 0;
     while (len < out_cap && out[len] != '\0') ++len;
     return len;
+}
+
+static int stub_kobj_query(const char* path,
+                           char* out_value,
+                           vk_usize out_value_cap,
+                           vk_kobj_node_info_t* out_info) {
+    if (out_value != null && out_value_cap > 0) {
+        out_value[0] = '\0';
+    }
+    if (out_info != null) {
+        *out_info = {};
+    }
+
+    kobj::KVal value {};
+    kobj::KNodeInfo info {};
+    if (!kobj::kquery(path, &value, &info)) {
+        return 0;
+    }
+
+    if (out_info != null) {
+        copy_cstr(out_info->name, sizeof(out_info->name), info.name.c_str());
+        copy_cstr(out_info->unit, sizeof(out_info->unit), info.unit.c_str());
+        out_info->type = static_cast<vk_u32>(info.type);
+        out_info->readable = info.readable ? 1u : 0u;
+        out_info->writable = info.writable ? 1u : 0u;
+        out_info->volatile_node = info.volatile_node ? 1u : 0u;
+        out_info->range_min = info.range_min;
+        out_info->range_max = info.range_max;
+        out_info->enum_count = info.enum_count;
+        for (vk_u32 i = 0; i < info.enum_count && i < VK_KOBJ_ENUM_MAX; ++i) {
+            copy_cstr(out_info->enum_labels[i],
+                      sizeof(out_info->enum_labels[i]),
+                      info.enum_labels[i]);
+        }
+    }
+
+    if (out_value != null && out_value_cap > 0 && info.readable) {
+        kobj::kval_render(value, kobj::resolve(path), out_value, out_value_cap);
+    }
+    return 1;
+}
+
+static vk_usize stub_kobj_list(const char* path, vk_kobj_child_t* out_items, vk_usize max_items) {
+    kobj::KChildInfo items[64] {};
+    const usize total = kobj::klist(path, items, sizeof(items) / sizeof(items[0]));
+    if (out_items == null || max_items == 0) {
+        return total;
+    }
+    const usize limit = total < static_cast<usize>(max_items) ? total : static_cast<usize>(max_items);
+
+    for (usize i = 0; i < limit; ++i) {
+        copy_cstr(out_items[i].name, sizeof(out_items[i].name), items[i].name.c_str());
+        out_items[i].type = static_cast<vk_u32>(items[i].type);
+    }
+    return total;
+}
+
+static int stub_kobj_set_value(const char* path, const char* value) {
+    if (path == null || value == null) {
+        return 0;
+    }
+
+    kobj::KNodeInfo info {};
+    if (!kobj::kinfo(path, &info) || !info.writable) {
+        return 0;
+    }
+
+    kobj::KVal set_value {};
+    if (info.type == kobj::KTag::U64) {
+        u64 parsed = 0;
+        if (!kobj::detail::parse_u64_segment(value, kobj::detail::cstrlen(value), &parsed)) {
+            return 0;
+        }
+        set_value = kobj::KVal::from_u64(parsed);
+    } else if (info.type == kobj::KTag::Bool) {
+        const bool parsed = (value[0] == '1' && value[1] == '\0')
+            || (value[0] == 't' && value[1] == 'r' && value[2] == 'u' && value[3] == 'e' && value[4] == '\0')
+            || (value[0] == 'y' && value[1] == 'e' && value[2] == 's' && value[3] == '\0');
+        set_value = kobj::KVal::from_bool(parsed);
+    } else if (info.type == kobj::KTag::Str) {
+        set_value = kobj::KVal::from_str(value);
+    } else if (info.type == kobj::KTag::Enum) {
+        for (u32 i = 0; i < info.enum_count; ++i) {
+            kobj::KStr label {};
+            label.set(info.enum_labels[i]);
+            if (label.eq(value)) {
+                set_value = kobj::KVal::from_enum(i);
+                return kobj::kset(path, set_value) ? 1 : 0;
+            }
+        }
+        return 0;
+    } else {
+        return 0;
+    }
+
+    return kobj::kset(path, set_value) ? 1 : 0;
+}
+
+static int stub_driver_load(const char* name) {
+    return name != null ? driver::load(name) : -1;
+}
+
+static int stub_driver_unload(const char* name) {
+    return name != null ? driver::unload(name) : -1;
+}
+
+static void stub_reboot() {
+    arch::reboot();
 }
 
 static vk_usize stub_get_cmdline(char* out, vk_usize out_cap) {
@@ -1017,6 +1143,12 @@ void init() {
     s_api.vk_task_accepts_framebuffer_resize = stub_task_accepts_framebuffer_resize;
     s_api.vk_set_startup_window_size = stub_set_startup_window_size;
     s_api.vk_get_task_startup_window_size = stub_get_task_startup_window_size;
+    s_api.vk_kobj_query = stub_kobj_query;
+    s_api.vk_kobj_list = stub_kobj_list;
+    s_api.vk_kobj_set_value = stub_kobj_set_value;
+    s_api.vk_driver_load = stub_driver_load;
+    s_api.vk_driver_unload = stub_driver_unload;
+    s_api.vk_reboot = stub_reboot;
 
     s_api_ready = true;
 }
