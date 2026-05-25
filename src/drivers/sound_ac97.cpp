@@ -501,6 +501,11 @@ static bool ac97_is_playing() {
     return s_playing;
 }
 
+static u32 ac97_buffered_frames() {
+    ac97_refresh_playback_state();
+    return s_queued_frames;
+}
+
 static void ac97_set_volume(u8 left, u8 right) {
     /* AC'97 volume: 6-bit attenuation, 0 = max, 0x3F = min.
      * Bit 15 = mute.  Register uses 5-bit fields for L and R. */
@@ -523,6 +528,7 @@ static const sound_driver_t ac97_sound_driver = {
     .play           = ac97_play,
     .stop           = ac97_stop,
     .is_playing     = ac97_is_playing,
+    .buffered_frames = ac97_buffered_frames,
     .set_volume     = ac97_set_volume,
 };
 

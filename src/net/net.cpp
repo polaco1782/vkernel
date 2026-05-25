@@ -274,7 +274,7 @@ bool poll_packet(net_device* dev, void* packet_out, u32 packet_capacity,
     return dev->ops->poll_packet(dev, packet_out, packet_capacity, packet_length_out);
 }
 
-bool start_background_rx() {
+bool start_background_worker() {
     if (device_count() == 0) {
         return false;
     }

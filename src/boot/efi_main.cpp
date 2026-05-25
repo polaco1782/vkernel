@@ -13,6 +13,7 @@
 #include "memory.h"
 #include "fs.h"
 #include "scheduler.h"
+#include "sound.h"
 #include "input.h"
 #include "panic.h"
 #include "process.h"
@@ -275,8 +276,18 @@ auto efi_main(
         while (true) { arch::cpu_halt(); }
     });
 
+    /* Start the network background worker */
+    if(!net::start_background_worker()) {
+        log::warn() << "net: failed to start background worker";
+    }
+
+    /* Start the sound background worker */
+    if (!sound::start_background_worker()) {
+        log::warn() << "sound: failed to start background worker";
+    }
+
+    /* Configure default IPv4 settings */
     (void)net::ipv4::configure_default(DEFAULT_KERNEL_IPV4);
-    (void)net::start_background_rx();
 
     /* Launch the serial shell first so scheduler startup is visible on COM1. */
     log::info() << "Launching serial shell...";

@@ -48,6 +48,7 @@ struct sound_driver_t {
 
     /* Status */
     bool  (*is_playing)();
+    u32   (*buffered_frames)();
 
     /* Volume: 0..255 */
     void  (*set_volume)(u8 left, u8 right);
@@ -72,6 +73,7 @@ bool initialized();
 /* Convenience wrappers that go through the active driver (no-op if none). */
 bool init_active();
 void shutdown_active();
+bool start_background_worker();
 bool set_sample_rate(u32 rate_hz);
 bool play(const u8* samples, u32 length, sound_format fmt);
 void stop();
@@ -86,12 +88,14 @@ auto active_mix_channels() -> u32;
  * Maintains up to MIX_CHANNELS independent audio channels.  Each call to
  * mix_play() mixes all active channels together and submits the result to
  * the hardware driver as a single stereo 16-bit PCM buffer at
- * MIX_OUTPUT_RATE Hz.  mix_update() should be called periodically (e.g.
- * once per game tick) so that long sounds are re-submitted after the
- * hardware has finished the previous window.
+ * MIX_OUTPUT_RATE Hz.  The kernel sound worker periodically calls
+ * mix_update() so long sounds keep draining even when the caller does not
+ * poll the mixer every tick.
  */
 bool mix_play(int ch, const u8* data, u32 src_samples, sound_format fmt,
               u32 sample_rate, u8 vol_left, u8 vol_right);
+bool mix_queue_play(int ch, const u8* data, u32 src_samples, sound_format fmt,
+                    u32 sample_rate, u8 vol_left, u8 vol_right);
 void mix_stop(int ch);
 bool mix_is_playing(int ch);
 void mix_update();

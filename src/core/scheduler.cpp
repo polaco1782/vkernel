@@ -902,8 +902,11 @@ void sched::wait_for_task(u64 task_id) {
         for (usize i = 0; i < g_task_count; ++i) {
             if (g_tasks[i].id == task_id) {
                 found = true;
-                if (g_tasks[i].state == task_state::terminated)
+                if (g_tasks[i].state == task_state::terminated
+                    && g_tasks[i].current_cpu == SCHED_CPU_NONE
+                    && g_tasks[i].user_data == null) {
                     return;
+                }
                 break;
             }
         }

@@ -177,19 +177,14 @@ typedef struct vk_api {
     void (*vk_wait_task)(vk_i64 task_id);
 
     /* ---- sound ---- */
-    int  (*vk_snd_play)(const void* samples, vk_u32 length, vk_u32 format);
-    void (*vk_snd_stop)(void);
-    int  (*vk_snd_is_playing)(void);
-    int  (*vk_snd_set_sample_rate)(vk_u32 rate_hz);
-    void (*vk_snd_set_volume)(vk_u32 left, vk_u32 right);
-
-    /* ---- software mixer ---- */
     int  (*vk_snd_mix_play)(int channel, const void* data, vk_u32 num_samples,
                              vk_u32 format, vk_u32 sample_rate,
                              vk_u32 vol_left, vk_u32 vol_right);
+    int  (*vk_snd_mix_queue_play)(int channel, const void* data, vk_u32 num_samples,
+                                   vk_u32 format, vk_u32 sample_rate,
+                                   vk_u32 vol_left, vk_u32 vol_right);
     void (*vk_snd_mix_stop)(int channel);
     int  (*vk_snd_mix_is_playing)(int channel);
-    void (*vk_snd_mix_update)(void);
 
     /* ---- mouse input ---- */
     int  (*vk_poll_mouse)(vk_mouse_event_t* out);
@@ -235,7 +230,7 @@ typedef struct vk_api {
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 33ULL
+#define VK_API_VERSION 35ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;
@@ -259,7 +254,7 @@ static inline const vk_api_t* vk_get_api(void) {
     return _vk_api_ptr;
 }
 
-/* Sound format constants for vk_snd_play() / vk_snd_mix_play() */
+/* Sound format constants for mixer playback */
 #define VK_SND_FORMAT_UNSIGNED_8   0
 #define VK_SND_FORMAT_SIGNED_16    1
 #define VK_SND_FORMAT_SIGNED_16_STEREO 2
