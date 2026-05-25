@@ -81,6 +81,83 @@ static void init_configs() {
     return static_cast<u16>(header->version_ihl & 0x0F);
 }
 
+[[nodiscard]] static bool send_impl(net_device* dev, const send_params& params,
+                                    const void* payload, u16 payload_length,
+                                    bool queued) {
+    if (dev == null) {
+        return false;
+    }
+    if (payload_length > 0 && payload == null) {
+        return false;
+    }
+    if (wire::IPV4_HEADER_BYTES + payload_length > dev->mtu) {
+        log::warn() << "ipv4: payload exceeds MTU for "
+                    << dev->name.c_str()
+                    << " total="
+                    << static_cast<unsigned long long>(wire::IPV4_HEADER_BYTES + payload_length)
+                    << " mtu=" << dev->mtu;
+        return false;
+    }
+
+    const u16 total_length = static_cast<u16>(wire::IPV4_HEADER_BYTES + payload_length);
+    auto* packet_buf = static_cast<u8*>(g_kernel_heap.allocate(total_length));
+    if (packet_buf == null) {
+        log::warn() << "ipv4: failed to allocate packet buffer (" << total_length
+                    << " bytes)";
+        return false;
+    }
+
+    ipv4_address src_ip = params.src_ip;
+    if (net::ipv4_equal(src_ip, net::zero_ipv4())) {
+        if (!configured_address(dev, &src_ip)) {
+            log::warn() << "ipv4: no configured source address for "
+                        << dev->name.c_str();
+            g_kernel_heap.free(packet_buf);
+            return false;
+        }
+    }
+
+    net::mac_address dst_mac {};
+    if (!arp::resolve(dev, src_ip, params.dst_ip, &dst_mac)) {
+        g_kernel_heap.free(packet_buf);
+        return false;
+    }
+
+    auto* header = reinterpret_cast<wire::ipv4_header*>(packet_buf);
+    memory::set(header, 0, sizeof(*header));
+
+    header->version_ihl = static_cast<u8>((IPV4_VERSION << 4) | IPV4_IHL_WORDS);
+    header->dscp_ecn = 0;
+    header->total_length_be = net::bswap16(total_length);
+    header->identification_be = net::bswap16(next_identification());
+    header->flags_fragment_be = net::bswap16(IPV4_FLAG_DF);
+    header->ttl = params.ttl;
+    header->protocol = static_cast<u8>(params.proto);
+    header->src_ip = src_ip;
+    header->dst_ip = params.dst_ip;
+    header->header_checksum_be = 0;
+    header->header_checksum_be = net::bswap16(
+        net::internet_checksum(header, sizeof(*header)));
+
+    if (payload_length > 0) {
+        memory::copy(packet_buf + sizeof(*header), payload, payload_length);
+    }
+
+    const bool ok = queued
+        ? packet::queue_ethernet(dev,
+                                 dst_mac,
+                                 packet::ether_type::ipv4,
+                                 packet_buf,
+                                 total_length)
+        : packet::send_ethernet(dev,
+                                dst_mac,
+                                packet::ether_type::ipv4,
+                                packet_buf,
+                                total_length);
+    g_kernel_heap.free(packet_buf);
+    return ok;
+}
+
 } // namespace
 
 bool configure_device(net_device* dev, ipv4_address local_ip) {
@@ -235,70 +312,7 @@ bool observe_frame(net_device* dev, const void* frame, u32 frame_length) {
 
 bool send(net_device* dev, const send_params& params,
           const void* payload, u16 payload_length) {
-    if (dev == null) {
-        return false;
-    }
-    if (payload_length > 0 && payload == null) {
-        return false;
-    }
-    if (wire::IPV4_HEADER_BYTES + payload_length > dev->mtu) {
-        log::warn() << "ipv4: payload exceeds MTU for "
-                    << dev->name.c_str()
-                    << " total=" << static_cast<unsigned long long>(wire::IPV4_HEADER_BYTES + payload_length)
-                    << " mtu=" << dev->mtu;
-        return false;
-    }
-
-    const u16 total_length = static_cast<u16>(wire::IPV4_HEADER_BYTES + payload_length);
-    auto* packet_buf = static_cast<u8*>(g_kernel_heap.allocate(total_length));
-    if (packet_buf == null) {
-        log::warn() << "ipv4: failed to allocate packet buffer (" << total_length << " bytes)";
-        return false;
-    }
-
-    ipv4_address src_ip = params.src_ip;
-    if (net::ipv4_equal(src_ip, net::zero_ipv4())) {
-        if (!configured_address(dev, &src_ip)) {
-            log::warn() << "ipv4: no configured source address for "
-                        << dev->name.c_str();
-            g_kernel_heap.free(packet_buf);
-            return false;
-        }
-    }
-
-    net::mac_address dst_mac {};
-    if (!arp::resolve(dev, src_ip, params.dst_ip, &dst_mac)) {
-        g_kernel_heap.free(packet_buf);
-        return false;
-    }
-
-    auto* header = reinterpret_cast<wire::ipv4_header*>(packet_buf);
-    memory::set(header, 0, sizeof(*header));
-
-    header->version_ihl = static_cast<u8>((IPV4_VERSION << 4) | IPV4_IHL_WORDS);
-    header->dscp_ecn = 0;
-    header->total_length_be = net::bswap16(total_length);
-    header->identification_be = net::bswap16(next_identification());
-    header->flags_fragment_be = net::bswap16(IPV4_FLAG_DF);
-    header->ttl = params.ttl;
-    header->protocol = static_cast<u8>(params.proto);
-    header->src_ip = src_ip;
-    header->dst_ip = params.dst_ip;
-    header->header_checksum_be = 0;
-    header->header_checksum_be = net::bswap16(
-        net::internet_checksum(header, sizeof(*header)));
-
-    if (payload_length > 0) {
-        memory::copy(packet_buf + sizeof(*header), payload, payload_length);
-    }
-
-    const bool ok = packet::send_ethernet(dev,
-                                          dst_mac,
-                                          packet::ether_type::ipv4,
-                                          packet_buf,
-                                          total_length);
-    g_kernel_heap.free(packet_buf);
-    return ok;
+    return send_impl(dev, params, payload, payload_length, false);
 }
 
 bool send_default(const send_params& params,
@@ -309,6 +323,21 @@ bool send_default(const send_params& params,
         return false;
     }
     return send(dev, params, payload, payload_length);
+}
+
+bool queue_send(net_device* dev, const send_params& params,
+                const void* payload, u16 payload_length) {
+    return send_impl(dev, params, payload, payload_length, true);
+}
+
+bool queue_send_default(const send_params& params,
+                        const void* payload, u16 payload_length) {
+    auto* dev = net::primary_device();
+    if (dev == null) {
+        log::warn() << "ipv4: no default network device";
+        return false;
+    }
+    return queue_send(dev, params, payload, payload_length);
 }
 
 } // namespace vk::net::ipv4

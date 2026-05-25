@@ -23,7 +23,8 @@ namespace {
                                     u16 identifier,
                                     u16 sequence,
                                     const void* payload,
-                                    u16 payload_length) {
+                                    u16 payload_length,
+                                    bool queued) {
     if (dev == null) {
         return false;
     }
@@ -60,7 +61,9 @@ namespace {
         .proto = ipv4::protocol::icmp,
         .ttl = 64,
     };
-    const bool ok = ipv4::send(dev, params, packet, packet_length);
+    const bool ok = queued
+        ? ipv4::queue_send(dev, params, packet, packet_length)
+        : ipv4::send(dev, params, packet, packet_length);
     g_kernel_heap.free(packet);
     return ok;
 }
@@ -80,7 +83,8 @@ bool send_echo_request(net_device* dev,
                      identifier,
                      sequence,
                      payload,
-                     payload_length);
+                     payload_length,
+                     false);
 }
 
 bool send_echo_request_default(ipv4_address dst_ip,
@@ -137,14 +141,17 @@ bool observe_packet(net_device* dev,
                         << " seq=" << net::bswap16(echo->sequence_be)
                         << " payload=" << echo_payload_length;
 
-            (void)send_echo(dev,
-                            type::echo_reply,
-                            dst_ip,
-                            src_ip,
-                            net::bswap16(echo->identifier_be),
-                            net::bswap16(echo->sequence_be),
-                            echo_payload,
-                            echo_payload_length);
+            if (!send_echo(dev,
+                           type::echo_reply,
+                           dst_ip,
+                           src_ip,
+                           net::bswap16(echo->identifier_be),
+                           net::bswap16(echo->sequence_be),
+                           echo_payload,
+                           echo_payload_length,
+                           true)) {
+                log::warn() << "icmp: failed to queue echo reply to " << src_ip_buf;
+            }
             return true;
         }
         case type::echo_reply: {

@@ -178,6 +178,8 @@ auto find(const char* name) -> net_device*;
 auto primary_device() -> net_device*;
 bool send_packet(net_device* dev, const void* packet, u32 length);
 bool send_default(const void* packet, u32 length);
+bool queue_packet(net_device* dev, const void* packet, u32 length);
+bool queue_default(const void* packet, u32 length);
 bool poll_packet(net_device* dev, void* packet_out, u32 packet_capacity,
                  u32* packet_length_out);
 bool start_background_rx();

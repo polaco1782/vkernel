@@ -36,6 +36,11 @@ using vk::net::zero_mac;
                                  const void* payload, u32 payload_length);
 [[nodiscard]] bool send_ethernet_default(mac_address dst, ether_type type,
                                          const void* payload, u32 payload_length);
+[[nodiscard]] bool queue_ethernet(net_device* dev, mac_address dst,
+                                  ether_type type,
+                                  const void* payload, u32 payload_length);
+[[nodiscard]] bool queue_ethernet_default(mac_address dst, ether_type type,
+                                          const void* payload, u32 payload_length);
 [[nodiscard]] bool send_arp(net_device* dev, arp_operation op,
                             mac_address target_mac,
                             ipv4_address sender_ip,
@@ -47,6 +52,10 @@ using vk::net::zero_mac;
                                   mac_address target_mac,
                                   ipv4_address sender_ip,
                                   ipv4_address target_ip);
+[[nodiscard]] bool queue_arp_reply(net_device* dev,
+                                   mac_address target_mac,
+                                   ipv4_address sender_ip,
+                                   ipv4_address target_ip);
 
 } // namespace vk::net::packet
 

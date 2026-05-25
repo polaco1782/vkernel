@@ -180,10 +180,13 @@ bool observe_frame(net_device* dev, const void* frame, u32 frame_length) {
     if (dev != null &&
         parsed.operation == static_cast<u16>(packet::arp_operation::request) &&
         ipv4::owns_address(dev, parsed.target_ip)) {
-        (void)packet::send_arp_reply(dev,
+        if (!packet::queue_arp_reply(dev,
                                      parsed.sender_mac,
                                      parsed.target_ip,
-                                     parsed.sender_ip);
+                                     parsed.sender_ip)) {
+            log::warn() << "arp: failed to queue reply on "
+                        << dev->name.c_str();
+        }
     }
     return true;
 }

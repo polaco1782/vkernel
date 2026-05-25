@@ -20,10 +20,11 @@ constexpr u16 ARP_ETHERNET_HTYPE = 1;
 constexpr u8 ARP_HLEN_ETHERNET = 6;
 constexpr u8 ARP_PLEN_IPV4 = 4;
 
-} // namespace
-
-bool send_ethernet(net_device* dev, mac_address dst, ether_type type,
-                   const void* payload, u32 payload_length) {
+[[nodiscard]] static bool transmit_ethernet(net_device* dev, mac_address dst,
+                                            ether_type type,
+                                            const void* payload,
+                                            u32 payload_length,
+                                            bool queued) {
     if (dev == null) {
         return false;
     }
@@ -45,7 +46,8 @@ bool send_ethernet(net_device* dev, mac_address dst, ether_type type,
 
     auto* frame = static_cast<u8*>(g_kernel_heap.allocate(frame_length));
     if (frame == null) {
-        log::warn() << "net_packet: failed to allocate frame buffer (" << frame_length << " bytes)";
+        log::warn() << "net_packet: failed to allocate frame buffer (" << frame_length
+                    << " bytes)";
         return false;
     }
 
@@ -60,23 +62,18 @@ bool send_ethernet(net_device* dev, mac_address dst, ether_type type,
         memory::copy(frame + sizeof(wire::ethernet_header), payload, payload_length);
     }
 
-    const bool ok = net::send_packet(dev, frame, frame_length);
+    const bool ok = queued
+        ? net::queue_packet(dev, frame, frame_length)
+        : net::send_packet(dev, frame, frame_length);
     g_kernel_heap.free(frame);
     return ok;
 }
 
-bool send_ethernet_default(mac_address dst, ether_type type,
-                           const void* payload, u32 payload_length) {
-    auto* dev = net::primary_device();
-    if (dev == null) {
-        log::warn() << "net_packet: no default network device";
-        return false;
-    }
-    return send_ethernet(dev, dst, type, payload, payload_length);
-}
-
-bool send_arp(net_device* dev, arp_operation op, mac_address target_mac,
-              ipv4_address sender_ip, ipv4_address target_ip) {
+[[nodiscard]] static bool send_arp_impl(net_device* dev, arp_operation op,
+                                        mac_address target_mac,
+                                        ipv4_address sender_ip,
+                                        ipv4_address target_ip,
+                                        bool queued) {
     if (dev == null) {
         return false;
     }
@@ -95,8 +92,45 @@ bool send_arp(net_device* dev, arp_operation op, mac_address target_mac,
     const mac_address eth_dst = (op == arp_operation::request)
         ? broadcast_mac()
         : target_mac;
-    return send_ethernet(dev, eth_dst, ether_type::arp,
-                         &packet, sizeof(packet));
+    return transmit_ethernet(dev, eth_dst, ether_type::arp,
+                             &packet, sizeof(packet), queued);
+}
+
+} // namespace
+
+bool send_ethernet(net_device* dev, mac_address dst, ether_type type,
+                   const void* payload, u32 payload_length) {
+    return transmit_ethernet(dev, dst, type, payload, payload_length, false);
+}
+
+bool send_ethernet_default(mac_address dst, ether_type type,
+                           const void* payload, u32 payload_length) {
+    auto* dev = net::primary_device();
+    if (dev == null) {
+        log::warn() << "net_packet: no default network device";
+        return false;
+    }
+    return send_ethernet(dev, dst, type, payload, payload_length);
+}
+
+bool queue_ethernet(net_device* dev, mac_address dst, ether_type type,
+                    const void* payload, u32 payload_length) {
+    return transmit_ethernet(dev, dst, type, payload, payload_length, true);
+}
+
+bool queue_ethernet_default(mac_address dst, ether_type type,
+                            const void* payload, u32 payload_length) {
+    auto* dev = net::primary_device();
+    if (dev == null) {
+        log::warn() << "net_packet: no default network device";
+        return false;
+    }
+    return queue_ethernet(dev, dst, type, payload, payload_length);
+}
+
+bool send_arp(net_device* dev, arp_operation op, mac_address target_mac,
+              ipv4_address sender_ip, ipv4_address target_ip) {
+    return send_arp_impl(dev, op, target_mac, sender_ip, target_ip, false);
 }
 
 bool send_arp_request(net_device* dev, ipv4_address sender_ip,
@@ -109,6 +143,12 @@ bool send_arp_reply(net_device* dev, mac_address target_mac,
                     ipv4_address sender_ip, ipv4_address target_ip) {
     return send_arp(dev, arp_operation::reply,
                     target_mac, sender_ip, target_ip);
+}
+
+bool queue_arp_reply(net_device* dev, mac_address target_mac,
+                     ipv4_address sender_ip, ipv4_address target_ip) {
+    return send_arp_impl(dev, arp_operation::reply,
+                         target_mac, sender_ip, target_ip, true);
 }
 
 } // namespace vk::net::packet

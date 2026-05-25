@@ -16,6 +16,7 @@
 #include "arp.h"
 #include "ipv4.h"
 #include "scheduler.h"
+#include "spinlock.h"
 
 namespace vk {
 namespace net {
@@ -23,8 +24,28 @@ namespace net {
 namespace {
 
 constexpr u32 NET_RX_FRAME_BUFFER_BYTES = 2048;
+constexpr usize NET_TX_QUEUE_CAPACITY = 64;
+
+struct queued_packet {
+    net_device* dev = null;
+    u8*         buffer = null;
+    u32         length = 0;
+};
 
 static bool s_background_rx_started = false;
+static bool s_background_tx_started = false;
+static queued_packet s_tx_queue[NET_TX_QUEUE_CAPACITY];
+static usize s_tx_queue_head = 0;
+static usize s_tx_queue_tail = 0;
+static spinlock s_tx_queue_lock;
+
+[[nodiscard]] static bool tx_queue_empty() {
+    return s_tx_queue_head == s_tx_queue_tail;
+}
+
+[[nodiscard]] static bool tx_queue_full() {
+    return ((s_tx_queue_head + 1) % NET_TX_QUEUE_CAPACITY) == s_tx_queue_tail;
+}
 
 static void dispatch_frame(net_device* dev, const void* frame, u32 frame_length) {
     if (dev == null || frame == null || frame_length < wire::ETHERNET_HEADER_BYTES) {
@@ -82,6 +103,33 @@ static void background_rx_task(void*) {
         if (!any_packets) {
             sched::sleep(1);
         }
+    }
+}
+
+static void background_tx_task(void*) {
+    while (true) {
+        queued_packet entry {};
+
+        s_tx_queue_lock.acquire();
+        if (!tx_queue_empty()) {
+            entry = s_tx_queue[s_tx_queue_tail];
+            s_tx_queue[s_tx_queue_tail] = {};
+            s_tx_queue_tail = (s_tx_queue_tail + 1) % NET_TX_QUEUE_CAPACITY;
+        }
+        s_tx_queue_lock.release();
+
+        if (entry.buffer == null) {
+            sched::sleep(1);
+            continue;
+        }
+
+        if (!send_packet(entry.dev, entry.buffer, entry.length) &&
+            entry.dev != null) {
+            log::warn() << "net: TX worker failed to send packet on "
+                        << entry.dev->name.c_str()
+                        << " length=" << entry.length;
+        }
+        g_kernel_heap.free(entry.buffer);
     }
 }
 
@@ -172,6 +220,50 @@ bool send_default(const void* packet, u32 length) {
     return send_packet(dev, packet, length);
 }
 
+bool queue_packet(net_device* dev, const void* packet, u32 length) {
+    if (dev == null || packet == null || length == 0) {
+        return false;
+    }
+
+    if (!s_background_tx_started) {
+        return send_packet(dev, packet, length);
+    }
+
+    auto* buffer = static_cast<u8*>(g_kernel_heap.allocate(length));
+    if (buffer == null) {
+        log::warn() << "net: failed to allocate TX queue buffer (" << length
+                    << " bytes)";
+        return false;
+    }
+    memory::copy(buffer, packet, length);
+
+    s_tx_queue_lock.acquire();
+    if (tx_queue_full()) {
+        s_tx_queue_lock.release();
+        g_kernel_heap.free(buffer);
+        log::warn() << "net: TX queue full, dropping packet on "
+                    << dev->name.c_str()
+                    << " length=" << length;
+        return false;
+    }
+
+    s_tx_queue[s_tx_queue_head].dev = dev;
+    s_tx_queue[s_tx_queue_head].buffer = buffer;
+    s_tx_queue[s_tx_queue_head].length = length;
+    s_tx_queue_head = (s_tx_queue_head + 1) % NET_TX_QUEUE_CAPACITY;
+    s_tx_queue_lock.release();
+    return true;
+}
+
+bool queue_default(const void* packet, u32 length) {
+    auto* dev = primary_device();
+    if (dev == null) {
+        log::warn() << "net: no network device available for packet queue";
+        return false;
+    }
+    return queue_packet(dev, packet, length);
+}
+
 bool poll_packet(net_device* dev, void* packet_out, u32 packet_capacity,
                  u32* packet_length_out) {
     if (dev == null || packet_out == null || packet_capacity == 0 ||
@@ -183,22 +275,33 @@ bool poll_packet(net_device* dev, void* packet_out, u32 packet_capacity,
 }
 
 bool start_background_rx() {
-    if (s_background_rx_started) {
-        return true;
-    }
     if (device_count() == 0) {
         return false;
     }
 
-    const i64 task_id = sched::create_task("net_rx", background_rx_task, null);
-    if (task_id < 0) {
-        log::warn() << "net: failed to create background RX task";
-        return false;
+    if (!s_background_tx_started) {
+        const i64 tx_task_id = sched::create_task("net_tx", background_tx_task, null);
+        if (tx_task_id < 0) {
+            log::warn() << "net: failed to create background TX task";
+            return false;
+        }
+
+        s_background_tx_started = true;
+        log::info() << "net: background TX task started";
     }
 
-    s_background_rx_started = true;
-    log::info() << "net: background RX task started";
-    return true;
+    if (!s_background_rx_started) {
+        const i64 rx_task_id = sched::create_task("net_rx", background_rx_task, null);
+        if (rx_task_id < 0) {
+            log::warn() << "net: failed to create background RX task";
+            return false;
+        }
+
+        s_background_rx_started = true;
+        log::info() << "net: background RX task started";
+    }
+
+    return s_background_rx_started && s_background_tx_started;
 }
 
 bool background_rx_running() {

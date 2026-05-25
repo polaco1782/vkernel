@@ -37,6 +37,10 @@ bool observe_frame(net_device* dev, const void* frame, u32 frame_length);
                         const void* payload, u16 payload_length);
 [[nodiscard]] bool send_default(const send_params& params,
                                 const void* payload, u16 payload_length);
+[[nodiscard]] bool queue_send(net_device* dev, const send_params& params,
+                              const void* payload, u16 payload_length);
+[[nodiscard]] bool queue_send_default(const send_params& params,
+                                      const void* payload, u16 payload_length);
 
 } // namespace vk::net::ipv4
 
