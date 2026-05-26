@@ -2,9 +2,9 @@
 # Git ignore file
 
 # Build directories
-build/
-build_vs/
-Build_clang/
+build
+build_vs
+build_clang
 *.efi
 *.elf
 *.dis
@@ -19,11 +19,7 @@ Build_clang/
 *.dll
 *.exe
 *.pyc
-
-# Generated dependency files
-userspace/vgui/*.d
-userspace/vgui/imgui/*.d
-userspace/vgui/implot/*.d
+*.pdb
 
 # Visual Studio
 .vs/
@@ -52,13 +48,6 @@ toolchain/
 cross/
 memory/
 
-# Newlib source, build artifacts, and sysroot
-userspace/newlib/
-userspace/newlib-build/
-userspace/sysroot/
-userspace/libc/*.o
-userspace/libc/*.a
-
 # Temporary files
 *.tmp
 *.log
@@ -71,13 +60,3 @@ userspace/libc/*.a
 # Test artifacts
 tests/output/
 tests/coverage/
-
-# Shareware doom wad files (not redistributable, must be provided by user)
-doom1.wad
-doom2.wad
-doom.wad
-pak0.pak
-userspace/clownmdemu/roms/
-userspace/minimp3/tracks/
-userspace/vnes/roms/
-userspace/snes9x/roms/
