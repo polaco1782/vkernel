@@ -89,7 +89,16 @@ if exist "%MANIFEST_FILE%" del /q "%MANIFEST_FILE%"
 type nul > "%MANIFEST_FILE%"
 
 powershell -NoProfile -Command ^
-    "$buildDir = (Resolve-Path '%BUILD_DIR%').Path; $config = '%BUILD_CONFIG%'; $esp = (Resolve-Path '%ESP_VKERNEL%').Path; $manifest = Join-Path (Resolve-Path '%BUILD_DIR%').Path 'vgui_apps.txt'; $vbins = Get-ChildItem -LiteralPath $buildDir -Recurse -Filter *.vbin | Where-Object { $_.FullName -notlike '*\esp\*' -and $_.Directory.Name -ieq $config } | Sort-Object FullName -Unique; foreach ($file in $vbins) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $esp $file.Name) -Force; Write-Output ('Staged ' + $file.Name) }; $lines = $vbins | ForEach-Object { $_.Name } | Sort-Object -Unique; Set-Content -LiteralPath $manifest -Value $lines; Set-Content -LiteralPath (Join-Path $esp 'vgui_apps.txt') -Value $lines"
+    "$root = (Get-Location).Path; $config = '%BUILD_CONFIG%'; $esp = (Resolve-Path '%ESP_VKERNEL%').Path; $manifest = [System.IO.Path]::GetFullPath('%MANIFEST_FILE%');" ^
+    "function Collect-Vbins([string]$base, [int]$priority) { if (-not (Test-Path -LiteralPath $base)) { return @() }; Get-ChildItem -LiteralPath $base -Recurse -Filter *.vbin | Where-Object { $_.FullName -notlike '*\esp\*' -and $_.FullName -notlike '*\obj\*' -and $_.Directory.Name -ieq $config } | ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; Priority = $priority } } };" ^
+    "$candidates = @();" ^
+    "$candidates += Collect-Vbins (Join-Path $root 'build_clang') 0;" ^
+    "$candidates += Collect-Vbins (Join-Path $root 'build_vs') 1;" ^
+    "$userspaceRoot = Join-Path $root 'userspace';" ^
+    "if (Test-Path -LiteralPath $userspaceRoot) { $candidates += Get-ChildItem -LiteralPath $userspaceRoot -Recurse -Filter *.vbin | Where-Object { $_.FullName -match '[\\/]userspace[\\/][^\\/]+[\\/][^\\/]+\.vbin$' } | ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; Priority = 2 } } };" ^
+    "$vbins = $candidates | Sort-Object Priority, FullName | Group-Object Name | ForEach-Object { $_.Group | Select-Object -First 1 } | Sort-Object Name;" ^
+    "foreach ($file in $vbins) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $esp $file.Name) -Force; Write-Output ('Staged ' + $file.Name + ' from ' + $file.FullName) };" ^
+    "$lines = $vbins | ForEach-Object { $_.Name } | Sort-Object -Unique; Set-Content -LiteralPath $manifest -Value $lines; Set-Content -LiteralPath (Join-Path $esp 'vgui_apps.txt') -Value $lines"
 if errorlevel 1 (
     echo Error: failed to stage userspace .vbin files
     exit /b 1

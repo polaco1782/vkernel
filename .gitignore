@@ -4,6 +4,7 @@
 # Build directories
 build/
 build_vs/
+Build_clang/
 *.efi
 *.elf
 *.dis
