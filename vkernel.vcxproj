@@ -94,26 +94,43 @@
     <ClCompile Include="src\fs\ramfs.cpp" />
     <ClCompile Include="src\fs\uefi_loader.cpp" />
     <ClCompile Include="src\core\elf.cpp" />
+    <ClCompile Include="src\core\kernel_debug.cpp" />
     <ClCompile Include="src\core\kernel_api.cpp" />
-    <ClCompile Include="src\core\kobj.cpp" />
+    <ClCompile Include="src\core\kobj\core.cpp" />
+    <ClCompile Include="src\core\kobj\devices.cpp" />
+    <ClCompile Include="src\core\kobj\driver.cpp">
+      <ObjectFileName>$(IntDir)kobj_driver.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="src\core\kobj\network.cpp" />
+    <ClCompile Include="src\core\kobj\proc.cpp" />
+    <ClCompile Include="src\core\kobj\rpc.cpp" />
     <ClCompile Include="src\core\pe.cpp" />
     <ClCompile Include="src\core\process.cpp" />
+    <ClCompile Include="src\core\process_debug.cpp" />
     <ClCompile Include="src\core\scheduler.cpp" />
     <ClCompile Include="src\core\input.cpp" />
     <ClCompile Include="src\core\console.cpp" />
     <ClCompile Include="src\core\uefi.cpp" />
     <ClCompile Include="src\core\memory.cpp" />
+    <ClCompile Include="src\core\virtual_memory.cpp" />
     <ClCompile Include="src\core\driver.cpp" />
     <ClCompile Include="src\core\sound.cpp" />
     <ClCompile Include="src\arch\x86_64\arch_init.cpp" />
+    <ClCompile Include="src\arch\x86_64\exception_debug.cpp" />
     <ClCompile Include="src\core\acpi.cpp" />
     <ClCompile Include="src\core\block.cpp" />
     <ClCompile Include="src\core\log.cpp" />
     <ClCompile Include="src\core\pci.cpp" />
     <ClCompile Include="src\arch\x86_64\smp.cpp" />
+    <ClCompile Include="src\net\arp.cpp" />
+    <ClCompile Include="src\net\icmp.cpp" />
+    <ClCompile Include="src\net\ipv4.cpp" />
+    <ClCompile Include="src\net\net.cpp" />
+    <ClCompile Include="src\net\net_packet.cpp" />
     <ClCompile Include="src\drivers\bochs_vbe.cpp" />
     <ClCompile Include="src\drivers\sound_ac97.cpp" />
     <ClCompile Include="src\drivers\virtio_blk.cpp" />
+    <ClCompile Include="src\drivers\virtio_net.cpp" />
     <ClCompile Include="src\arch\x86_64\ap_trampoline_msvc.cpp" />
   </ItemGroup>
   <ItemGroup>
