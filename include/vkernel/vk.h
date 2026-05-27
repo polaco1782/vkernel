@@ -138,6 +138,7 @@ typedef struct vk_api {
 
     /* ---- memory ---- */
     void* (*vk_malloc)(vk_usize size);
+    void* (*vk_malloc_executable)(vk_usize size);
     void  (*vk_free)(void* ptr);
 
     /* ---- filesystem / ramfs ---- */
@@ -230,7 +231,7 @@ typedef struct vk_api {
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 35ULL
+#define VK_API_VERSION 36ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

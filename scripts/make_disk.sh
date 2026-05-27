@@ -209,12 +209,17 @@ rm -f "${manifest_file}"
 copy_into_esp "userspace/doom/doom1.wad" "doom1.wad"
 copy_into_esp "userspace/doom/doom2.wad" "doom2.wad"
 copy_into_esp "userspace/shell/shell_exec.txt" "shell.txt"
+copy_into_esp "userspace/vgui/vgui_plugins.txt" "vgui_plugins.txt"
 copy_into_esp "userspace/MODPlay/makemove.mod" "makemove.mod"
 copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "UNREALPM.S3M"
 copy_into_esp "userspace/rotozoom/head.bmp" "head.bmp"
 copy_into_esp "userspace/quake/pak0.pak" "id1/pak0.pak"
 copy_into_esp "userspace/quake/progs.dat" "zeusbot/progs.dat"
 copy_into_esp "userspace/quake/zeus_pak0.pak" "zeusbot/pak0.pak"
+for plugin in userspace/vgui/runtime_plugins/*.vplg; do
+    [ -f "${plugin}" ] || continue
+    copy_into_esp "${plugin}" "$(basename "${plugin}")"
+done
 
 for extra in "$@"; do
     [ -f "${extra}" ] || continue

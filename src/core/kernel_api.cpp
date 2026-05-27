@@ -88,12 +88,13 @@ static void free_process_allocation_pages(void* ptr, usize size) {
     g_phys_alloc.free_pages(reinterpret_cast<phys_addr>(ptr), page_count);
 }
 
-static void* stub_malloc(vk_usize size) {
+static void* stub_malloc_internal(vk_usize size, bool executable) {
     if (size == 0) {
         return null;
     }
 
-    log::debug() << "malloc: req size=" << static_cast<unsigned long long>(size);
+    log::debug() << (executable ? "malloc_exec" : "malloc")
+                 << ": req size=" << static_cast<unsigned long long>(size);
 
     auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
     if (ctx == null) {
@@ -122,7 +123,8 @@ static void* stub_malloc(vk_usize size) {
         virt_addr virt = 0;
         if (!vm::allocate_user_heap(ctx->address_space,
                                     allocated,
-                                    vm::MAP_WRITABLE | vm::MAP_USER,
+                                    vm::MAP_WRITABLE | vm::MAP_USER
+                                        | (executable ? vm::MAP_EXECUTABLE : 0),
                                     &phys,
                                     &virt)) {
             return null;
@@ -171,11 +173,20 @@ static void* stub_malloc(vk_usize size) {
     rec->next = ctx->allocations;
     ctx->allocations = rec;
 
-    log::debug() << "malloc: allocated " << static_cast<unsigned long long>(allocated)
+    log::debug() << (executable ? "malloc_exec" : "malloc")
+                 << ": allocated " << static_cast<unsigned long long>(allocated)
                  << " bytes at " << user
                  << " (raw: " << raw << ", phys: " << (from_phys ? raw : 0) << ")";
 
     return rec->user_ptr;
+}
+
+static void* stub_malloc(vk_usize size) {
+    return stub_malloc_internal(size, false);
+}
+
+static void* stub_malloc_executable(vk_usize size) {
+    return stub_malloc_internal(size, true);
 }
 
 static void stub_free(void* ptr) {
@@ -1064,6 +1075,7 @@ void init() {
     s_api.vk_try_getc = route_try_getc;
     /* memory */
     s_api.vk_malloc = stub_malloc;
+    s_api.vk_malloc_executable = stub_malloc_executable;
     s_api.vk_free = stub_free;
     /* filesystem */
     s_api.vk_file_exists = stub_file_exists;

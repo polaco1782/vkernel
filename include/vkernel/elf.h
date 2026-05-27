@@ -61,6 +61,8 @@ inline constexpr u32 SHT_NULL   = 0;
 inline constexpr u32 SHT_PROGBITS = 1;
 inline constexpr u32 SHT_SYMTAB = 2;
 inline constexpr u32 SHT_STRTAB = 3;
+inline constexpr u32 SHT_RELA = 4;
+inline constexpr u32 SHT_DYNSYM = 11;
 
 /* Program header flags */
 inline constexpr u32 PF_X = 0x1;   /* Execute */
@@ -72,11 +74,22 @@ inline constexpr u16 SHN_UNDEF = 0;
 
 /* Dynamic section tags */
 inline constexpr i64 DT_NULL    = 0;
+inline constexpr i64 DT_HASH    = 4;
+inline constexpr i64 DT_STRTAB  = 5;
+inline constexpr i64 DT_SYMTAB  = 6;
 inline constexpr i64 DT_RELA    = 7;
 inline constexpr i64 DT_RELASZ  = 8;
 inline constexpr i64 DT_RELAENT = 9;
+inline constexpr i64 DT_SYMENT  = 11;
+inline constexpr i64 DT_INIT_ARRAY = 25;
+inline constexpr i64 DT_FINI_ARRAY = 26;
+inline constexpr i64 DT_INIT_ARRAYSZ = 27;
+inline constexpr i64 DT_FINI_ARRAYSZ = 28;
 
 /* Relocation type */
+inline constexpr u32 R_X86_64_64 = 1;
+inline constexpr u32 R_X86_64_GLOB_DAT = 6;
+inline constexpr u32 R_X86_64_JUMP_SLOT = 7;
 inline constexpr u32 R_X86_64_RELATIVE = 8;
 
 /* ============================================================
