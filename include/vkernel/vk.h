@@ -227,11 +227,12 @@ typedef struct vk_api {
     int (*vk_driver_load)(const char* name);
     int (*vk_driver_unload)(const char* name);
     void (*vk_reboot)(void);
+    int (*vk_file_truncate)(vk_file_handle_t handle, vk_i64 length);
 
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 36ULL
+#define VK_API_VERSION 37ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;

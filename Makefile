@@ -32,9 +32,10 @@ ROTOZOOM_VBIN    := $(USERSPACE_DIR)/rotozoom/rotozoom.vbin
 VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
 SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
 CPPCOMPAT_VBIN   := $(USERSPACE_DIR)/cppcompat/cppcompat.vbin
+VKOBJ_VBIN       := $(USERSPACE_DIR)/vkobj/vkobj.vbin
 VNES_VBIN        := $(USERSPACE_DIR)/vnes/vnes.vbin
 SNES9X_VBIN      := $(USERSPACE_DIR)/snes9x/snes9x.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(QUAKE_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VNES_VBIN) $(SNES9X_VBIN)
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(QUAKE_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VKOBJ_VBIN) $(VNES_VBIN) $(SNES9X_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -254,6 +255,9 @@ $(SR_CUBE_VBIN): $(USERSPACE_DIR)/sr_cube/Makefile libc-glue
 $(CPPCOMPAT_VBIN): $(USERSPACE_DIR)/cppcompat/main.cpp $(USERSPACE_DIR)/cppcompat/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat $(_DEBUG_FLAG)
 
+$(VKOBJ_VBIN): $(USERSPACE_DIR)/vkobj/main.cpp $(USERSPACE_DIR)/vkobj/Makefile libc-glue
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkobj $(_DEBUG_FLAG)
+
 $(VNES_VBIN): $(wildcard $(USERSPACE_DIR)/vnes/*.cpp) $(USERSPACE_DIR)/vnes/Makefile libc-glue
 	@test -f $(USERSPACE_DIR)/vgui/imgui/imgui.h || \
 	    (echo "  IMGUI   Downloading Dear ImGui for vnes..."; \
@@ -285,6 +289,7 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/minimp3 clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cpp clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkobj clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vnes clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/snes9x clean

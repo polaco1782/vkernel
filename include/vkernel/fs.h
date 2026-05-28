@@ -72,6 +72,7 @@ auto file_read(file_handle handle, void* buf, usize buf_size) -> usize;
 auto file_write(file_handle handle, const void* buf, usize buf_size) -> usize;
 auto file_seek(file_handle handle, i64 offset, int whence) -> int;
 auto file_tell(file_handle handle) -> i64;
+auto file_truncate(file_handle handle, i64 length) -> int;
 auto file_remove(const char* path) -> int;
 void close_all_for_task(u64 task_id);
 

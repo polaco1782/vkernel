@@ -851,6 +851,38 @@ auto fs::file_tell(file_handle handle) -> i64 {
     return static_cast<i64>(stream->position);
 }
 
+auto fs::file_truncate(file_handle handle, i64 length) -> int {
+    auto* stream = handle_from_id(handle);
+    if (stream == null || !stream->writable || length < 0) {
+        return -1;
+    }
+
+    const usize next_size = static_cast<usize>(length);
+    if (static_cast<i64>(next_size) != length) {
+        stream->error = true;
+        return -1;
+    }
+
+    if (next_size > stream->size) {
+        if (!ensure_capacity(*stream, next_size)) {
+            stream->error = true;
+            return -1;
+        }
+        memory::set(stream->owned_buffer + stream->size, 0, next_size - stream->size);
+    }
+
+    stream->size = next_size;
+    if (stream->position > stream->size) {
+        stream->position = stream->size;
+    }
+    stream->dirty = true;
+    stream->eof = stream->position >= stream->size;
+    log::debug() << "fs: file_truncate handle=" << static_cast<unsigned long long>(handle)
+                 << " path='" << stream->path.view() << "' length="
+                 << static_cast<unsigned long long>(stream->size);
+    return 0;
+}
+
 auto fs::file_remove(const char* path) -> int {
     if (path == null) {
         log::debug() << "fs: file_remove rejected null path";

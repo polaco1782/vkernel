@@ -1051,6 +1051,10 @@ static vk_i64 stub_file_tell(vk_file_handle_t handle) {
     return fs::file_tell(static_cast<fs::file_handle>(handle));
 }
 
+static int stub_file_truncate(vk_file_handle_t handle, vk_i64 length) {
+    return fs::file_truncate(static_cast<fs::file_handle>(handle), length);
+}
+
 static int stub_file_remove(const char* path) {
     return fs::file_remove(path);
 }
@@ -1144,6 +1148,7 @@ void init() {
     s_api.vk_driver_load = stub_driver_load;
     s_api.vk_driver_unload = stub_driver_unload;
     s_api.vk_reboot = stub_reboot;
+    s_api.vk_file_truncate = stub_file_truncate;
 
     s_api_ready = true;
 }
