@@ -295,10 +295,10 @@ auto efi_main(
         vk_panic(__FILE__, __LINE__, "Failed to launch serial shell!");
     }
 
-    /* Prefer vGUI for framebuffer sessions; fall back to the classic shell. */
+    /* Prefer vkGUI for framebuffer sessions; fall back to the classic shell. */
     if (fb_info.valid) {
         log::info() << "Launching graphical shell...";
-        if (process::run("vgui.vbin", process::console_interface::graphical) < 0 &&
+        if (process::run("vkgui.vbin", process::console_interface::graphical) < 0 &&
             process::run_command_line("shell.vbin --startup", process::console_interface::graphical) < 0) {
             vk_panic(__FILE__, __LINE__, "Failed to launch graphical shell!");
         }

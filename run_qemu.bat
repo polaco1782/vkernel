@@ -28,7 +28,7 @@ set "QEMU_EXE=C:\Program Files\qemu\qemu-system-x86_64.exe"
 set "QEMU_DIR=C:\Program Files\qemu"
 set "OVMF_CODE=%QEMU_DIR%\share\edk2-x86_64-code.fd"
 set "OVMF_VARS=%QEMU_DIR%\share\edk2-i386-vars.fd"
-set "MANIFEST_FILE=%BUILD_DIR%\vgui_apps.txt"
+set "MANIFEST_FILE=%BUILD_DIR%\vkgui_apps.txt"
 set "DISKPART_CREATE_SCRIPT=%TEMP%\vkernel_diskpart_create_%RANDOM%%RANDOM%.txt"
 set "DISKPART_DETACH_SCRIPT=%TEMP%\vkernel_diskpart_detach_%RANDOM%%RANDOM%.txt"
 
@@ -98,7 +98,7 @@ powershell -NoProfile -Command ^
     "if (Test-Path -LiteralPath $userspaceRoot) { $candidates += Get-ChildItem -LiteralPath $userspaceRoot -Recurse -Filter *.vbin | Where-Object { $_.FullName -match '[\\/]userspace[\\/][^\\/]+[\\/][^\\/]+\.vbin$' } | ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; Priority = 2 } } };" ^
     "$vbins = $candidates | Sort-Object Priority, FullName | Group-Object Name | ForEach-Object { $_.Group | Select-Object -First 1 } | Sort-Object Name;" ^
     "foreach ($file in $vbins) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $esp $file.Name) -Force; Write-Output ('Staged ' + $file.Name + ' from ' + $file.FullName) };" ^
-    "$lines = $vbins | ForEach-Object { $_.Name } | Sort-Object -Unique; Set-Content -LiteralPath $manifest -Value $lines; Set-Content -LiteralPath (Join-Path $esp 'vgui_apps.txt') -Value $lines"
+    "$lines = $vbins | ForEach-Object { $_.Name } | Sort-Object -Unique; Set-Content -LiteralPath $manifest -Value $lines; Set-Content -LiteralPath (Join-Path $esp 'vkgui_apps.txt') -Value $lines"
 if errorlevel 1 (
     echo Error: failed to stage userspace .vbin files
     exit /b 1

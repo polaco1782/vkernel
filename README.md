@@ -36,7 +36,7 @@ heap, and shared framebuffer mappings.
 | Kernel API (`vk_api_t`, ABI v28) | Working |
 | newlib-backed userspace libc | Working |
 | Keyboard, mouse, and serial input | Working |
-| vGUI compositor/window manager | Working |
+| vkGUI compositor/window manager | Working |
 | KObj typed kernel object tree | Working; JSON RPC from userspace |
 | Ports and demos | Doom, Quake, ClownMDEmu, MOD, MP3, raytracer, rotozoom, cube |
 | IPC | Not implemented |
@@ -46,7 +46,7 @@ heap, and shared framebuffer mappings.
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                 Userspace programs (.vbin ELF64)                │
-│  shell  vgui  hello  doom  quake  clownmdemu  modplay  minimp3  │
+│  shell  vkgui  hello  doom  quake  clownmdemu  modplay  minimp3  │
 │  raytracer  rotozoom  sr_cube  framebuffer demos  cppcompat     │
 │                                                                 │
 │  Runs in ring 0, but each process has its own CR3/address space │
@@ -134,7 +134,7 @@ userspace/               Git submodule with libc, apps, ports, demos
     libc/                   newlib syscall glue and CRT
     include/vk.h            libc-friendly API wrapper
     shell/                  Interactive shell
-    vgui/                   Dear ImGui shell/window manager
+    vkgui/                   Dear ImGui shell/window manager
     doom/, quake/           Game ports through vk_api_t shims
     clownmdemu/             Sega Mega Drive emulator port
     MODPlay/, minimp3/      Audio demos
@@ -156,7 +156,7 @@ userspace/               Git submodule with libc, apps, ports, demos
    and the scheduler.
 5. `virtio_blk` is loaded, the FAT32 boot filesystem is mounted, and `ac97` is
    loaded if present.
-6. `shell.vbin` and `vgui.vbin` are launched, then the scheduler takes over.
+6. `shell.vbin` and `vkgui.vbin` are launched, then the scheduler takes over.
 
 ## Virtual Memory
 
@@ -192,7 +192,7 @@ the filesystem facade:
 | Ramfs fallback | Read-only fallback if FAT32 is unavailable |
 
 `scripts/make_disk.sh` stages all built `.vbin` files into `\EFI\vkernel`,
-generates `vgui_apps.txt`, and copies runtime assets such as Doom WADs, Quake
+generates `vkgui_apps.txt`, and copies runtime assets such as Doom WADs, Quake
 base data under `id1/`, Zeusbot mod data under `zeusbot/`, MOD/S3M files, MP3
 tracks, bitmaps, and emulator ROMs when present.
 
@@ -217,14 +217,14 @@ There are no syscall instructions yet; the ABI is a function-pointer table.
 
 `VK_API_VERSION` is currently `28`.
 
-## vGUI
+## vkGUI
 
-`vgui.vbin` is the graphical shell. It uses Dear ImGui and a small
+`vkgui.vbin` is the graphical shell. It uses Dear ImGui and a small
 `imgui_impl_vk` backend over the kernel framebuffer/compositor API.
 
 Current panels and features:
 
-- Launch menu populated from `vgui_apps.txt`
+- Launch menu populated from `vkgui_apps.txt`
 - Window manager for graphical `.vbin` tasks
 - Per-window framebuffer routing and input routing
 - Console log window
@@ -240,7 +240,7 @@ The top-level build downloads Dear ImGui automatically if it is missing.
 | Binary | Description |
 |---|---|
 | `shell.vbin` | Interactive command shell |
-| `vgui.vbin` | Dear ImGui graphical shell/window manager |
+| `vkgui.vbin` | Dear ImGui graphical shell/window manager |
 | `hello.vbin` | Runtime, file, and stdio smoke test |
 | `framebuffer.vbin` | Direct framebuffer pixel demo |
 | `framebuffer_text.vbin` | Text rendering into a framebuffer |
@@ -322,7 +322,7 @@ make distclean        # Also remove generated sysroot/newlib state
 ```
 
 `make userspace` builds the libc glue and calls `scripts/setup_newlib.sh` if the
-newlib sysroot is missing. The vGUI build calls `userspace/vgui/setup_imgui.sh`
+newlib sysroot is missing. The vkGUI build calls `userspace/vkgui/setup_imgui.sh`
 if Dear ImGui has not been staged yet.
 
 ## Run
@@ -427,7 +427,7 @@ until ring transitions and real syscalls exist.
 before `ExitBootServices`, but normal runtime file access goes through the
 mounted FAT32 volume when available.
 
-**Graphical task routing.** vGUI launches graphical apps with private backing
+**Graphical task routing.** vkGUI launches graphical apps with private backing
 buffers, then asks the kernel to remap each task framebuffer into the
 compositor shared region and routes keyboard/mouse events to the focused task.
 
@@ -446,7 +446,7 @@ the graphical framebuffer. The log route can still be changed through KObj.
 
 The Quake base data is staged as `id1/pak0.pak`, and the Zeusbot mod is staged
 as `zeusbot/progs.dat`. Launch it from the shell as `quake.vbin -game zeusbot`,
-or start `quake_zeusbot.vbin` from vGUI.
+or start `quake_zeusbot.vbin` from vkGUI.
 
 ## Compiler Requirements
 

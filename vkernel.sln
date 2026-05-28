@@ -20,7 +20,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "raytracer", "userspace\rayt
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "rotozoom", "userspace\rotozoom\rotozoom.vcxproj", "{C7D8E9F0-A123-4B56-8CDE-F0123456789A}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vgui", "userspace\vgui\vgui.vcxproj", "{B234C5D6-E7F8-4901-ABCD-23456789ABCD}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vkgui", "userspace\vkgui\vkgui.vcxproj", "{B234C5D6-E7F8-4901-ABCD-23456789ABCD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

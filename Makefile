@@ -29,13 +29,13 @@ MODPLAY_VBIN    := $(USERSPACE_DIR)/MODPlay/modplay.vbin
 CLOWNMDEMU_VBIN := $(USERSPACE_DIR)/clownmdemu/clownmdemu.vbin
 MINIMP3_VBIN    := $(USERSPACE_DIR)/minimp3/minimp3.vbin
 ROTOZOOM_VBIN    := $(USERSPACE_DIR)/rotozoom/rotozoom.vbin
-VGUI_VBIN        := $(USERSPACE_DIR)/vgui/vgui.vbin
+VKGUI_VBIN        := $(USERSPACE_DIR)/vkgui/vkgui.vbin
 SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
 CPPCOMPAT_VBIN   := $(USERSPACE_DIR)/cppcompat/cppcompat.vbin
 VKOBJ_VBIN       := $(USERSPACE_DIR)/vkobj/vkobj.vbin
 VNES_VBIN        := $(USERSPACE_DIR)/vnes/vnes.vbin
 SNES9X_VBIN      := $(USERSPACE_DIR)/snes9x/snes9x.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(QUAKE_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VKOBJ_VBIN) $(VNES_VBIN) $(SNES9X_VBIN)
+USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(QUAKE_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VKGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VKOBJ_VBIN) $(VNES_VBIN) $(SNES9X_VBIN)
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -242,12 +242,12 @@ $(MINIMP3_VBIN): $(USERSPACE_DIR)/minimp3/Makefile libc-glue
 $(ROTOZOOM_VBIN): $(USERSPACE_DIR)/rotozoom/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/rotozoom CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
 
-# vgui requires ImGui to be downloaded first (run bash userspace/vgui/setup_imgui.sh)
-$(VGUI_VBIN): $(wildcard $(USERSPACE_DIR)/vgui/*.cpp) $(USERSPACE_DIR)/vgui/Makefile libc-glue
-	@test -f $(USERSPACE_DIR)/vgui/imgui/imgui.h || \
-	    (echo "  IMGUI   Downloading Dear ImGui for vgui..."; \
-	     bash $(USERSPACE_DIR)/vgui/setup_imgui.sh)
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui $(_DEBUG_FLAG)
+# vkgui requires ImGui to be downloaded first (run bash userspace/vkgui/setup_imgui.sh)
+$(VKGUI_VBIN): $(wildcard $(USERSPACE_DIR)/vkgui/*.cpp) $(USERSPACE_DIR)/vkgui/Makefile libc-glue
+	@test -f $(USERSPACE_DIR)/vkgui/imgui/imgui.h || \
+	    (echo "  IMGUI   Downloading Dear ImGui for vkgui..."; \
+	     bash $(USERSPACE_DIR)/vkgui/setup_imgui.sh)
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkgui $(_DEBUG_FLAG)
 
 $(SR_CUBE_VBIN): $(USERSPACE_DIR)/sr_cube/Makefile libc-glue
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
@@ -259,9 +259,9 @@ $(VKOBJ_VBIN): $(USERSPACE_DIR)/vkobj/main.cpp $(USERSPACE_DIR)/vkobj/Makefile l
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkobj $(_DEBUG_FLAG)
 
 $(VNES_VBIN): $(wildcard $(USERSPACE_DIR)/vnes/*.cpp) $(USERSPACE_DIR)/vnes/Makefile libc-glue
-	@test -f $(USERSPACE_DIR)/vgui/imgui/imgui.h || \
+	@test -f $(USERSPACE_DIR)/vkgui/imgui/imgui.h || \
 	    (echo "  IMGUI   Downloading Dear ImGui for vnes..."; \
-	     bash $(USERSPACE_DIR)/vgui/setup_imgui.sh)
+	     bash $(USERSPACE_DIR)/vkgui/setup_imgui.sh)
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vnes $(_DEBUG_FLAG)
 
 $(SNES9X_VBIN): $(USERSPACE_DIR)/snes9x/Makefile libc-glue
@@ -290,7 +290,7 @@ clean:
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cpp clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkobj clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vgui clean
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkgui clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vnes clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/snes9x clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube clean
