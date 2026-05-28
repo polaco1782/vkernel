@@ -482,7 +482,7 @@ auto attach_lines_from_map(process_task_context* ctx,
     const char* map_end = cursor + map_size;
 
     string_view header;
-    if (!next_line(cursor, map_end, &header) || !header.equals(string_view("vklines1"))) {
+    if (!next_line(cursor, map_end, &header) || !header.compare(string_view("vklines1"))) {
         return false;
     }
 

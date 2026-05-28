@@ -207,7 +207,7 @@ public:
         return true;
     }
 
-    [[nodiscard]] constexpr auto equals(string_view other) const noexcept -> bool {
+    [[nodiscard]] constexpr auto compare(string_view other) const noexcept -> bool {
         if (size_ != other.size_) {
             return false;
         }

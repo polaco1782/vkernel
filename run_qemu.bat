@@ -15,14 +15,26 @@ set "BUILD_DIR=build_vs"
 set "EFI_FILE=%BUILD_DIR%\vkernel.efi"
 set "ESP_ROOT=%BUILD_DIR%\esp"
 set "ESP_BOOT=%ESP_ROOT%\EFI\BOOT"
-set "ESP_VKERNEL=%ESP_ROOT%\EFI\vkernel"
-set "ESP_ID1=%ESP_VKERNEL%\id1"
-set "ESP_ZEUSBOT=%ESP_VKERNEL%\zeusbot"
+set "ESP_BIN=%ESP_ROOT%\bin"
+set "ESP_BIN_PLUGINS=%ESP_BIN%\plugins"
+set "ESP_BOOTDATA=%ESP_ROOT%\boot"
+set "ESP_DATA=%ESP_ROOT%\data"
+set "ESP_DATA_SHELL=%ESP_DATA%\shell"
+set "ESP_DATA_VKGUI=%ESP_DATA%\vkgui"
+set "ESP_DATA_DOOM=%ESP_DATA%\doom"
+set "ESP_DATA_QUAKE_ID1=%ESP_DATA%\quake\id1"
+set "ESP_DATA_QUAKE_ZEUSBOT=%ESP_DATA%\quake\zeusbot"
+set "ESP_DATA_MODPLAY=%ESP_DATA%\modplay"
+set "ESP_DATA_ROTOZOOM=%ESP_DATA%\rotozoom"
+set "ESP_DATA_CLOWNMDEMU=%ESP_DATA%\clownmdemu\roms"
+set "ESP_DATA_VNES=%ESP_DATA%\vnes\roms"
+set "ESP_DATA_SNES9X=%ESP_DATA%\snes9x\roms"
+set "ESP_DATA_MINIMP3=%ESP_DATA%\minimp3\tracks"
 set "BOOT_IMG=%BUILD_DIR%\vkernel_boot.vhd"
 set "NVRAM_FILE=%BUILD_DIR%\ovmf_vars.fd"
 set "BUILD_CONFIG=Debug"
 set "DEBUG_QEMU=0"
-set "DISK_MB=128"
+set "DISK_MB=512"
 set "VOLUME_LABEL=VKRN%RANDOM%"
 set "QEMU_EXE=C:\Program Files\qemu\qemu-system-x86_64.exe"
 set "QEMU_DIR=C:\Program Files\qemu"
@@ -75,9 +87,20 @@ if errorlevel 1 (
 
 if exist "%ESP_ROOT%" rmdir /s /q "%ESP_ROOT%"
 mkdir "%ESP_BOOT%" || exit /b 1
-mkdir "%ESP_VKERNEL%" || exit /b 1
-mkdir "%ESP_ID1%" || exit /b 1
-mkdir "%ESP_ZEUSBOT%" || exit /b 1
+mkdir "%ESP_BIN%" || exit /b 1
+mkdir "%ESP_BIN_PLUGINS%" || exit /b 1
+mkdir "%ESP_BOOTDATA%" || exit /b 1
+mkdir "%ESP_DATA_SHELL%" || exit /b 1
+mkdir "%ESP_DATA_VKGUI%" || exit /b 1
+mkdir "%ESP_DATA_DOOM%" || exit /b 1
+mkdir "%ESP_DATA_QUAKE_ID1%" || exit /b 1
+mkdir "%ESP_DATA_QUAKE_ZEUSBOT%" || exit /b 1
+mkdir "%ESP_DATA_MODPLAY%" || exit /b 1
+mkdir "%ESP_DATA_ROTOZOOM%" || exit /b 1
+mkdir "%ESP_DATA_CLOWNMDEMU%" || exit /b 1
+mkdir "%ESP_DATA_VNES%" || exit /b 1
+mkdir "%ESP_DATA_SNES9X%" || exit /b 1
+mkdir "%ESP_DATA_MINIMP3%" || exit /b 1
 
 copy /y "%EFI_FILE%" "%ESP_BOOT%\bootx64.efi" >nul
 if errorlevel 1 (
@@ -89,7 +112,7 @@ if exist "%MANIFEST_FILE%" del /q "%MANIFEST_FILE%"
 type nul > "%MANIFEST_FILE%"
 
 powershell -NoProfile -Command ^
-    "$root = (Get-Location).Path; $config = '%BUILD_CONFIG%'; $esp = (Resolve-Path '%ESP_VKERNEL%').Path; $manifest = [System.IO.Path]::GetFullPath('%MANIFEST_FILE%');" ^
+    "$root = (Get-Location).Path; $config = '%BUILD_CONFIG%'; $binDir = (Resolve-Path '%ESP_BIN%').Path; $manifest = [System.IO.Path]::GetFullPath('%MANIFEST_FILE%'); $manifestDest = [System.IO.Path]::GetFullPath('%ESP_DATA_VKGUI%\vkgui_apps.txt');" ^
     "function Collect-Vbins([string]$base, [int]$priority) { if (-not (Test-Path -LiteralPath $base)) { return @() }; Get-ChildItem -LiteralPath $base -Recurse -Filter *.vbin | Where-Object { $_.FullName -notlike '*\esp\*' -and $_.FullName -notlike '*\obj\*' -and $_.Directory.Name -ieq $config } | ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; Priority = $priority } } };" ^
     "$candidates = @();" ^
     "$candidates += Collect-Vbins (Join-Path $root 'build_clang') 0;" ^
@@ -97,40 +120,79 @@ powershell -NoProfile -Command ^
     "$userspaceRoot = Join-Path $root 'userspace';" ^
     "if (Test-Path -LiteralPath $userspaceRoot) { $candidates += Get-ChildItem -LiteralPath $userspaceRoot -Recurse -Filter *.vbin | Where-Object { $_.FullName -match '[\\/]userspace[\\/][^\\/]+[\\/][^\\/]+\.vbin$' } | ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; Priority = 2 } } };" ^
     "$vbins = $candidates | Sort-Object Priority, FullName | Group-Object Name | ForEach-Object { $_.Group | Select-Object -First 1 } | Sort-Object Name;" ^
-    "foreach ($file in $vbins) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $esp $file.Name) -Force; Write-Output ('Staged ' + $file.Name + ' from ' + $file.FullName) };" ^
-    "$lines = $vbins | ForEach-Object { $_.Name } | Sort-Object -Unique; Set-Content -LiteralPath $manifest -Value $lines; Set-Content -LiteralPath (Join-Path $esp 'vkgui_apps.txt') -Value $lines"
+    "foreach ($file in $vbins) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $binDir $file.Name) -Force; Write-Output ('Staged bin\' + $file.Name + ' from ' + $file.FullName) };" ^
+    "$lines = $vbins | ForEach-Object { '/bin/' + $_.Name } | Sort-Object -Unique; Set-Content -LiteralPath $manifest -Value $lines; Set-Content -LiteralPath $manifestDest -Value $lines"
 if errorlevel 1 (
     echo Error: failed to stage userspace .vbin files
     exit /b 1
 )
 
-call :copy_if_exists "userspace\doom\doom1.wad" "doom1.wad"
+call :copy_if_exists "userspace\doom\doom1.wad" "data\doom\doom1.wad"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\doom\doom2.wad" "doom2.wad"
+call :copy_if_exists "userspace\doom\doom2.wad" "data\doom\doom2.wad"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\shell\shell_exec.txt" "shell.txt"
+call :copy_if_exists "userspace\shell\shell_exec.txt" "data\shell\shell.txt"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\MODPlay\makemove.mod" "makemove.mod"
+call :copy_if_exists "userspace\vkgui\vkgui_plugins.txt" "data\vkgui\vkgui_plugins.txt"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\MODPlay\UNREALPM.S3M" "UNREALPM.S3M"
+call :copy_if_exists "userspace\MODPlay\makemove.mod" "data\modplay\makemove.mod"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\rotozoom\head.bmp" "head.bmp"
+call :copy_if_exists "userspace\MODPlay\UNREALPM.S3M" "data\modplay\UNREALPM.S3M"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\quake\pak0.pak" "id1\pak0.pak"
+call :copy_if_exists "userspace\rotozoom\head.bmp" "data\rotozoom\head.bmp"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\quake\progs.dat" "zeusbot\progs.dat"
+call :copy_if_exists "userspace\quake\pak0.pak" "data\quake\id1\pak0.pak"
 if errorlevel 1 exit /b 1
+call :copy_if_exists "userspace\quake\progs.dat" "data\quake\zeusbot\progs.dat"
+if errorlevel 1 exit /b 1
+call :copy_if_exists "userspace\quake\zeus_pak0.pak" "data\quake\zeusbot\pak0.pak"
+if errorlevel 1 exit /b 1
+
+for %%F in ("userspace\vkgui\runtime_plugins\*.vplg") do (
+    if exist "%%~fF" call :copy_if_exists "%%~fF" "bin\plugins\%%~nxF"
+    if errorlevel 1 exit /b 1
+)
+
+call :copy_if_exists "build\symbols\build\vkernel.elf.map" "boot\vkernel.elf.map"
+if errorlevel 1 exit /b 1
+call :copy_if_exists "build\symbols\build\vkernel.elf.lines" "boot\vkernel.elf.lines"
+if errorlevel 1 exit /b 1
+if exist "build\symbols\userspace" (
+    for /r "build\symbols\userspace" %%F in (*.vbin.lines) do (
+        call :copy_if_exists "%%~fF" "bin\%%~nxF"
+        if errorlevel 1 exit /b 1
+    )
+)
 
 for %%E in (bin gen smd 32x md) do (
     for %%F in ("userspace\clownmdemu\roms\*.%%E") do (
-        if exist "%%~fF" call :copy_if_exists "%%~fF" "%%~nxF"
+        if exist "%%~fF" call :copy_if_exists "%%~fF" "data\clownmdemu\roms\%%~nxF"
+        if errorlevel 1 exit /b 1
+    )
+)
+
+for %%F in ("userspace\vnes\roms\*.nes") do (
+    if exist "%%~fF" call :copy_if_exists "%%~fF" "data\vnes\roms\%%~nxF"
+    if errorlevel 1 exit /b 1
+)
+
+for %%E in (smc sfc) do (
+    for %%F in ("userspace\snes9x\roms\*.%%E") do (
+        if exist "%%~fF" call :copy_if_exists "%%~fF" "data\snes9x\roms\%%~nxF"
         if errorlevel 1 exit /b 1
     )
 )
 
 for %%F in ("userspace\minimp3\tracks\*.mp3") do (
-    if exist "%%~fF" call :copy_if_exists "%%~fF" "%%~nxF"
+    if exist "%%~fF" call :copy_if_exists "%%~fF" "data\minimp3\tracks\%%~nxF"
     if errorlevel 1 exit /b 1
+)
+
+powershell -NoProfile -Command ^
+    "$src = Join-Path (Get-Location).Path 'userspace\quake\reaperfx'; if (-not (Test-Path -LiteralPath $src)) { exit 0 }; $dst = [System.IO.Path]::GetFullPath('%ESP_ROOT%\data\quake\reaperfx'); [System.IO.Directory]::CreateDirectory($dst) | Out-Null; Copy-Item -LiteralPath (Join-Path $src '*') -Destination $dst -Recurse -Force"
+if errorlevel 1 (
+    echo Error: failed to stage userspace\quake\reaperfx
+    exit /b 1
 )
 
 powershell -NoProfile -Command "Get-Process | Where-Object { $_.ProcessName -like 'qemu-system-*' -or $_.ProcessName -like 'qemu*' } | Stop-Process -Force"
@@ -215,12 +277,15 @@ exit /b %ERRORLEVEL%
 
 :copy_if_exists
 if not exist "%~1" goto :eof
-copy /y "%~1" "%ESP_VKERNEL%\%~2" >nul
+set "COPY_DEST=%ESP_ROOT%\%~2"
+for %%I in ("%COPY_DEST%") do if not exist "%%~dpI" mkdir "%%~dpI" >nul 2>nul
+copy /y "%~1" "%COPY_DEST%" >nul
 if errorlevel 1 (
     echo Error: failed to stage %~1
     exit /b 1
 )
 echo Staged %~2
+set "COPY_DEST="
 goto :eof
 
 :detach_vhd

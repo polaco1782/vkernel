@@ -182,7 +182,7 @@ auto get_device(usize index) -> net_device* {
 auto find(const char* name) -> net_device* {
     string_view query(name);
     for (usize i = 0; i < s_device_count; ++i) {
-        if (s_devices[i].name.view().equals(query)) {
+        if (s_devices[i].name.view().compare(query)) {
             return &s_devices[i];
         }
     }

@@ -48,7 +48,7 @@ void init() {
 static auto normalize_driver_name(string_view name) -> string_view {
     if (name.size() >= 4) {
         string_view suffix(name.data() + name.size() - 4, 4);
-        if (suffix.equals(".vko")) {
+        if (suffix.compare(".vko")) {
             return string_view(name.data(), name.size() - 4);
         }
     }
@@ -56,7 +56,7 @@ static auto normalize_driver_name(string_view name) -> string_view {
 }
 
 static bool name_match(string_view query, string_view driver_name) {
-    return normalize_driver_name(query).equals(driver_name);
+    return normalize_driver_name(query).compare(driver_name);
 }
 
 void register_driver(const driver_descriptor* desc) {

@@ -86,15 +86,19 @@ struct efi_file_info {
     char16_t file_name[1];
 };
 
-static auto is_bootstrap_ramfs_name(const char* name) -> bool {
-    return string_view(name).equals(string_view("shell.vbin"))
-        || string_view(name).equals(string_view("shell.vbin.lines"))
-        || string_view(name).equals(string_view("vkernel.elf.map"))
-        || string_view(name).equals(string_view("vkernel.elf.lines"));
-}
+struct bootstrap_ramfs_entry {
+    const char* esp_path;
+    const char* ramfs_path;
+};
+
+static constexpr bootstrap_ramfs_entry k_bootstrap_ramfs_entries[] = {
+    { "\\bin\\shell.vbin", "/bin/shell.vbin" },
+    { "\\bin\\shell.vbin.lines", "/bin/shell.vbin.lines" },
+    { "\\boot\\vkernel.elf.map", "/boot/vkernel.elf.map" },
+    { "\\boot\\vkernel.elf.lines", "/boot/vkernel.elf.lines" },
+};
 
 constexpr u64 EFI_FILE_MODE_READ = 0x0000000000000001ULL;
-constexpr u64 EFI_FILE_DIRECTORY = 0x10;
 
 static char16_t s_ucs2_buf[256];
 
@@ -106,20 +110,6 @@ static auto to_ucs2(const char* ascii) -> const char16_t* {
     }
     s_ucs2_buf[i] = 0;
     return s_ucs2_buf;
-}
-
-static void ucs2_to_ascii(const char16_t* src, char* dst, usize max) {
-    usize i = 0;
-    while (i + 1 < max && src[i] != 0) {
-        const char16_t ch = src[i];
-        dst[i] = (ch >= 32 && ch < 127) ? static_cast<char>(ch) : '?';
-        ++i;
-    }
-    dst[i] = '\0';
-}
-
-static auto is_dot_entry(const char* name) -> bool {
-    return name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
 }
 
 struct efi_pool_deleter {
@@ -157,68 +147,6 @@ static auto open_esp_root() -> efi_file_protocol* {
     }
 
     return root;
-}
-
-template <typename Visitor>
-static auto for_each_directory_entry(efi_file_protocol* directory, Visitor&& visit) -> status_code {
-    if (directory == null) return status_code::invalid_param;
-
-    if (directory->set_position != null) {
-        auto status = directory->set_position(directory, 0);
-        if (status != uefi::status::success) {
-            log::error() << "Failed to rewind directory (status="
-                         << static_cast<unsigned long long>(status) << ")";
-            return status_code::error;
-        }
-    }
-
-    u8 info_buf[1024];
-    while (true) {
-        usize info_size = sizeof(info_buf);
-        auto status = directory->read(directory, &info_size, info_buf);
-        if (status != uefi::status::success) {
-            log::error() << "Failed reading ESP directory (status="
-                         << static_cast<unsigned long long>(status) << ")";
-            return status_code::error;
-        }
-        if (info_size == 0) {
-            break;
-        }
-
-        auto* file_info = reinterpret_cast<efi_file_info*>(info_buf);
-        char name[256];
-        ucs2_to_ascii(file_info->file_name, name, sizeof(name));
-        if (is_dot_entry(name)) {
-            continue;
-        }
-
-        auto result = visit(*file_info, name);
-        if (result != status_code::success) {
-            return result;
-        }
-    }
-
-    return status_code::success;
-}
-
-static auto build_esp_path(char* dst, usize max, const char* directory, const char* name) -> bool {
-    if (dst == null || directory == null || name == null || max == 0) return false;
-
-    usize out = 0;
-    for (usize i = 0; directory[i] != '\0'; ++i) {
-        if (out + 1 >= max) return false;
-        dst[out++] = directory[i];
-    }
-    if (out == 0 || (dst[out - 1] != '\\' && dst[out - 1] != '/')) {
-        if (out + 1 >= max) return false;
-        dst[out++] = '\\';
-    }
-    for (usize i = 0; name[i] != '\0'; ++i) {
-        if (out + 1 >= max) return false;
-        dst[out++] = name[i];
-    }
-    dst[out] = '\0';
-    return true;
 }
 
 } // namespace
@@ -277,57 +205,28 @@ auto loader::load_initrd() -> status_code {
 
     ramfs::init();
 
-    efi_file_ptr root(open_esp_root());
-    if (!root) {
-        return status_code::error;
-    }
-
-    constexpr const char* initrd_dir = "\\EFI\\vkernel";
-    efi_file_protocol* directory = null;
-    auto status = root->open(root.get(), &directory, to_ucs2(initrd_dir), EFI_FILE_MODE_READ, 0);
-    if (status != uefi::status::success || directory == null) {
-        log::error() << "Failed to open ESP directory: " << initrd_dir;
-        return status_code::error;
-    }
-    efi_file_ptr directory_handle(directory);
-
     usize loaded = 0;
-    auto rc = for_each_directory_entry(directory_handle.get(), [&](const efi_file_info& info, const char* name) {
-        if ((info.attribute & EFI_FILE_DIRECTORY) != 0) {
-            log::debug() << "Skipping directory: " << name;
-            return status_code::success;
-        }
-        if (!is_bootstrap_ramfs_name(name)) {
-            return status_code::success;
-        }
-
-        char path[256];
-        if (!build_esp_path(path, sizeof(path), initrd_dir, name)) {
-            log::warn() << "Skipping overlong ESP path: " << name;
-            return status_code::success;
-        }
-
-        auto result = load_file_from_esp(path);
+    for (const auto& entry : k_bootstrap_ramfs_entries) {
+        auto result = load_file_from_esp(entry.esp_path);
         if (result.data == null || result.size == 0) {
-            log::warn() << "Failed to load: " << path;
-            return status_code::success;
+            log::warn() << "Failed to load bootstrap file: " << entry.esp_path;
+            continue;
         }
 
         efi_pool_ptr file_data(result.data, efi_pool_deleter { .boot_services = uefi::g_system_table->boot_services });
-        if (ramfs::add_file_nocopy(string_view(name), file_data.get(), result.size) != status_code::success) {
-            log::warn() << "Failed to add to RAMFS: " << name;
-            return status_code::success;
+        if (ramfs::add_file_nocopy(string_view(entry.ramfs_path), file_data.get(), result.size) != status_code::success) {
+            log::warn() << "Failed to add bootstrap file to RAMFS: " << entry.ramfs_path;
+            continue;
         }
 
         (void)file_data.release();
         ++loaded;
-        log::info() << "Loaded: " << name << " ("
+        log::info() << "Loaded: " << entry.ramfs_path << " ("
                     << static_cast<unsigned long long>(result.size) << " bytes)";
-        return status_code::success;
-    });
+    }
 
     log::info() << static_cast<unsigned long long>(loaded) << " file(s) loaded from ESP";
-    return rc;
+    return status_code::success;
 }
 
 } // namespace vk

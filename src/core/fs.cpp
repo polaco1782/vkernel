@@ -146,25 +146,11 @@ static auto is_separator(char ch) -> bool {
     return ch == '/' || ch == '\\';
 }
 
-static auto is_absolute_path(string_view path) -> bool {
-    return path.size() > 0 && is_separator(path[0]);
-}
-
 static auto normalize_path(string_view path) -> string_view {
     while (path.size() >= 2 && path[0] == '.' && is_separator(path[1])) {
         path.remove_prefix(2);
     }
     return path;
-}
-
-static auto basename_view(string_view path) -> string_view {
-    usize start = 0;
-    for (usize i = 0; i < path.size(); ++i) {
-        if (is_separator(path[i])) {
-            start = i + 1;
-        }
-    }
-    return string_view(path.data() + start, path.size() - start);
 }
 
 static auto stream_data(const kernel_stream& stream) -> const u8* {
@@ -235,17 +221,7 @@ static auto try_fat_file_exists(string_view path) -> bool {
         return false;
     }
 
-    if (fat32::file_exists(path)) {
-        return true;
-    }
-
-    const auto base = basename_view(path);
-    if (!is_absolute_path(path) && !base.equals(path) && fat32::file_exists(base)) {
-        log::debug() << "fs: basename fallback exists '" << path << "' -> '" << base << "'";
-        return true;
-    }
-
-    return false;
+    return fat32::file_exists(path);
 }
 
 static auto try_fat_file_size(string_view path) -> usize {
@@ -253,22 +229,7 @@ static auto try_fat_file_size(string_view path) -> usize {
         return 0;
     }
 
-    usize size = fat32::file_size(path);
-    if (size > 0 || fat32::file_exists(path)) {
-        return size;
-    }
-
-    const auto base = basename_view(path);
-    if (!is_absolute_path(path) && !base.equals(path)) {
-        size = fat32::file_size(base);
-        if (size > 0 || fat32::file_exists(base)) {
-            log::debug() << "fs: basename fallback size '" << path << "' -> '" << base
-                         << "' size=" << static_cast<unsigned long long>(size);
-            return size;
-        }
-    }
-
-    return 0;
+    return fat32::file_size(path);
 }
 
 static auto try_fat_directory_exists(string_view path) -> bool {
@@ -276,17 +237,7 @@ static auto try_fat_directory_exists(string_view path) -> bool {
         return false;
     }
 
-    if (fat32::directory_exists(path)) {
-        return true;
-    }
-
-    const auto base = basename_view(path);
-    if (!is_absolute_path(path) && !base.equals(path) && fat32::directory_exists(base)) {
-        log::debug() << "fs: basename fallback directory '" << path << "' -> '" << base << "'";
-        return true;
-    }
-
-    return false;
+    return fat32::directory_exists(path);
 }
 
 static auto try_fat_open_file(string_view path, fat32::file_descriptor& file_out) -> bool {
@@ -294,18 +245,7 @@ static auto try_fat_open_file(string_view path, fat32::file_descriptor& file_out
         return false;
     }
 
-    if (fat32::open_file(path, file_out)) {
-        return true;
-    }
-
-    const auto base = basename_view(path);
-    if (!is_absolute_path(path) && !base.equals(path) && fat32::open_file(base, file_out)) {
-        log::debug() << "fs: basename fallback open '" << path << "' -> '" << base
-                     << "' size=" << static_cast<unsigned long long>(file_out.size);
-        return true;
-    }
-
-    return false;
+    return fat32::open_file(path, file_out);
 }
 
 static auto try_fat_read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
@@ -314,23 +254,7 @@ static auto try_fat_read_file(string_view path, kernel_heap_ptr<u8>& owned_buffe
     }
 
     owned_buffer.reset();
-    const u8* data = fat32::read_file(path, owned_buffer, size_out);
-    if (data != null) {
-        return data;
-    }
-
-    const auto base = basename_view(path);
-    if (!is_absolute_path(path) && !base.equals(path)) {
-        owned_buffer.reset();
-        data = fat32::read_file(base, owned_buffer, size_out);
-        if (data != null) {
-            log::debug() << "fs: basename fallback read '" << path << "' -> '" << base
-                         << "' size=" << static_cast<unsigned long long>(size_out);
-            return data;
-        }
-    }
-
-    return null;
+    return fat32::read_file(path, owned_buffer, size_out);
 }
 
 static auto try_fat_write_file(string_view path, const u8* data, usize size) -> bool {
@@ -338,18 +262,7 @@ static auto try_fat_write_file(string_view path, const u8* data, usize size) -> 
         return false;
     }
 
-    if (fat32::write_file(path, data, size)) {
-        return true;
-    }
-
-    const auto base = basename_view(path);
-    if (!is_absolute_path(path) && !base.equals(path) && fat32::write_file(base, data, size)) {
-        log::debug() << "fs: basename fallback write '" << path << "' -> '" << base
-                     << "' size=" << static_cast<unsigned long long>(size);
-        return true;
-    }
-
-    return false;
+    return fat32::write_file(path, data, size);
 }
 
 static auto try_fat_remove_file(string_view path) -> bool {
@@ -357,17 +270,7 @@ static auto try_fat_remove_file(string_view path) -> bool {
         return false;
     }
 
-    if (fat32::remove_file(path)) {
-        return true;
-    }
-
-    const auto base = basename_view(path);
-    if (!is_absolute_path(path) && !base.equals(path) && fat32::remove_file(base)) {
-        log::debug() << "fs: basename fallback remove '" << path << "' -> '" << base << "'";
-        return true;
-    }
-
-    return false;
+    return fat32::remove_file(path);
 }
 
 struct directory_list_forwarder {
@@ -396,29 +299,18 @@ static auto try_fat_list_directory(string_view path, fs::directory_visit_callbac
     }
 
     directory_list_forwarder forwarder { callback, context };
-    if (fat32::list_directory(path, forward_directory_entry, &forwarder)) {
-        return true;
-    }
-
-    const auto base = basename_view(path);
-    if (!is_absolute_path(path) && !base.equals(path)
-            && fat32::list_directory(base, forward_directory_entry, &forwarder)) {
-        log::debug() << "fs: basename fallback list '" << path << "' -> '" << base << "'";
-        return true;
-    }
-
-    return false;
+    return fat32::list_directory(path, forward_directory_entry, &forwarder);
 }
 
 static auto is_backup_shell_request(string_view path) -> bool {
-    return basename_view(path).equals(string_view("shell.vbin"));
+    return path.compare(string_view("/bin/shell.vbin"));
 }
 
 static auto find_backup_shell(string_view path) -> const file_entry* {
     if (!is_backup_shell_request(path)) {
         return null;
     }
-    return ramfs::find(string_view("shell.vbin"));
+    return ramfs::find(string_view("/bin/shell.vbin"));
 }
 
 static auto close_stream(fs::file_handle handle, kernel_stream& stream, const char* reason) -> int {

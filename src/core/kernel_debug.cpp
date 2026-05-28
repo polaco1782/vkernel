@@ -48,8 +48,8 @@ struct line_table_state {
 
 static symbol_table_state s_symbols;
 static line_table_state s_lines;
-static constexpr const char* KERNEL_SYMBOL_MAP_PATH = "vkernel.elf.map";
-static constexpr const char* KERNEL_LINE_MAP_PATH = "vkernel.elf.lines";
+static constexpr const char* KERNEL_SYMBOL_MAP_PATH = "/boot/vkernel.elf.map";
+static constexpr const char* KERNEL_LINE_MAP_PATH = "/boot/vkernel.elf.lines";
 
 static auto is_space(char ch) -> bool {
     return ch == ' ' || ch == '\t' || ch == '\r';
@@ -408,7 +408,7 @@ static auto count_lines_in_map(const char* data,
     const char* end = data + size;
     const char* line_end = find_line_end(cursor, end);
     if (static_cast<usize>(line_end - cursor) != 8
-        || !string_view(cursor, 8).equals(string_view("vklines1"))) {
+        || !string_view(cursor, 8).compare(string_view("vklines1"))) {
         return false;
     }
     cursor = line_end < end ? line_end + 1 : end;

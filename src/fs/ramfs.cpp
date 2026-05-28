@@ -2,7 +2,7 @@
  * vkernel - UEFI Microkernel
  * Copyright (C) 2026 vkernel authors
  *
- * ramfs.cpp - Flat in-memory fallback filesystem
+ * ramfs.cpp - In-memory fallback filesystem
  */
 
 #include "config.h"
@@ -19,6 +19,17 @@ namespace {
 static file_entry g_files[RAMFS_MAX_FILES];
 static usize g_file_count = 0;
 static bool g_ready = false;
+
+static auto is_separator(char ch) -> bool {
+    return ch == '/' || ch == '\\';
+}
+
+static auto normalize_ramfs_path(string_view path) -> string_view {
+    while (path.size() >= 2 && path[0] == '.' && is_separator(path[1])) {
+        path.remove_prefix(2);
+    }
+    return path;
+}
 
 } // namespace
 
@@ -37,8 +48,11 @@ auto ramfs::add_file(string_view name, const u8* data, usize size) -> status_cod
     if (g_file_count >= RAMFS_MAX_FILES) return status_code::no_memory;
     if (name.data() == null || data == null) return status_code::invalid_param;
 
+    const auto normalized = normalize_ramfs_path(name);
+    if (normalized.empty()) return status_code::invalid_param;
+
     auto& file = g_files[g_file_count];
-    if (!file.name.assign(name)) return status_code::invalid_param;
+    if (!file.name.assign(normalized)) return status_code::invalid_param;
 
     kernel_heap_ptr<u8> copy(static_cast<u8*>(g_kernel_heap.allocate(size)));
     if (!copy) return status_code::no_memory;
@@ -65,8 +79,11 @@ auto ramfs::add_file_nocopy(string_view name, u8* data, usize size) -> status_co
     if (g_file_count >= RAMFS_MAX_FILES) return status_code::no_memory;
     if (name.data() == null || data == null) return status_code::invalid_param;
 
+    const auto normalized = normalize_ramfs_path(name);
+    if (normalized.empty()) return status_code::invalid_param;
+
     auto& file = g_files[g_file_count];
-    if (!file.name.assign(name)) return status_code::invalid_param;
+    if (!file.name.assign(normalized)) return status_code::invalid_param;
 
     file.data = data;
     file.size = size;
@@ -80,29 +97,11 @@ auto ramfs::add_file_nocopy(string_view name, u8* data, usize size) -> status_co
 }
 
 auto ramfs::find(string_view name) -> const file_entry* {
-    if (name.size() >= 2 && name[0] == '.' && name[1] == '/') {
-        name.remove_prefix(2);
-    }
+    name = normalize_ramfs_path(name);
 
     for (usize i = 0; i < g_file_count; ++i) {
-        if (g_files[i].valid && g_files[i].name.view().equals(name)) {
+        if (g_files[i].valid && g_files[i].name.view().compare(name)) {
             return &g_files[i];
-        }
-    }
-
-    const char* last_slash = null;
-    for (usize i = 0; i < name.size(); ++i) {
-        if (name[i] == '/' || name[i] == '\\') {
-            last_slash = name.data() + i;
-        }
-    }
-    if (last_slash != null) {
-        string_view base(last_slash + 1,
-                         name.size() - static_cast<usize>(last_slash + 1 - name.data()));
-        for (usize i = 0; i < g_file_count; ++i) {
-            if (g_files[i].valid && g_files[i].name.view().equals(base)) {
-                return &g_files[i];
-            }
         }
     }
 

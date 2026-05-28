@@ -149,14 +149,14 @@ userspace/               Git submodule with libc, apps, ports, demos
 2. The kernel self-relocates because the PE `.reloc` section is intentionally
    empty and the image is linked at base 0.
 3. While UEFI boot services are still available, the loader captures the memory
-   map, GOP framebuffer, ACPI RSDP, and a fallback ramfs snapshot from
-   `\EFI\vkernel`.
+    map, GOP framebuffer, ACPI RSDP, and a fallback ramfs snapshot from
+    `\bin` and `\boot` on the ESP.
 4. After `ExitBootServices`, the kernel initializes architecture state,
    logging, heap/physical memory, input, ACPI, PCI, drivers, the block layer,
    and the scheduler.
 5. `virtio_blk` is loaded, the FAT32 boot filesystem is mounted, and `ac97` is
    loaded if present.
-6. `shell.vbin` and `vkgui.vbin` are launched, then the scheduler takes over.
+6. `/bin/shell.vbin` and `/bin/vkgui.vbin` are launched, then the scheduler takes over.
 
 ## Virtual Memory
 
@@ -191,10 +191,25 @@ the filesystem facade:
 | List directories | Working |
 | Ramfs fallback | Read-only fallback if FAT32 is unavailable |
 
-`scripts/make_disk.sh` stages all built `.vbin` files into `\EFI\vkernel`,
-generates `vkgui_apps.txt`, and copies runtime assets such as Doom WADs, Quake
-base data under `id1/`, Zeusbot mod data under `zeusbot/`, MOD/S3M files, MP3
-tracks, bitmaps, and emulator ROMs when present.
+`scripts/make_disk.sh` stages the runtime tree directly at the ESP root with a
+strict `/bin`, `/boot`, and `/data` layout while preserving the firmware boot
+path at `\EFI\BOOT\bootx64.efi`:
+
+- `/bin` contains `.vbin` executables, runtime plugins, and per-app `.lines`
+    files.
+- `/boot` contains kernel debug metadata such as `vkernel.elf.map` and
+    `vkernel.elf.lines`.
+- `/data` contains startup scripts, vkGUI manifests/settings, game data,
+    emulator ROMs, audio tracks, and demo assets.
+
+The ESP's `\EFI` directory is visible inside the OS as `/EFI`, which leaves
+room for later firmware-side or in-OS kernel update flows.
+
+Representative paths include `/data/shell/shell.txt`,
+`/data/vkgui/vkgui_apps.txt`, `/data/vkgui/vkgui_plugins.txt`,
+`/data/doom/doom1.wad`, `/data/quake/id1/pak0.pak`,
+`/data/quake/zeusbot/progs.dat`, `/data/modplay/makemove.mod`, and
+`/data/minimp3/tracks/*.mp3`.
 
 ## Kernel API
 
@@ -224,7 +239,7 @@ There are no syscall instructions yet; the ABI is a function-pointer table.
 
 Current panels and features:
 
-- Launch menu populated from `vkgui_apps.txt`
+- Launch menu populated from `/data/vkgui/vkgui_apps.txt`
 - Window manager for graphical `.vbin` tasks
 - Per-window framebuffer routing and input routing
 - Console log window
@@ -444,9 +459,9 @@ the graphical framebuffer. The log route can still be changed through KObj.
 
 ![Quake running on vkernel](quake.webp)
 
-The Quake base data is staged as `id1/pak0.pak`, and the Zeusbot mod is staged
-as `zeusbot/progs.dat`. Launch it from the shell as `quake.vbin -game zeusbot`,
-or start `quake_zeusbot.vbin` from vkGUI.
+The Quake base data is staged as `/data/quake/id1/pak0.pak`, and the Zeusbot
+mod is staged as `/data/quake/zeusbot/progs.dat`. Launch it from the shell as
+`quake -game zeusbot`, or start `/bin/quake_zeusbot.vbin` from vkGUI.
 
 ## Compiler Requirements
 

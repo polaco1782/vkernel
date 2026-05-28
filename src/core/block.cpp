@@ -113,7 +113,7 @@ auto get_device(usize index) -> block_device* {
 auto find(const char* name) -> block_device* {
     string_view query(name);
     for (usize i = 0; i < s_device_count; ++i) {
-        if (s_devices[i].name.view().equals(query)) {
+        if (s_devices[i].name.view().compare(query)) {
             return &s_devices[i];
         }
     }

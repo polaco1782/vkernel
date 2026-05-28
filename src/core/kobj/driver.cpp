@@ -67,11 +67,11 @@ auto resolve_driver_path(const char* path, usize len) -> resolved_node {
         resolved.node = &s_driver;
         return resolved;
     }
-    if (p.equals("registered_count")) {
+    if (p.compare("registered_count")) {
         resolved.node = &s_driver_registered_count;
         return resolved;
     }
-    if (p.equals("loaded_count")) {
+    if (p.compare("loaded_count")) {
         resolved.node = &s_driver_loaded_count;
         return resolved;
     }
@@ -109,9 +109,9 @@ auto resolve_driver_path(const char* path, usize len) -> resolved_node {
     }
 
     const string_view tail(p.data() + name_end + 1, p.size() - name_end - 1);
-    if (tail.equals("name")) resolved.node = &s_driver_entry_name;
-    else if (tail.equals("type")) resolved.node = &s_driver_entry_type;
-    else if (tail.equals("loaded")) resolved.node = &s_driver_entry_loaded;
+    if (tail.compare("name")) resolved.node = &s_driver_entry_name;
+    else if (tail.compare("type")) resolved.node = &s_driver_entry_type;
+    else if (tail.compare("loaded")) resolved.node = &s_driver_entry_loaded;
     else return {};
     return resolved;
 }

@@ -128,7 +128,7 @@ auto resolve_net_device_path(const char* path, usize len) -> resolved_node {
         resolved.node = &s_dev_net;
         return resolved;
     }
-    if (p.equals("count")) {
+    if (p.compare("count")) {
         resolved.node = &s_dev_net_count;
         return resolved;
     }
@@ -166,11 +166,11 @@ auto resolve_net_device_path(const char* path, usize len) -> resolved_node {
     }
 
     const string_view tail(p.data() + name_end + 1, p.size() - name_end - 1);
-    if (tail.equals("name")) resolved.node = &s_dev_net_entry_name;
-    else if (tail.equals("mac")) resolved.node = &s_dev_net_entry_mac;
-    else if (tail.equals("mtu")) resolved.node = &s_dev_net_entry_mtu;
-    else if (tail.equals("link_up")) resolved.node = &s_dev_net_entry_link_up;
-    else if (tail.equals("ipv4_address")) resolved.node = &s_dev_net_entry_ipv4_address;
+    if (tail.compare("name")) resolved.node = &s_dev_net_entry_name;
+    else if (tail.compare("mac")) resolved.node = &s_dev_net_entry_mac;
+    else if (tail.compare("mtu")) resolved.node = &s_dev_net_entry_mtu;
+    else if (tail.compare("link_up")) resolved.node = &s_dev_net_entry_link_up;
+    else if (tail.compare("ipv4_address")) resolved.node = &s_dev_net_entry_ipv4_address;
     else return {};
     return resolved;
 }
@@ -196,31 +196,31 @@ auto resolve_net_stack_path(const char* path, usize len) -> resolved_node {
         resolved.node = &s_net;
         return resolved;
     }
-    if (p.equals("device_count")) {
+    if (p.compare("device_count")) {
         resolved.node = &s_net_device_count;
         return resolved;
     }
-    if (p.equals("primary_device")) {
+    if (p.compare("primary_device")) {
         resolved.node = &s_net_primary_device;
         return resolved;
     }
-    if (p.equals("background_rx")) {
+    if (p.compare("background_rx")) {
         resolved.node = &s_net_background_rx;
         return resolved;
     }
-    if (p.equals("ipv4")) {
+    if (p.compare("ipv4")) {
         resolved.node = &s_net_ipv4;
         return resolved;
     }
-    if (p.equals("ipv4/configured_count")) {
+    if (p.compare("ipv4/configured_count")) {
         resolved.node = &s_net_ipv4_configured_count;
         return resolved;
     }
-    if (p.equals("arp")) {
+    if (p.compare("arp")) {
         resolved.node = &s_net_arp;
         return resolved;
     }
-    if (p.equals("arp/count")) {
+    if (p.compare("arp/count")) {
         resolved.node = &s_net_arp_count;
         return resolved;
     }
@@ -259,8 +259,8 @@ auto resolve_net_stack_path(const char* path, usize len) -> resolved_node {
     }
 
     const string_view tail(p.data() + index_end + 1, p.size() - index_end - 1);
-    if (tail.equals("ip")) resolved.node = &s_net_arp_entry_ip;
-    else if (tail.equals("mac")) resolved.node = &s_net_arp_entry_mac;
+    if (tail.compare("ip")) resolved.node = &s_net_arp_entry_ip;
+    else if (tail.compare("mac")) resolved.node = &s_net_arp_entry_mac;
     else return {};
     return resolved;
 }

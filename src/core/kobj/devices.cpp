@@ -194,10 +194,10 @@ auto resolve_block_path(const char* path, usize len) -> resolved_node {
     }
 
     const string_view tail(p.data() + name_end + 1, p.size() - name_end - 1);
-    if (tail.equals("name")) resolved.node = &s_dev_block_entry_name;
-    else if (tail.equals("size_kb")) resolved.node = &s_dev_block_entry_size_kb;
-    else if (tail.equals("block_size")) resolved.node = &s_dev_block_entry_block_size;
-    else if (tail.equals("removable")) resolved.node = &s_dev_block_entry_removable;
+    if (tail.compare("name")) resolved.node = &s_dev_block_entry_name;
+    else if (tail.compare("size_kb")) resolved.node = &s_dev_block_entry_size_kb;
+    else if (tail.compare("block_size")) resolved.node = &s_dev_block_entry_block_size;
+    else if (tail.compare("removable")) resolved.node = &s_dev_block_entry_removable;
     else return {};
     return resolved;
 }
@@ -214,7 +214,7 @@ auto resolve_pci_path(const char* path, usize len) -> resolved_node {
         resolved.node = &s_dev_pci;
         return resolved;
     }
-    if (p.equals("count")) {
+    if (p.compare("count")) {
         resolved.node = &s_dev_pci_count;
         return resolved;
     }
@@ -248,16 +248,16 @@ auto resolve_pci_path(const char* path, usize len) -> resolved_node {
     }
 
     const string_view tail(p.data() + index_end + 1, p.size() - index_end - 1);
-    if (tail.equals("bus")) resolved.node = &s_dev_pci_entry_bus;
-    else if (tail.equals("device")) resolved.node = &s_dev_pci_entry_device;
-    else if (tail.equals("function")) resolved.node = &s_dev_pci_entry_function;
-    else if (tail.equals("vendor_id")) resolved.node = &s_dev_pci_entry_vendor_id;
-    else if (tail.equals("device_id")) resolved.node = &s_dev_pci_entry_device_id;
-    else if (tail.equals("class_code")) resolved.node = &s_dev_pci_entry_class_code;
-    else if (tail.equals("subclass")) resolved.node = &s_dev_pci_entry_subclass;
-    else if (tail.equals("prog_if")) resolved.node = &s_dev_pci_entry_prog_if;
-    else if (tail.equals("revision")) resolved.node = &s_dev_pci_entry_revision;
-    else if (tail.equals("irq_line")) resolved.node = &s_dev_pci_entry_irq_line;
+    if (tail.compare("bus")) resolved.node = &s_dev_pci_entry_bus;
+    else if (tail.compare("device")) resolved.node = &s_dev_pci_entry_device;
+    else if (tail.compare("function")) resolved.node = &s_dev_pci_entry_function;
+    else if (tail.compare("vendor_id")) resolved.node = &s_dev_pci_entry_vendor_id;
+    else if (tail.compare("device_id")) resolved.node = &s_dev_pci_entry_device_id;
+    else if (tail.compare("class_code")) resolved.node = &s_dev_pci_entry_class_code;
+    else if (tail.compare("subclass")) resolved.node = &s_dev_pci_entry_subclass;
+    else if (tail.compare("prog_if")) resolved.node = &s_dev_pci_entry_prog_if;
+    else if (tail.compare("revision")) resolved.node = &s_dev_pci_entry_revision;
+    else if (tail.compare("irq_line")) resolved.node = &s_dev_pci_entry_irq_line;
     else return {};
     return resolved;
 }

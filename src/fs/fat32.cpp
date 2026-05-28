@@ -252,13 +252,6 @@ static auto is_separator(char ch) -> bool {
     return ch == '/' || ch == '\\';
 }
 
-static auto ascii_lower(char ch) -> char {
-    if (ch >= 'A' && ch <= 'Z') {
-        return static_cast<char>(ch - 'A' + 'a');
-    }
-    return ch;
-}
-
 static auto ascii_upper(char ch) -> char {
     if (ch >= 'a' && ch <= 'z') {
         return static_cast<char>(ch - 'a' + 'A');
@@ -269,18 +262,6 @@ static auto ascii_upper(char ch) -> char {
 static auto is_ascii_alnum(char ch) -> bool {
     const char upper = ascii_upper(ch);
     return (upper >= 'A' && upper <= 'Z') || (ch >= '0' && ch <= '9');
-}
-
-static auto case_insensitive_equals(string_view lhs, string_view rhs) -> bool {
-    if (lhs.size() != rhs.size()) {
-        return false;
-    }
-    for (usize i = 0; i < lhs.size(); ++i) {
-        if (ascii_lower(lhs[i]) != ascii_lower(rhs[i])) {
-            return false;
-        }
-    }
-    return true;
 }
 
 static auto normalize_path(string_view path) -> string_view {
@@ -751,7 +732,7 @@ static auto scan_directory(const mount_state& state, u32 directory_cluster, Call
 static auto find_in_directory(const mount_state& state, u32 directory_cluster, string_view name, directory_entry_ref& entry_out) -> bool {
     bool found = false;
     const bool ok = scan_directory(state, directory_cluster, [&](const directory_entry_ref& entry) {
-        if (case_insensitive_equals(entry.name.view(), name)) {
+        if (name.compare(entry.name.view())) {
             entry_out = entry;
             found = true;
             return true;
@@ -773,7 +754,7 @@ static auto resolve_path_from_cluster(const mount_state& state, u32 start_cluste
 
     while (next_path_component(path, offset, component)) {
         saw_component = true;
-        if (component.equals(".")) {
+        if (component.compare(".")) {
             continue;
         }
 
@@ -822,7 +803,7 @@ static auto resolve_path(const mount_state& state, string_view raw_path, directo
         if (path.empty()) {
             return false;
         }
-        return resolve_path_from_cluster(state, state.volume_root_cluster, path, entry_out);
+        return resolve_path_from_cluster(state, state.info.logical_root_cluster, path, entry_out);
     }
 
     return resolve_path_from_cluster(state, state.info.logical_root_cluster, path, entry_out);
@@ -831,7 +812,7 @@ static auto resolve_path(const mount_state& state, string_view raw_path, directo
 static auto resolve_directory_cluster(const mount_state& state, string_view raw_path, u32& cluster_out) -> bool {
     string_view path = trim_trailing_separators(normalize_path(raw_path));
 
-    if (path.empty() || path.equals(".")) {
+    if (path.empty() || path.compare(".")) {
         cluster_out = state.info.logical_root_cluster;
         return cluster_out >= 2;
     }
@@ -841,7 +822,7 @@ static auto resolve_directory_cluster(const mount_state& state, string_view raw_
             path.remove_prefix(1);
         }
         if (path.empty()) {
-            cluster_out = state.volume_root_cluster;
+            cluster_out = state.info.logical_root_cluster;
             return cluster_out >= 2;
         }
     }
@@ -871,7 +852,7 @@ static auto resolve_parent_directory(const mount_state& state, string_view raw_p
     string_view leaf;
     if (last_separator >= path.size()) {
         leaf = path;
-        directory_cluster_out = is_absolute_path(path) ? state.volume_root_cluster : state.info.logical_root_cluster;
+        directory_cluster_out = state.info.logical_root_cluster;
     } else {
         leaf = string_view(path.data() + last_separator + 1, path.size() - last_separator - 1);
         if (leaf.empty()) {
@@ -879,7 +860,7 @@ static auto resolve_parent_directory(const mount_state& state, string_view raw_p
         }
 
         if (last_separator == 0) {
-            directory_cluster_out = state.volume_root_cluster;
+            directory_cluster_out = state.info.logical_root_cluster;
         } else {
             directory_entry_ref parent_directory {};
             const string_view parent_path(path.data(), last_separator);
@@ -1712,13 +1693,6 @@ static auto probe_volume(block_device* device, u64 start_lba, mount_state& state
         }
     }
 
-    directory_entry_ref logical_root {};
-    if (resolve_path_from_cluster(state_out, state_out.volume_root_cluster, string_view("EFI/vkernel"), logical_root)
-        && is_directory(logical_root.entry)) {
-        state_out.info.logical_root_cluster = first_cluster(logical_root.entry);
-        (void)state_out.info.logical_root_path.assign("/EFI/vkernel");
-    }
-
     log::debug() << "fat32: probe success device='" << device->name.c_str() << "' start_lba="
                  << static_cast<unsigned long long>(start_lba) << " total_sectors="
                  << static_cast<unsigned long long>(total_sectors) << " sectors_per_cluster="
@@ -1893,7 +1867,7 @@ auto list_directory(string_view path, directory_visit_callback callback, void* c
     log::debug() << "fat32: list_directory path='" << path << "' cluster=" << directory_cluster;
     const bool ok = scan_directory(s_state, directory_cluster, [&](const directory_entry_ref& entry) {
         const auto name = entry.name.view();
-        if (name.equals(".") || name.equals("..")) {
+        if (name.compare(".") || name.compare("..")) {
             return false;
         }
 

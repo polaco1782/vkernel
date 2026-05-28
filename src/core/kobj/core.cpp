@@ -120,7 +120,7 @@ auto KNode::find_child(string_view name) const -> KNode* {
         if (candidate == null || candidate->schema.name == null) {
             continue;
         }
-        if (string_view(candidate->schema.name).equals(name)) {
+        if (string_view(candidate->schema.name).compare(name)) {
             return candidate;
         }
     }

@@ -69,7 +69,7 @@ auto resolve_proc_path(const char* path, usize len) -> resolved_node {
         resolved.node = &s_proc;
         return resolved;
     }
-    if (p.equals("count")) {
+    if (p.compare("count")) {
         resolved.node = &s_proc_count;
         return resolved;
     }
@@ -104,11 +104,11 @@ auto resolve_proc_path(const char* path, usize len) -> resolved_node {
     }
 
     const string_view tail(p.data() + pid_end + 1, p.size() - pid_end - 1);
-    if (tail.equals("id")) resolved.node = &s_proc_pid_id;
-    else if (tail.equals("state")) resolved.node = &s_proc_pid_state;
-    else if (tail.equals("cpu")) resolved.node = &s_proc_pid_cpu;
-    else if (tail.equals("cpu_ticks")) resolved.node = &s_proc_pid_cpu_ticks;
-    else if (tail.equals("name")) resolved.node = &s_proc_pid_name;
+    if (tail.compare("id")) resolved.node = &s_proc_pid_id;
+    else if (tail.compare("state")) resolved.node = &s_proc_pid_state;
+    else if (tail.compare("cpu")) resolved.node = &s_proc_pid_cpu;
+    else if (tail.compare("cpu_ticks")) resolved.node = &s_proc_pid_cpu_ticks;
+    else if (tail.compare("name")) resolved.node = &s_proc_pid_name;
     else return {};
     return resolved;
 }

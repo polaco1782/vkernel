@@ -55,46 +55,63 @@ ESP_TRACKS=126
 ESP_HEADS=64
 ESP_SECS=32
 
+ensure_esp_dir() {
+    local rel_dir="$1"
+
+    [ -n "${rel_dir}" ] || return 0
+
+    local fat_path="::"
+    local component
+    local -a components
+
+    IFS='/' read -ra components <<< "${rel_dir}"
+    for component in "${components[@]}"; do
+        [ -n "${component}" ] || continue
+        fat_path="${fat_path}/${component}"
+        mmd -D s -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${fat_path}" 2>/dev/null || true
+    done
+}
+
 copy_into_esp() {
     local src="$1"
-    local dest_name="$2"
+    local dest_path="$2"
 
     if [ ! -f "${src}" ]; then
         return 0
     fi
 
-    echo "    ${dest_name}"
-    mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${src}" "::/EFI/vkernel/${dest_name}"
+    local dest_dir
+    dest_dir="$(dirname "${dest_path}")"
+    if [ "${dest_dir}" != "." ]; then
+        ensure_esp_dir "${dest_dir}"
+    fi
+
+    echo "    ${dest_path}"
+    mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${src}" "::/${dest_path}"
 }
 
-# Recursively copy a source directory into ::/EFI/vkernel/<dest_dir>.
+# Recursively copy a source directory into ::/<dest_dir>.
 # Creates intermediate FAT directories as needed then bulk-copies each file.
 copy_dir_into_esp() {
     local src_dir="$1"
-    local dest_dir="$2"   # relative to ::/EFI/vkernel/
+    local dest_dir="$2"   # relative to ::/
 
     [ -d "${src_dir}" ] || return 0
+
+    ensure_esp_dir "${dest_dir}"
 
     local f rel dir fat_path
     while IFS= read -r -d '' f; do
         rel="${f#${src_dir}/}"
         dir="$(dirname "${rel}")"
-        fat_path="::/EFI/vkernel/${dest_dir}"
 
-        # Create any intermediate subdirectories (mmd is idempotent with -D).
         if [ "${dir}" != "." ]; then
-            local part=""
-            IFS='/' read -ra parts <<< "${dir}"
-            for part in "${parts[@]}"; do
-                fat_path="${fat_path}/${part}"
-                mmd -D s -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${fat_path}" 2>/dev/null || true
-            done
-            fat_path="::/EFI/vkernel/${dest_dir}"
+            ensure_esp_dir "${dest_dir}/${dir}"
         fi
 
         echo "    ${dest_dir}/${rel}"
         mcopy -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${f}" \
-              "::/EFI/vkernel/${dest_dir}/${rel}"
+          "::/${dest_dir}/${rel}"
     done < <(find "${src_dir}" -type f -print0)
 }
 
@@ -111,7 +128,7 @@ stage_clownmdemu_roms() {
 
         case "${ext}" in
             bin|gen|smd|32x|md)
-                copy_into_esp "${rom}" "${base}"
+                copy_into_esp "${rom}" "data/clownmdemu/roms/${base}"
                 ;;
         esac
     done
@@ -130,7 +147,7 @@ stage_snes9x_roms() {
 
         case "${ext}" in
             smc|sfc)
-                copy_into_esp "${rom}" "${base}"
+                copy_into_esp "${rom}" "data/snes9x/roms/${base}"
                 ;;
         esac
     done
@@ -149,7 +166,7 @@ stage_vnes_roms() {
 
         case "${ext}" in
             nes)
-                copy_into_esp "${rom}" "${base}"
+                copy_into_esp "${rom}" "data/vnes/roms/${base}"
                 ;;
         esac
     done
@@ -168,7 +185,7 @@ stage_minimp3_tracks() {
 
         case "${ext}" in
             mp3)
-                copy_into_esp "${track}" "${base}"
+                copy_into_esp "${track}" "data/minimp3/tracks/${base}"
                 ;;
         esac
     done
@@ -192,42 +209,67 @@ echo "  Staging EFI application..."
 mmd    -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI ::/EFI/BOOT
 mcopy  -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${EFI_FILE}" ::/EFI/BOOT/bootx64.efi
 
-echo "  Staging userspace binaries..."
-mmd -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI/vkernel ::/EFI/vkernel/id1 ::/EFI/vkernel/zeusbot ::/EFI/vkernel/reaperfx
+echo "  Staging userspace filesystem..."
+ensure_esp_dir "bin/plugins"
+ensure_esp_dir "boot"
+ensure_esp_dir "data/shell"
+ensure_esp_dir "data/vkgui"
+ensure_esp_dir "data/doom"
+ensure_esp_dir "data/quake/id1"
+ensure_esp_dir "data/quake/zeusbot"
+ensure_esp_dir "data/modplay"
+ensure_esp_dir "data/rotozoom"
+ensure_esp_dir "data/clownmdemu/roms"
+ensure_esp_dir "data/vnes/roms"
+ensure_esp_dir "data/snes9x/roms"
+ensure_esp_dir "data/minimp3/tracks"
 
 manifest_file=$(mktemp)
 while IFS= read -r -d '' vbin; do
     name=$(basename "${vbin}")
-    copy_into_esp "${vbin}" "${name}"
-    printf '%s\n' "${name}" >> "${manifest_file}"
+    copy_into_esp "${vbin}" "bin/${name}"
+    printf '/bin/%s\n' "${name}" >> "${manifest_file}"
 done < <(find userspace -name "*.vbin" -print0)
 
 sort -u "${manifest_file}" -o "${manifest_file}"
-copy_into_esp "${manifest_file}" "vkgui_apps.txt"
+copy_into_esp "${manifest_file}" "data/vkgui/vkgui_apps.txt"
 rm -f "${manifest_file}"
 
-copy_into_esp "userspace/doom/doom1.wad" "doom1.wad"
-copy_into_esp "userspace/doom/doom2.wad" "doom2.wad"
-copy_into_esp "userspace/shell/shell_exec.txt" "shell.txt"
-copy_into_esp "userspace/vkgui/vkgui_plugins.txt" "vkgui_plugins.txt"
-copy_into_esp "userspace/MODPlay/makemove.mod" "makemove.mod"
-copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "UNREALPM.S3M"
-copy_into_esp "userspace/rotozoom/head.bmp" "head.bmp"
-copy_into_esp "userspace/quake/pak0.pak" "id1/pak0.pak"
-copy_into_esp "userspace/quake/progs.dat" "zeusbot/progs.dat"
-copy_into_esp "userspace/quake/zeus_pak0.pak" "zeusbot/pak0.pak"
+copy_into_esp "userspace/doom/doom1.wad" "data/doom/doom1.wad"
+copy_into_esp "userspace/doom/doom2.wad" "data/doom/doom2.wad"
+copy_into_esp "userspace/shell/shell_exec.txt" "data/shell/shell.txt"
+copy_into_esp "userspace/vkgui/vkgui_plugins.txt" "data/vkgui/vkgui_plugins.txt"
+copy_into_esp "userspace/MODPlay/makemove.mod" "data/modplay/makemove.mod"
+copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "data/modplay/UNREALPM.S3M"
+copy_into_esp "userspace/rotozoom/head.bmp" "data/rotozoom/head.bmp"
+copy_into_esp "userspace/quake/pak0.pak" "data/quake/id1/pak0.pak"
+copy_into_esp "userspace/quake/progs.dat" "data/quake/zeusbot/progs.dat"
+copy_into_esp "userspace/quake/zeus_pak0.pak" "data/quake/zeusbot/pak0.pak"
 for plugin in userspace/vkgui/runtime_plugins/*.vplg; do
     [ -f "${plugin}" ] || continue
-    copy_into_esp "${plugin}" "$(basename "${plugin}")"
+    copy_into_esp "${plugin}" "bin/plugins/$(basename "${plugin}")"
 done
 
 for extra in "$@"; do
+    local_dest=""
     [ -f "${extra}" ] || continue
-    copy_into_esp "${extra}" "$(basename "${extra}")"
+    extra_name=$(basename "${extra}")
+    case "${extra_name}" in
+        vkernel.elf.map|vkernel.elf.lines)
+            local_dest="boot/${extra_name}"
+            ;;
+        *.vbin.lines)
+            local_dest="bin/${extra_name}"
+            ;;
+        *)
+            local_dest="boot/${extra_name}"
+            ;;
+    esac
+    copy_into_esp "${extra}" "${local_dest}"
 done
 
 echo "  Staging reaperfx..."
-copy_dir_into_esp "userspace/quake/reaperfx" "reaperfx"
+copy_dir_into_esp "userspace/quake/reaperfx" "data/quake/reaperfx"
 stage_clownmdemu_roms
 stage_vnes_roms
 stage_snes9x_roms
