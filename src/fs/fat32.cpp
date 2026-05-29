@@ -36,6 +36,8 @@ static constexpr u8 ATTR_VOLUME_ID = 0x08;
 static constexpr u8 ATTR_DIRECTORY = 0x10;
 static constexpr u8 ATTR_ARCHIVE = 0x20;
 static constexpr u8 ATTR_LONG_FILE_NAME = 0x0F;
+static constexpr u8 CASE_INFO_BASE_LOWER = 0x08;
+static constexpr u8 CASE_INFO_EXT_LOWER = 0x10;
 
 static constexpr u8 DIR_ENTRY_END = 0x00;
 static constexpr u8 DIR_ENTRY_UNUSED = 0xE5;
@@ -259,6 +261,13 @@ static auto ascii_upper(char ch) -> char {
     return ch;
 }
 
+static auto ascii_lower(char ch) -> char {
+    if (ch >= 'A' && ch <= 'Z') {
+        return static_cast<char>(ch - 'A' + 'a');
+    }
+    return ch;
+}
+
 static auto is_ascii_alnum(char ch) -> bool {
     const char upper = ascii_upper(ch);
     return (upper >= 'A' && upper <= 'Z') || (ch >= '0' && ch <= '9');
@@ -346,12 +355,14 @@ static auto lfn_checksum(const FATEntry& entry) -> u8 {
 static auto decode_short_name(const FATEntry& entry, static_string<256>& out) -> bool {
     char name[256];
     usize pos = 0;
+    const bool lower_base = (entry.case_info & CASE_INFO_BASE_LOWER) != 0;
+    const bool lower_ext = (entry.case_info & CASE_INFO_EXT_LOWER) != 0;
 
     for (usize i = 0; i < 8; ++i) {
         if (entry.filename[i] == ' ') {
             break;
         }
-        name[pos++] = entry.filename[i];
+        name[pos++] = lower_base ? ascii_lower(entry.filename[i]) : entry.filename[i];
     }
 
     if (entry.extension[0] != ' ') {
@@ -360,7 +371,7 @@ static auto decode_short_name(const FATEntry& entry, static_string<256>& out) ->
             if (entry.extension[i] == ' ') {
                 break;
             }
-            name[pos++] = entry.extension[i];
+            name[pos++] = lower_ext ? ascii_lower(entry.extension[i]) : entry.extension[i];
         }
     }
 
@@ -971,6 +982,30 @@ static auto encode_sfn(FATEntry& entry, string_view name) -> void {
     }
 }
 
+static auto component_has_lowercase(string_view value) -> bool {
+    for (usize i = 0; i < value.size(); ++i) {
+        if (value[i] >= 'a' && value[i] <= 'z') {
+            return true;
+        }
+    }
+    return false;
+}
+
+static auto encode_case_info(string_view name) -> u8 {
+    string_view base;
+    string_view extension;
+    split_name_for_alias(name, base, extension);
+
+    u8 case_info = 0;
+    if (!base.empty() && component_has_lowercase(base)) {
+        case_info |= CASE_INFO_BASE_LOWER;
+    }
+    if (!extension.empty() && component_has_lowercase(extension)) {
+        case_info |= CASE_INFO_EXT_LOWER;
+    }
+    return case_info;
+}
+
 static auto sanitize_component(string_view input, char* output, usize output_cap) -> usize {
     usize out = 0;
     for (usize i = 0; i < input.size() && out < output_cap; ++i) {
@@ -1121,6 +1156,7 @@ static auto build_file_entry(const mount_state& state,
 
     if (is_valid_sfn_name(name)) {
         encode_sfn(entry_out, name);
+        entry_out.case_info = encode_case_info(name);
         return true;
     }
 
@@ -2005,7 +2041,11 @@ auto write_file(string_view path, const u8* data, usize size) -> bool {
     entry.first_cluster_high = static_cast<u16>(new_cluster >> 16);
     entry.file_size = static_cast<u32>(size);
     entry.attributes = static_cast<u8>((entry.attributes & ~(ATTR_DIRECTORY | ATTR_VOLUME_ID)) | ATTR_ARCHIVE);
-    entry.case_info = 0;
+    if (lfn_count == 0) {
+        entry.case_info = encode_case_info(leaf_name.view());
+    } else {
+        entry.case_info = 0;
+    }
     entry.creation_time_tenths = 0;
 
     if (exists) {
