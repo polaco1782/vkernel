@@ -16,11 +16,11 @@ set "EFI_FILE=%BUILD_DIR%\vkernel.efi"
 set "ESP_ROOT=%BUILD_DIR%\esp"
 set "ESP_BOOT=%ESP_ROOT%\EFI\BOOT"
 set "ESP_BIN=%ESP_ROOT%\bin"
-set "ESP_BIN_PLUGINS=%ESP_BIN%\plugins"
 set "ESP_BOOTDATA=%ESP_ROOT%\boot"
 set "ESP_DATA=%ESP_ROOT%\data"
 set "ESP_DATA_SHELL=%ESP_DATA%\shell"
 set "ESP_DATA_VKGUI=%ESP_DATA%\vkgui"
+set "ESP_DATA_VKGUI_PLUGINS=%ESP_DATA_VKGUI%\plugins"
 set "ESP_DATA_DOOM=%ESP_DATA%\doom"
 set "ESP_DATA_QUAKE_ID1=%ESP_DATA%\quake\id1"
 set "ESP_DATA_QUAKE_ZEUSBOT=%ESP_DATA%\quake\zeusbot"
@@ -88,10 +88,10 @@ if errorlevel 1 (
 if exist "%ESP_ROOT%" rmdir /s /q "%ESP_ROOT%"
 mkdir "%ESP_BOOT%" || exit /b 1
 mkdir "%ESP_BIN%" || exit /b 1
-mkdir "%ESP_BIN_PLUGINS%" || exit /b 1
 mkdir "%ESP_BOOTDATA%" || exit /b 1
 mkdir "%ESP_DATA_SHELL%" || exit /b 1
 mkdir "%ESP_DATA_VKGUI%" || exit /b 1
+mkdir "%ESP_DATA_VKGUI_PLUGINS%" || exit /b 1
 mkdir "%ESP_DATA_DOOM%" || exit /b 1
 mkdir "%ESP_DATA_QUAKE_ID1%" || exit /b 1
 mkdir "%ESP_DATA_QUAKE_ZEUSBOT%" || exit /b 1
@@ -133,8 +133,6 @@ call :copy_if_exists "userspace\doom\doom2.wad" "data\doom\doom2.wad"
 if errorlevel 1 exit /b 1
 call :copy_if_exists "userspace\shell\shell_exec.txt" "data\shell\shell.txt"
 if errorlevel 1 exit /b 1
-call :copy_if_exists "userspace\vkgui\vkgui_plugins.txt" "data\vkgui\vkgui_plugins.txt"
-if errorlevel 1 exit /b 1
 call :copy_if_exists "userspace\MODPlay\makemove.mod" "data\modplay\makemove.mod"
 if errorlevel 1 exit /b 1
 call :copy_if_exists "userspace\MODPlay\UNREALPM.S3M" "data\modplay\UNREALPM.S3M"
@@ -149,7 +147,7 @@ call :copy_if_exists "userspace\quake\zeus_pak0.pak" "data\quake\zeusbot\pak0.pa
 if errorlevel 1 exit /b 1
 
 for %%F in ("userspace\vkgui\runtime_plugins\*.vplg") do (
-    if exist "%%~fF" call :copy_if_exists "%%~fF" "bin\plugins\%%~nxF"
+    if exist "%%~fF" call :copy_if_exists "%%~fF" "data\vkgui\plugins\%%~nxF"
     if errorlevel 1 exit /b 1
 )
 

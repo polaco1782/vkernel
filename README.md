@@ -195,18 +195,18 @@ the filesystem facade:
 strict `/bin`, `/boot`, and `/data` layout while preserving the firmware boot
 path at `\EFI\BOOT\bootx64.efi`:
 
-- `/bin` contains `.vbin` executables, runtime plugins, and per-app `.lines`
+- `/bin` contains `.vbin` executables and per-app `.lines`
     files.
 - `/boot` contains kernel debug metadata such as `vkernel.elf.map` and
     `vkernel.elf.lines`.
-- `/data` contains startup scripts, vkGUI manifests/settings, game data,
+- `/data` contains startup scripts, vkGUI manifests/settings/plugins, game data,
     emulator ROMs, audio tracks, and demo assets.
 
 The ESP's `\EFI` directory is visible inside the OS as `/EFI`, which leaves
 room for later firmware-side or in-OS kernel update flows.
 
 Representative paths include `/data/shell/shell.txt`,
-`/data/vkgui/vkgui_apps.txt`, `/data/vkgui/vkgui_plugins.txt`,
+`/data/vkgui/vkgui_apps.txt`, `/data/vkgui/plugins/*.vplg`,
 `/data/doom/doom1.wad`, `/data/quake/id1/pak0.pak`,
 `/data/quake/zeusbot/progs.dat`, `/data/modplay/makemove.mod`, and
 `/data/minimp3/tracks/*.mp3`.

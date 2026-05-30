@@ -210,10 +210,11 @@ mmd    -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" ::/EFI ::/EFI/BOOT
 mcopy  -o -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" "${EFI_FILE}" ::/EFI/BOOT/bootx64.efi
 
 echo "  Staging userspace filesystem..."
-ensure_esp_dir "bin/plugins"
+ensure_esp_dir "bin"
 ensure_esp_dir "boot"
 ensure_esp_dir "data/shell"
 ensure_esp_dir "data/vkgui"
+ensure_esp_dir "data/vkgui/plugins"
 ensure_esp_dir "data/doom"
 ensure_esp_dir "data/quake/id1"
 ensure_esp_dir "data/quake/zeusbot"
@@ -238,7 +239,6 @@ rm -f "${manifest_file}"
 copy_into_esp "userspace/doom/doom1.wad" "data/doom/doom1.wad"
 copy_into_esp "userspace/doom/doom2.wad" "data/doom/doom2.wad"
 copy_into_esp "userspace/shell/shell_exec.txt" "data/shell/shell.txt"
-copy_into_esp "userspace/vkgui/vkgui_plugins.txt" "data/vkgui/vkgui_plugins.txt"
 copy_into_esp "userspace/MODPlay/makemove.mod" "data/modplay/makemove.mod"
 copy_into_esp "userspace/MODPlay/UNREALPM.S3M" "data/modplay/UNREALPM.S3M"
 copy_into_esp "userspace/rotozoom/head.bmp" "data/rotozoom/head.bmp"
@@ -247,7 +247,7 @@ copy_into_esp "userspace/quake/progs.dat" "data/quake/zeusbot/progs.dat"
 copy_into_esp "userspace/quake/zeus_pak0.pak" "data/quake/zeusbot/pak0.pak"
 for plugin in userspace/vkgui/runtime_plugins/*.vplg; do
     [ -f "${plugin}" ] || continue
-    copy_into_esp "${plugin}" "bin/plugins/$(basename "${plugin}")"
+    copy_into_esp "${plugin}" "data/vkgui/plugins/$(basename "${plugin}")"
 done
 
 for extra in "$@"; do
