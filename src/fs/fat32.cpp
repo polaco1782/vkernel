@@ -12,6 +12,7 @@
 
 #include "arch/x86_64/arch.h"
 #include "block.h"
+#include "driver.h"
 #include "log.h"
 #include "memory.h"
 
@@ -44,6 +45,75 @@ static constexpr u8 DIR_ENTRY_UNUSED = 0xE5;
 static constexpr u8 LFN_LAST_ENTRY_MASK = 0x40;
 
 static u8 s_empty_file_marker = 0;
+
+struct directory_entry_forwarder {
+    fs::directory_visit_callback callback = null;
+    void* context = null;
+};
+
+static auto forward_driver_directory_entry(const directory_entry_info& entry, void* raw_context) -> bool {
+    auto* context = static_cast<directory_entry_forwarder*>(raw_context);
+    if (context == null || context->callback == null) {
+        return true;
+    }
+
+    fs::directory_entry_info forwarded {};
+    if (!forwarded.name.assign(entry.name.view())) {
+        return false;
+    }
+    forwarded.is_directory = entry.is_directory;
+    forwarded.size = entry.size;
+    return context->callback(forwarded, context->context);
+}
+
+static void fill_driver_runtime_info(fs::runtime_info& runtime_info) {
+    const auto mounted = info();
+    runtime_info.mounted = true;
+    runtime_info.writable = mounted.writable;
+    (void)runtime_info.active_backend.assign(mounted.filesystem_name.view());
+    (void)runtime_info.block_device.assign(mounted.block_device.view());
+    (void)runtime_info.logical_root_path.assign(mounted.logical_root_path.view());
+    runtime_info.bytes_per_sector = mounted.bytes_per_sector;
+    runtime_info.sectors_per_cluster = mounted.sectors_per_cluster;
+    runtime_info.cluster_size = mounted.bytes_per_sector * static_cast<u32>(mounted.sectors_per_cluster);
+    runtime_info.first_data_sector = mounted.first_data_sector;
+    runtime_info.root_cluster = mounted.logical_root_cluster;
+}
+
+static auto open_driver_file(string_view path, fs::filesystem_file_descriptor& file_out) -> bool {
+    auto* file = reinterpret_cast<file_descriptor*>(file_out.storage);
+    *file = {};
+    return open_file(path, *file);
+}
+
+static auto read_driver_file_range(fs::filesystem_file_descriptor& file,
+                                   usize offset,
+                                   void* buffer,
+                                   usize size,
+                                   usize& size_out) -> bool {
+    return read_file(*reinterpret_cast<file_descriptor*>(file.storage), offset, buffer, size, size_out);
+}
+
+static auto list_driver_directory(string_view path, fs::directory_visit_callback callback, void* context) -> bool {
+    if (!is_mounted() || callback == null) {
+        return false;
+    }
+
+    directory_entry_forwarder forwarder { callback, context };
+    return list_directory(path, forward_driver_directory_entry, &forwarder);
+}
+
+static_assert(sizeof(file_descriptor) <= fs::MAX_FILESYSTEM_FILE_STORAGE);
+static_assert(alignof(file_descriptor) <= alignof(fs::filesystem_file_descriptor));
+
+static driver_descriptor s_fat32_descriptor = {
+    .name = "fat32",
+    .type = driver_type::filesystem,
+    .sound = null,
+    .block = null,
+    .net = null,
+    .filesystem = null,
+};
 
 #pragma pack(push, 1)
 
@@ -117,41 +187,6 @@ struct FATLongFileNameEntry {
     u16 name3[2];
 };
 
-struct MBRPartitionEntry {
-    u8 status;
-    u8 chs_first[3];
-    u8 type;
-    u8 chs_last[3];
-    u32 first_lba;
-    u32 sector_count;
-};
-
-struct GPTHeader {
-    char signature[8];
-    u32 revision;
-    u32 header_size;
-    u32 header_crc32;
-    u32 reserved;
-    u64 current_lba;
-    u64 backup_lba;
-    u64 first_usable_lba;
-    u64 last_usable_lba;
-    u8 disk_guid[16];
-    u64 partition_entry_lba;
-    u32 partition_entry_count;
-    u32 partition_entry_size;
-    u32 partition_entry_array_crc32;
-};
-
-struct GPTPartitionEntry {
-    u8 type_guid[16];
-    u8 unique_guid[16];
-    u64 first_lba;
-    u64 last_lba;
-    u64 attributes;
-    u16 name[36];
-};
-
 #pragma pack(pop)
 
 static_assert(sizeof(DOS3BIOSParameterBlock) == 36);
@@ -159,7 +194,6 @@ static_assert(sizeof(DOS7BIOSParameterBlock) == 54);
 static_assert(sizeof(FAT32FSInfo) == 512);
 static_assert(sizeof(FATEntry) == 32);
 static_assert(sizeof(FATLongFileNameEntry) == 32);
-static_assert(sizeof(MBRPartitionEntry) == 16);
 
 struct entry_location {
     u64 lba = 0;
@@ -208,6 +242,13 @@ struct mount_state {
     mutable u32 fat_cache_first_sector = 0;
     mutable u32 fat_cache_sector_count = 0;
     mutable u8 fat_cache[FAT_CACHE_SECTOR_COUNT * 512] {};
+};
+
+struct cluster_run {
+    u32 first_cluster = 0;
+    u32 last_cluster = 0;
+    u32 cluster_count = 0;
+    u32 next_cluster = FAT32_END_OF_CHAIN;
 };
 
 static mount_state s_state;
@@ -307,6 +348,10 @@ static auto cluster_first_lba(const mount_state& state, u32 cluster) -> u64 {
 
 static auto cluster_size_bytes(const mount_state& state) -> usize {
     return static_cast<usize>(state.info.bytes_per_sector) * state.info.sectors_per_cluster;
+}
+
+static auto is_data_cluster(u32 cluster) -> bool {
+    return cluster >= 2 && cluster < FAT32_END_OF_CHAIN;
 }
 
 static auto first_cluster(const FATEntry& entry) -> u32 {
@@ -1230,6 +1275,97 @@ static auto allocate_directory_slots(mount_state& state, u32 directory_cluster, 
     return false;
 }
 
+static auto collect_cluster_run(const mount_state& state,
+                                u32 first_cluster,
+                                usize max_cluster_count,
+                                cluster_run& run_out) -> bool {
+    if (!is_data_cluster(first_cluster) || max_cluster_count == 0) {
+        return false;
+    }
+
+    run_out = {};
+    run_out.first_cluster = first_cluster;
+    run_out.last_cluster = first_cluster;
+    run_out.cluster_count = 1;
+    run_out.next_cluster = FAT32_END_OF_CHAIN;
+
+    while (run_out.cluster_count < max_cluster_count) {
+        u32 candidate = 0;
+        if (!read_fat_value(state, run_out.last_cluster, candidate)) {
+            return false;
+        }
+        if (candidate != run_out.last_cluster + 1) {
+            run_out.next_cluster = candidate;
+            return true;
+        }
+
+        run_out.last_cluster = candidate;
+        ++run_out.cluster_count;
+    }
+
+    return true;
+}
+
+static auto read_cluster_bytes(const mount_state& state,
+                               u32 cluster,
+                               usize cluster_offset,
+                               void* buffer,
+                               usize size) -> bool {
+    if (size == 0) {
+        return true;
+    }
+    if (!is_data_cluster(cluster) || buffer == null) {
+        return false;
+    }
+
+    const usize cluster_bytes = cluster_size_bytes(state);
+    if (cluster_offset >= cluster_bytes || size > cluster_bytes - cluster_offset) {
+        return false;
+    }
+
+    auto* out = static_cast<u8*>(buffer);
+    const usize sector_bytes = state.info.bytes_per_sector;
+    usize copied = 0;
+    u64 lba = cluster_first_lba(state, cluster) + (cluster_offset / sector_bytes);
+    usize sector_offset = cluster_offset % sector_bytes;
+
+    if (sector_offset != 0) {
+        u8 sector[512];
+        if (!read_sectors(state, lba, 1, sector)) {
+            return false;
+        }
+
+        usize first_chunk = sector_bytes - sector_offset;
+        if (first_chunk > size) {
+            first_chunk = size;
+        }
+        memory::copy(out, sector + sector_offset, first_chunk);
+        copied += first_chunk;
+        ++lba;
+    }
+
+    const usize whole_sectors = (size - copied) / sector_bytes;
+    if (whole_sectors > 0) {
+        if (!read_sectors(state, lba, static_cast<u32>(whole_sectors), out + copied)) {
+            return false;
+        }
+        copied += whole_sectors * sector_bytes;
+        lba += whole_sectors;
+    }
+
+    const usize tail_bytes = size - copied;
+    if (tail_bytes > 0) {
+        u8 sector[512];
+        if (!read_sectors(state, lba, 1, sector)) {
+            return false;
+        }
+        memory::copy(out + copied, sector, tail_bytes);
+        copied += tail_bytes;
+    }
+
+    return copied == size;
+}
+
 static auto read_file_data(const mount_state& state,
                            const directory_entry_ref& entry,
                            kernel_heap_ptr<u8>& owned_buffer,
@@ -1263,39 +1399,27 @@ static auto read_file_data(const mount_state& state,
     const usize cluster_bytes = cluster_size_bytes(state);
     usize copied = 0;
     u32 cluster = first;
-    while (cluster >= 2 && cluster < FAT32_END_OF_CHAIN && copied < size_out) {
+    while (is_data_cluster(cluster) && copied < size_out) {
         const usize remaining = size_out - copied;
         if (remaining >= cluster_bytes) {
             usize full_clusters_remaining = remaining / cluster_bytes;
-            u32 run_cluster_count = 1;
-            u32 run_last_cluster = cluster;
-            u32 next_cluster = FAT32_END_OF_CHAIN;
-
-            while (run_cluster_count < full_clusters_remaining) {
-                u32 candidate = 0;
-                if (!read_fat_value(state, run_last_cluster, candidate)) {
-                    owned_buffer.reset();
-                    return false;
-                }
-                if (candidate != run_last_cluster + 1) {
-                    next_cluster = candidate;
-                    break;
-                }
-                run_last_cluster = candidate;
-                ++run_cluster_count;
+            cluster_run run {};
+            if (!collect_cluster_run(state, cluster, full_clusters_remaining, run)) {
+                owned_buffer.reset();
+                return false;
             }
 
-            const u64 run_start_lba = cluster_first_lba(state, cluster);
-            const u32 run_sector_count = run_cluster_count * state.info.sectors_per_cluster;
+            const u64 run_start_lba = cluster_first_lba(state, run.first_cluster);
+            const u32 run_sector_count = run.cluster_count * state.info.sectors_per_cluster;
 
             const u64 run_end_lba = run_start_lba + run_sector_count - 1;
             log::debug() << "fat32: read run clusters=["
-                            << static_cast<unsigned long long>(cluster) << ".."
-                            << static_cast<unsigned long long>(run_last_cluster) << "] lba=["
+                            << static_cast<unsigned long long>(run.first_cluster) << ".."
+                            << static_cast<unsigned long long>(run.last_cluster) << "] lba=["
                             << static_cast<unsigned long long>(run_start_lba) << ".."
                             << static_cast<unsigned long long>(run_end_lba) << "] sectors="
                             << static_cast<unsigned long long>(run_sector_count) << " bytes="
-                            << static_cast<unsigned long long>(static_cast<u64>(run_cluster_count) * cluster_bytes);
+                            << static_cast<unsigned long long>(static_cast<u64>(run.cluster_count) * cluster_bytes);
 
             if (!read_sectors(state,
                               run_start_lba,
@@ -1305,25 +1429,26 @@ static auto read_file_data(const mount_state& state,
                 return false;
             }
 
-            copied += run_cluster_count * cluster_bytes;
+            copied += run.cluster_count * cluster_bytes;
             if (copied >= size_out) {
                 break;
             }
 
-            if (next_cluster >= FAT32_END_OF_CHAIN) {
-                if (!read_fat_value(state, run_last_cluster, next_cluster)) {
+            u32 next_cluster = run.next_cluster;
+            if (!is_data_cluster(next_cluster)) {
+                if (!read_fat_value(state, run.last_cluster, next_cluster)) {
                     owned_buffer.reset();
                     return false;
                 }
             }
 
-            if (next_cluster >= 2 && next_cluster < FAT32_END_OF_CHAIN) {
+            if (is_data_cluster(next_cluster) && next_cluster != run.last_cluster + 1) {
                 log::debug() << "fat32: cluster chain discontinuity after "
-                             << static_cast<unsigned long long>(run_last_cluster) << " -> "
+                             << static_cast<unsigned long long>(run.last_cluster) << " -> "
                              << static_cast<unsigned long long>(next_cluster);
             }
 
-            if (next_cluster < 2 || next_cluster >= FAT32_END_OF_CHAIN) {
+            if (!is_data_cluster(next_cluster)) {
                 owned_buffer.reset();
                 return false;
             }
@@ -1332,32 +1457,14 @@ static auto read_file_data(const mount_state& state,
             continue;
         }
 
-        const u64 cluster_lba = cluster_first_lba(state, cluster);
-        const usize whole_sectors = remaining / state.info.bytes_per_sector;
-        const usize tail_bytes = remaining % state.info.bytes_per_sector;
-
         log::debug() << "fat32: reading tail cluster=" << static_cast<unsigned long long>(cluster)
-                     << " lba_start=" << static_cast<unsigned long long>(cluster_lba)
-                     << " whole_sectors=" << static_cast<unsigned long long>(whole_sectors)
-                     << " tail_bytes=" << static_cast<unsigned long long>(tail_bytes);
+                     << " bytes=" << static_cast<unsigned long long>(remaining);
 
-        if (whole_sectors > 0) {
-            if (!read_sectors(state, cluster_lba, static_cast<u32>(whole_sectors), owned_buffer.get() + copied)) {
-                owned_buffer.reset();
-                return false;
-            }
-            copied += whole_sectors * state.info.bytes_per_sector;
+        if (!read_cluster_bytes(state, cluster, 0, owned_buffer.get() + copied, remaining)) {
+            owned_buffer.reset();
+            return false;
         }
-
-        if (tail_bytes > 0) {
-            u8 sector[512];
-            if (!read_sectors(state, cluster_lba + whole_sectors, 1, sector)) {
-                owned_buffer.reset();
-                return false;
-            }
-            memory::copy(owned_buffer.get() + copied, sector, tail_bytes);
-            copied += tail_bytes;
-        }
+        copied += remaining;
 
         break;
     }
@@ -1444,7 +1551,6 @@ static auto read_file_range(const mount_state& state,
     }
 
     const usize cluster_bytes = cluster_size_bytes(state);
-    const usize sector_bytes = state.info.bytes_per_sector;
 
     while (size_out < remaining) {
         const usize absolute_offset = offset + size_out;
@@ -1459,36 +1565,24 @@ static auto read_file_range(const mount_state& state,
         const usize bytes_left = remaining - size_out;
         if (cluster_offset == 0 && bytes_left >= cluster_bytes) {
             const usize max_run_clusters = bytes_left / cluster_bytes;
-            u32 run_cluster_count = 1;
-            u32 run_last_cluster = cluster;
-            u32 next_cluster = FAT32_END_OF_CHAIN;
-
-            while (run_cluster_count < max_run_clusters) {
-                u32 candidate = 0;
-                if (!read_fat_value(state, run_last_cluster, candidate)) {
-                    return false;
-                }
-                if (candidate != run_last_cluster + 1) {
-                    next_cluster = candidate;
-                    break;
-                }
-                run_last_cluster = candidate;
-                ++run_cluster_count;
-            }
-
-            const u32 run_sector_count = run_cluster_count * state.info.sectors_per_cluster;
-            if (!read_sectors(state, cluster_first_lba(state, cluster), run_sector_count, out + size_out)) {
+            cluster_run run {};
+            if (!collect_cluster_run(state, cluster, max_run_clusters, run)) {
                 return false;
             }
 
-            size_out += static_cast<usize>(run_cluster_count) * cluster_bytes;
+            const u32 run_sector_count = run.cluster_count * state.info.sectors_per_cluster;
+            if (!read_sectors(state, cluster_first_lba(state, run.first_cluster), run_sector_count, out + size_out)) {
+                return false;
+            }
+
+            size_out += static_cast<usize>(run.cluster_count) * cluster_bytes;
             file.cluster_cache_valid = true;
-            if (next_cluster >= 2 && next_cluster < FAT32_END_OF_CHAIN && size_out < remaining) {
-                file.cluster_cache_index = cluster_index + run_cluster_count;
-                file.cluster_cache_value = next_cluster;
+            if (is_data_cluster(run.next_cluster) && size_out < remaining) {
+                file.cluster_cache_index = cluster_index + run.cluster_count;
+                file.cluster_cache_value = run.next_cluster;
             } else {
-                file.cluster_cache_index = cluster_index + run_cluster_count - 1;
-                file.cluster_cache_value = run_last_cluster;
+                file.cluster_cache_index = cluster_index + run.cluster_count - 1;
+                file.cluster_cache_value = run.last_cluster;
             }
             continue;
         }
@@ -1498,45 +1592,10 @@ static auto read_file_range(const mount_state& state,
             chunk = bytes_left;
         }
 
-        usize chunk_done = 0;
-        u64 lba = cluster_first_lba(state, cluster) + (cluster_offset / sector_bytes);
-        usize sector_offset = cluster_offset % sector_bytes;
-
-        if (sector_offset != 0) {
-            u8 sector[512];
-            if (!read_sectors(state, lba, 1, sector)) {
-                return false;
-            }
-            usize first_chunk = sector_bytes - sector_offset;
-            if (first_chunk > chunk) {
-                first_chunk = chunk;
-            }
-            memory::copy(out + size_out, sector + sector_offset, first_chunk);
-            size_out += first_chunk;
-            chunk_done += first_chunk;
-            ++lba;
+        if (!read_cluster_bytes(state, cluster, cluster_offset, out + size_out, chunk)) {
+            return false;
         }
-
-        const usize whole_sectors = (chunk - chunk_done) / sector_bytes;
-        if (whole_sectors > 0) {
-            if (!read_sectors(state, lba, static_cast<u32>(whole_sectors), out + size_out)) {
-                return false;
-            }
-            const usize whole_bytes = whole_sectors * sector_bytes;
-            size_out += whole_bytes;
-            chunk_done += whole_bytes;
-            lba += whole_sectors;
-        }
-
-        const usize tail_bytes = chunk - chunk_done;
-        if (tail_bytes > 0) {
-            u8 sector[512];
-            if (!read_sectors(state, lba, 1, sector)) {
-                return false;
-            }
-            memory::copy(out + size_out, sector, tail_bytes);
-            size_out += tail_bytes;
-        }
+        size_out += chunk;
     }
 
     return true;
@@ -1597,15 +1656,6 @@ static auto write_file_data(mount_state& state, const u8* data, usize size, u32&
     }
 
     first_cluster_out = first_cluster;
-    return true;
-}
-
-static auto all_zero_guid(const u8 guid[16]) -> bool {
-    for (usize i = 0; i < 16; ++i) {
-        if (guid[i] != 0) {
-            return false;
-        }
-    }
     return true;
 }
 
@@ -1750,98 +1800,15 @@ void init() {
     reset_state(s_state);
 }
 
-auto mount_first_available() -> status_code {
+auto mount_partition(block_device* device, u64 start_lba) -> status_code {
     if (!s_state.initialised) {
         init();
     }
 
     mount_state candidate {};
-    const usize device_count = block::device_count();
-
-    for (usize device_index = 0; device_index < device_count; ++device_index) {
-        auto* device = block::get_device(device_index);
-        if (device == null || device->block_size != 512) {
-            continue;
-        }
-
-        log::debug() << "fat32: trying raw probe on device='" << device->name.c_str() << "'";
-
-        if (probe_volume(device, 0, candidate)) {
-            log::debug() << "fat32: mounted raw volume on device='" << device->name.c_str() << "'";
-            s_state = candidate;
-            return status_code::success;
-        }
-
-        u8 sector0[512];
-        if (!block::read_blocks(device, 0, 1, sector0) || sector0[510] != 0x55 || sector0[511] != 0xAA) {
-            continue;
-        }
-
-        u8 sector1[512];
-        if (block::read_blocks(device, 1, 1, sector1)) {
-            const auto* gpt = reinterpret_cast<const GPTHeader*>(sector1);
-            if (gpt->signature[0] == 'E' && gpt->signature[1] == 'F' && gpt->signature[2] == 'I'
-                && gpt->signature[3] == ' ' && gpt->signature[4] == 'P' && gpt->signature[5] == 'A'
-                && gpt->signature[6] == 'R' && gpt->signature[7] == 'T'
-                && gpt->partition_entry_size >= sizeof(GPTPartitionEntry)
-                && gpt->partition_entry_count > 0) {
-                log::debug() << "fat32: GPT detected on device='" << device->name.c_str()
-                             << "' entries=" << static_cast<unsigned long long>(gpt->partition_entry_count)
-                             << " entry_lba=" << static_cast<unsigned long long>(gpt->partition_entry_lba);
-                const u32 entries_per_sector = 512 / gpt->partition_entry_size;
-                u8 entry_sector[512];
-                u32 cached_sector_index = static_cast<u32>(-1);
-
-                for (u32 entry_index = 0; entry_index < gpt->partition_entry_count; ++entry_index) {
-                    const u32 sector_index = entry_index / entries_per_sector;
-                    if (sector_index != cached_sector_index) {
-                        if (!block::read_blocks(device, gpt->partition_entry_lba + sector_index, 1, entry_sector)) {
-                            break;
-                        }
-                        cached_sector_index = sector_index;
-                    }
-
-                    const u32 entry_offset = (entry_index % entries_per_sector) * gpt->partition_entry_size;
-                    const auto* partition = reinterpret_cast<const GPTPartitionEntry*>(entry_sector + entry_offset);
-                    if (all_zero_guid(partition->type_guid) || partition->first_lba == 0 || partition->last_lba < partition->first_lba) {
-                        continue;
-                    }
-
-                    log::debug() << "fat32: probing GPT partition index="
-                                 << static_cast<unsigned long long>(entry_index) << " start_lba="
-                                 << static_cast<unsigned long long>(partition->first_lba) << " end_lba="
-                                 << static_cast<unsigned long long>(partition->last_lba);
-
-                    if (probe_volume(device, partition->first_lba, candidate)) {
-                        log::debug() << "fat32: mounted GPT partition index="
-                                     << static_cast<unsigned long long>(entry_index) << " on device='"
-                                     << device->name.c_str() << "'";
-                        s_state = candidate;
-                        return status_code::success;
-                    }
-                }
-            }
-        }
-
-        const auto* partitions = reinterpret_cast<const MBRPartitionEntry*>(sector0 + 446);
-        for (usize partition_index = 0; partition_index < 4; ++partition_index) {
-            if (partitions[partition_index].first_lba == 0 || partitions[partition_index].sector_count == 0) {
-                continue;
-            }
-
-            log::debug() << "fat32: probing MBR partition index="
-                         << static_cast<unsigned long long>(partition_index) << " start_lba="
-                         << static_cast<unsigned long long>(partitions[partition_index].first_lba)
-                         << " sectors="
-                         << static_cast<unsigned long long>(partitions[partition_index].sector_count);
-            if (probe_volume(device, partitions[partition_index].first_lba, candidate)) {
-                log::debug() << "fat32: mounted MBR partition index="
-                             << static_cast<unsigned long long>(partition_index) << " on device='"
-                             << device->name.c_str() << "'";
-                s_state = candidate;
-                return status_code::success;
-            }
-        }
+    if (probe_volume(device, start_lba, candidate)) {
+        s_state = candidate;
+        return status_code::success;
     }
 
     reset_state(s_state);
@@ -2099,5 +2066,36 @@ auto remove_file(string_view path) -> bool {
     return free_cluster_chain(s_state, first_cluster(entry.entry));
 }
 
+auto driver() -> const fs::filesystem_driver& {
+    static const fs::filesystem_driver kDriver = {
+        .name = "fat32",
+        .init = init,
+        .mount_partition = mount_partition,
+        .is_mounted = is_mounted,
+        .fill_runtime_info = fill_driver_runtime_info,
+        .file_exists = file_exists,
+        .file_size = file_size,
+        .directory_exists = directory_exists,
+        .list_directory = list_driver_directory,
+        .open_file = open_driver_file,
+        .read_file_range = read_driver_file_range,
+        .read_file = static_cast<const u8* (*)(string_view, kernel_heap_ptr<u8>&, usize&)>(read_file),
+        .write_file = write_file,
+        .remove_file = remove_file,
+        .max_direct_read_bytes = fs::MAX_DIRECT_FILESYSTEM_READ_BYTES,
+    };
+
+    return kDriver;
+}
+
 } // namespace fat32
+
+namespace fat32_driver {
+
+void register_builtin() {
+    fat32::s_fat32_descriptor.filesystem = &fat32::driver();
+    driver::register_driver(&fat32::s_fat32_descriptor);
+}
+
+} // namespace fat32_driver
 } // namespace vk

@@ -12,30 +12,62 @@ TAP_IF="tap0"
 DEBUG_QEMU=0
 VERBOSE=0
 NET_MODE="tap"
+BUILD_MODE="incremental"
 
 set -x
 set -e
+
+set_build_mode() {
+    local requested_mode="$1"
+
+    if [ "${BUILD_MODE}" != "incremental" ]; then
+        echo "Error: only one rebuild mode can be selected."
+        exit 1
+    fi
+
+    BUILD_MODE="${requested_mode}"
+}
+
+run_build() {
+    local make_args=()
+
+    if [ "${DEBUG_QEMU}" -eq 1 ]; then
+        make_args+=(DEBUG=1 GDB_WAIT=1)
+    elif [ "${VERBOSE}" -eq 1 ]; then
+        make_args+=(DEBUG=1)
+    fi
+
+    case "${BUILD_MODE}" in
+        full)
+            make clean
+            ;;
+        userspace)
+            make userspace-clean
+            ;;
+        incremental)
+            ;;
+        *)
+            echo "Error: unknown build mode: ${BUILD_MODE}"
+            exit 1
+            ;;
+    esac
+
+    make "${make_args[@]}" disk
+}
 
 # Parse args
 for arg in "$@"; do
     case "$arg" in
         --debug|-d) DEBUG_QEMU=1 ;;
         --verbose|-v) VERBOSE=1 ;;
-        --keep-disk) KEEP_DISK=1 ;;
         --tap) NET_MODE="tap" ;;
         --usernet) NET_MODE="user" ;;
+        --full-rebuild) set_build_mode "full" ;;
+        --userspace-rebuild) set_build_mode "userspace" ;;
     esac
 done
 
-if [ -z "${KEEP_DISK}" ]; then
-    if [ "${DEBUG_QEMU}" -eq 1 ]; then
-        make DEBUG=1 GDB_WAIT=1 clean disk
-    elif [ "${VERBOSE}" -eq 1 ]; then
-        make DEBUG=1 clean disk
-    else
-        make disk
-    fi
-fi
+run_build
 
 if [ ! -f "${EFI_FILE}" ]; then
     echo "Error: EFI file not found. Run: make"

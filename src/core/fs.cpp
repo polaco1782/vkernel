@@ -7,7 +7,9 @@
 
 #include "fs.h"
 
+#include "fs/driver.h"
 #include "fs/fat32.h"
+#include "fs/mounts.h"
 #include "fs/ramfs.h"
 
 #include "log.h"
@@ -16,6 +18,10 @@
 
 namespace vk {
 namespace {
+
+using filesystem_driver = fs::filesystem_driver;
+using filesystem_file_descriptor = fs::filesystem_file_descriptor;
+using filesystem_driver_getter = auto (*)() -> const filesystem_driver&;
 
 static u8 s_empty_file_marker = 0;
 
@@ -28,24 +34,13 @@ struct open_mode {
     bool append = false;
 };
 
-enum class stream_backend : u8 {
-    none,
-    fat32,
-};
-
-static auto stream_backend_name(stream_backend backend) -> const char* {
-    switch (backend) {
-        case stream_backend::none:
-            return "none";
-        case stream_backend::fat32:
-            return "fat32";
-    }
-    return "unknown";
+static auto filesystem_driver_name(const filesystem_driver* driver) -> const char* {
+    return driver != null ? driver->name : "none";
 }
 
 struct kernel_stream {
-    stream_backend backend = stream_backend::none;
-    fat32::file_descriptor fat_file {};
+    const filesystem_driver* driver = null;
+    filesystem_file_descriptor backend_file {};
     u8* owned_buffer = null;
     static_string<256> path;
     u64 owner_task_id = 0;
@@ -56,24 +51,54 @@ struct kernel_stream {
     bool writable = false;
     bool append = false;
     bool dirty = false;
-    bool direct_fat = false;
+    bool direct_backend = false;
     bool eof = false;
     bool error = false;
     bool in_use = false;
 };
 
 static constexpr usize MAX_STREAMS = 64;
-static constexpr usize MAX_DIRECT_FAT_READ_BYTES = 128 * 1024;
 static kernel_stream s_streams[MAX_STREAMS];
 static bool s_initialised = false;
+static const filesystem_driver* s_active_driver = null;
+static const filesystem_driver_getter s_filesystem_driver_getters[] = {
+    fat32::driver,
+};
+
+static auto mounted_filesystem_driver() -> const filesystem_driver* {
+    if (s_active_driver == null || s_active_driver->is_mounted == null || !s_active_driver->is_mounted()) {
+        return null;
+    }
+    return s_active_driver;
+}
+
+static auto mount_supported_partition(const fs::mounts::partition_view& partition, void*) -> bool {
+    for (const auto getter : s_filesystem_driver_getters) {
+        if (getter == null) {
+            continue;
+        }
+        const auto* driver = &getter();
+        if (driver->mount_partition == null) {
+            continue;
+        }
+        if (driver->mount_partition(partition.device, partition.start_lba) != status_code::success) {
+            continue;
+        }
+
+        s_active_driver = driver;
+        return true;
+    }
+
+    return false;
+}
 
 static void reset_stream(kernel_stream& stream) {
     if (stream.owned_buffer != null) {
         g_kernel_heap.free(stream.owned_buffer);
         stream.owned_buffer = null;
     }
-    stream.backend = stream_backend::none;
-    stream.fat_file = {};
+    stream.driver = null;
+    stream.backend_file = {};
     stream.path.clear();
     stream.owner_task_id = 0;
     stream.size = 0;
@@ -83,7 +108,7 @@ static void reset_stream(kernel_stream& stream) {
     stream.writable = false;
     stream.append = false;
     stream.dirty = false;
-    stream.direct_fat = false;
+    stream.direct_backend = false;
     stream.eof = false;
     stream.error = false;
     stream.in_use = false;
@@ -154,7 +179,7 @@ static auto normalize_path(string_view path) -> string_view {
 }
 
 static auto stream_data(const kernel_stream& stream) -> const u8* {
-    if (stream.direct_fat) {
+    if (stream.direct_backend) {
         return null;
     }
     if (stream.size == 0) {
@@ -195,8 +220,7 @@ static auto ensure_capacity(kernel_stream& stream, usize required) -> bool {
     }
     stream.owned_buffer = new_buffer;
     stream.capacity = new_capacity;
-    stream.backend = stream_backend::fat32;
-    stream.direct_fat = false;
+    stream.direct_backend = false;
     return true;
 }
 
@@ -216,90 +240,67 @@ static auto handle_from_id(fs::file_handle handle) -> kernel_stream* {
     return &stream;
 }
 
-static auto try_fat_file_exists(string_view path) -> bool {
-    if (!fat32::is_mounted()) {
+static auto try_backend_file_exists(string_view path) -> bool {
+    const auto* driver = mounted_filesystem_driver();
+    if (driver == null || driver->file_exists == null) {
         return false;
     }
 
-    return fat32::file_exists(path);
+    return driver->file_exists(path);
 }
 
-static auto try_fat_file_size(string_view path) -> usize {
-    if (!fat32::is_mounted()) {
+static auto try_backend_file_size(string_view path) -> usize {
+    const auto* driver = mounted_filesystem_driver();
+    if (driver == null || driver->file_size == null) {
         return 0;
     }
 
-    return fat32::file_size(path);
+    return driver->file_size(path);
 }
 
-static auto try_fat_directory_exists(string_view path) -> bool {
-    if (!fat32::is_mounted()) {
+static auto try_backend_directory_exists(string_view path) -> bool {
+    const auto* driver = mounted_filesystem_driver();
+    if (driver == null || driver->directory_exists == null) {
         return false;
     }
 
-    return fat32::directory_exists(path);
+    return driver->directory_exists(path);
 }
 
-static auto try_fat_open_file(string_view path, fat32::file_descriptor& file_out) -> bool {
-    if (!fat32::is_mounted()) {
+static auto try_backend_open_file(string_view path, filesystem_file_descriptor& file_out) -> bool {
+    const auto* driver = mounted_filesystem_driver();
+    if (driver == null || driver->open_file == null) {
         return false;
     }
 
-    return fat32::open_file(path, file_out);
+    return driver->open_file(path, file_out);
 }
 
-static auto try_fat_read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
-    if (!fat32::is_mounted()) {
+static auto try_backend_read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
+    const auto* driver = mounted_filesystem_driver();
+    if (driver == null || driver->read_file == null) {
         return null;
     }
 
     owned_buffer.reset();
-    return fat32::read_file(path, owned_buffer, size_out);
+    return driver->read_file(path, owned_buffer, size_out);
 }
 
-static auto try_fat_write_file(string_view path, const u8* data, usize size) -> bool {
-    if (!fat32::is_mounted()) {
+static auto try_backend_remove_file(string_view path) -> bool {
+    const auto* driver = mounted_filesystem_driver();
+    if (driver == null || driver->remove_file == null) {
         return false;
     }
 
-    return fat32::write_file(path, data, size);
+    return driver->remove_file(path);
 }
-
-static auto try_fat_remove_file(string_view path) -> bool {
-    if (!fat32::is_mounted()) {
+static auto try_backend_list_directory(string_view path, fs::directory_visit_callback callback, void* context) -> bool {
+    const auto* driver = mounted_filesystem_driver();
+    if (driver == null || driver->list_directory == null || callback == null) {
         return false;
     }
 
-    return fat32::remove_file(path);
-}
-
-struct directory_list_forwarder {
-    fs::directory_visit_callback callback = null;
-    void* context = null;
-};
-
-static auto forward_directory_entry(const fat32::directory_entry_info& entry, void* raw_context) -> bool {
-    auto* context = static_cast<directory_list_forwarder*>(raw_context);
-    if (context == null || context->callback == null) {
-        return true;
-    }
-
-    fs::directory_entry_info forwarded {};
-    if (!forwarded.name.assign(entry.name.view())) {
-        return false;
-    }
-    forwarded.is_directory = entry.is_directory;
-    forwarded.size = entry.size;
-    return context->callback(forwarded, context->context);
-}
-
-static auto try_fat_list_directory(string_view path, fs::directory_visit_callback callback, void* context) -> bool {
-    if (!fat32::is_mounted() || callback == null) {
-        return false;
-    }
-
-    directory_list_forwarder forwarder { callback, context };
-    return fat32::list_directory(path, forward_directory_entry, &forwarder);
+    return driver->list_directory(path, callback, context);
 }
 
 static auto is_backup_shell_request(string_view path) -> bool {
@@ -315,22 +316,22 @@ static auto find_backup_shell(string_view path) -> const file_entry* {
 
 static auto close_stream(fs::file_handle handle, kernel_stream& stream, const char* reason) -> int {
     log::debug() << "fs: file_close handle=" << static_cast<unsigned long long>(handle)
-                 << " backend=" << stream_backend_name(stream.backend)
+                 << " backend=" << filesystem_driver_name(stream.driver)
                  << " owner=" << static_cast<unsigned long long>(stream.owner_task_id)
                  << " path='" << stream.path.view() << "' dirty="
                  << (stream.dirty ? "yes" : "no") << " size="
                  << static_cast<unsigned long long>(stream.size)
                  << " reason=" << reason;
 
-    if (stream.backend == stream_backend::fat32 && stream.dirty) {
+    if (stream.driver != null && stream.dirty) {
         const u8* data = stream.size > 0 ? stream_data(stream) : null;
-        if (!try_fat_write_file(stream.path.view(), data, stream.size)) {
+        if (stream.driver->write_file == null || !stream.driver->write_file(stream.path.view(), data, stream.size)) {
             stream.error = true;
             log::debug() << "fs: file_close flush failed handle=" << static_cast<unsigned long long>(handle)
                          << " path='" << stream.path.view() << "'";
             return -1;
         }
-        log::debug() << "fs: file_close flushed fat32 file path='" << stream.path.view()
+        log::debug() << "fs: file_close flushed file path='" << stream.path.view()
                      << "' size=" << static_cast<unsigned long long>(stream.size);
     }
 
@@ -348,7 +349,16 @@ void fs::init() {
     for (auto& stream : s_streams) {
         reset_stream(stream);
     }
-    fat32::init();
+    for (const auto getter : s_filesystem_driver_getters) {
+        if (getter == null) {
+            continue;
+        }
+        const auto* driver = &getter();
+        if (driver->init != null) {
+            driver->init();
+        }
+    }
+    s_active_driver = null;
     s_initialised = true;
 }
 
@@ -357,15 +367,16 @@ auto fs::mount_boot_filesystem() -> status_code {
         init();
     }
 
-    const auto rc = fat32::mount_first_available();
+    s_active_driver = null;
+    const auto rc = fs::mounts::mount_gpt_partition_index(1, mount_supported_partition, null);
     if (rc == status_code::success) {
-        const auto mounted = fat32::info();
-        log::info() << "fs: mounted " << mounted.filesystem_name.c_str()
+        const auto mounted = query_info();
+        log::info() << "fs: mounted " << mounted.active_backend.c_str()
                     << " on " << mounted.block_device.c_str()
                     << " root=" << mounted.logical_root_path.c_str();
     } else {
-        log::warn() << "fs: FAT32 mount failed; only RAMFS backup shell remains available";
-        log::debug() << "fs: FAT32 mount error code: " << static_cast<u32>(rc);
+        log::warn() << "fs: boot filesystem mount failed for hardcoded GPT data partition";
+        log::debug() << "fs: mount error code: " << static_cast<u32>(rc);
     }
 
     return rc;
@@ -375,18 +386,9 @@ auto fs::query_info() -> runtime_info {
     runtime_info info {};
     info.fallback_ready = ramfs::is_ready();
 
-    if (fat32::is_mounted()) {
-        const auto mounted = fat32::info();
-        info.fat32_mounted = true;
-        info.writable = mounted.writable;
-        (void)info.active_backend.assign(mounted.filesystem_name.view());
-        (void)info.block_device.assign(mounted.block_device.view());
-        (void)info.logical_root_path.assign(mounted.logical_root_path.view());
-        info.bytes_per_sector = mounted.bytes_per_sector;
-        info.sectors_per_cluster = mounted.sectors_per_cluster;
-        info.cluster_size = mounted.bytes_per_sector * static_cast<u32>(mounted.sectors_per_cluster);
-        info.first_data_sector = mounted.first_data_sector;
-        info.root_cluster = mounted.logical_root_cluster;
+    const auto* driver = mounted_filesystem_driver();
+    if (driver != null && driver->fill_runtime_info != null) {
+        driver->fill_runtime_info(info);
         return info;
     }
 
@@ -401,7 +403,7 @@ auto fs::file_exists(const char* path) -> bool {
     }
 
     const auto normalized = normalize_path(string_view(path));
-    if (try_fat_file_exists(normalized)) {
+    if (try_backend_file_exists(normalized)) {
         return true;
     }
     return false;
@@ -413,9 +415,9 @@ auto fs::file_size(const char* path) -> usize {
     }
 
     const auto normalized = normalize_path(string_view(path));
-    const usize fat_size = try_fat_file_size(normalized);
-    if (fat_size > 0 || try_fat_file_exists(normalized)) {
-        return fat_size;
+    const usize size = try_backend_file_size(normalized);
+    if (size > 0 || try_backend_file_exists(normalized)) {
+        return size;
     }
 
     return 0;
@@ -427,7 +429,7 @@ auto fs::directory_exists(const char* path) -> bool {
     }
 
     const auto normalized = normalize_path(string_view(path));
-    return try_fat_directory_exists(normalized);
+    return try_backend_directory_exists(normalized);
 }
 
 auto fs::list_directory(const char* path, directory_visit_callback callback, void* context) -> bool {
@@ -439,7 +441,7 @@ auto fs::list_directory(const char* path, directory_visit_callback callback, voi
     }
 
     const auto normalized = normalize_path(string_view(path));
-    const bool ok = try_fat_list_directory(normalized, callback, context);
+    const bool ok = try_backend_list_directory(normalized, callback, context);
     log::debug() << "fs: list_directory path='" << normalized << "' result=" << (ok ? "ok" : "fail");
     return ok;
 }
@@ -447,11 +449,13 @@ auto fs::list_directory(const char* path, directory_visit_callback callback, voi
 auto fs::load_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
     const auto normalized = normalize_path(path);
     log::debug() << "fs: loading file '" << normalized << "'";
-    const u8* fat_data = try_fat_read_file(normalized, owned_buffer, size_out);
-    if (fat_data != null) {
-        log::debug() << "fs: load_file '" << normalized << "' resolved via fat32 size="
+    const u8* backend_data = try_backend_read_file(normalized, owned_buffer, size_out);
+    if (backend_data != null) {
+        const auto* driver = mounted_filesystem_driver();
+        log::debug() << "fs: load_file '" << normalized << "' resolved via "
+                     << filesystem_driver_name(driver) << " size="
                      << static_cast<unsigned long long>(size_out);
-        return fat_data;
+        return backend_data;
     }
 
     owned_buffer.reset();
@@ -514,17 +518,18 @@ auto fs::file_open(const char* path, const char* mode_string) -> file_handle {
         }
 
         if (mode.writable) {
-            if (!fat32::is_mounted()) {
-                log::debug() << "fs: file_open denied writable open without mounted fat32 path='"
+            const auto* driver = mounted_filesystem_driver();
+            if (driver == null) {
+                log::debug() << "fs: file_open denied writable open without mounted filesystem path='"
                              << normalized << "'";
                 reset_stream(stream);
                 return 0;
             }
 
-            stream.backend = stream_backend::fat32;
+            stream.driver = driver;
             kernel_heap_ptr<u8> owned_buffer;
             usize size = 0;
-            const u8* file_data = try_fat_read_file(normalized, owned_buffer, size);
+            const u8* file_data = try_backend_read_file(normalized, owned_buffer, size);
             const bool file_exists = file_data != null;
 
             if (!file_exists && !mode.create) {
@@ -557,24 +562,24 @@ auto fs::file_open(const char* path, const char* mode_string) -> file_handle {
 
             stream.position = mode.append ? stream.size : 0;
             log::debug() << "fs: file_open handle=" << static_cast<unsigned long long>(i + 1)
-                         << " backend=" << stream_backend_name(stream.backend)
+                         << " backend=" << filesystem_driver_name(stream.driver)
                          << " path='" << normalized << "' size="
                          << static_cast<unsigned long long>(stream.size)
                          << " position=" << static_cast<unsigned long long>(stream.position);
             return static_cast<file_handle>(i + 1);
         }
 
-        fat32::file_descriptor fat_file {};
-        if (try_fat_open_file(normalized, fat_file)) {
-            stream.backend = stream_backend::fat32;
-            stream.fat_file = fat_file;
-            stream.direct_fat = true;
-            stream.size = fat_file.size;
-            stream.capacity = fat_file.size;
+        filesystem_file_descriptor backend_file {};
+        if (try_backend_open_file(normalized, backend_file)) {
+            stream.driver = mounted_filesystem_driver();
+            stream.backend_file = backend_file;
+            stream.direct_backend = true;
+            stream.size = try_backend_file_size(normalized);
+            stream.capacity = stream.size;
             stream.position = 0;
             stream.eof = stream.size == 0;
             log::debug() << "fs: file_open handle=" << static_cast<unsigned long long>(i + 1)
-                         << " backend=" << stream_backend_name(stream.backend)
+                         << " backend=" << filesystem_driver_name(stream.driver)
                          << " path='" << normalized << "' size="
                          << static_cast<unsigned long long>(stream.size);
             return static_cast<file_handle>(i + 1);
@@ -636,12 +641,13 @@ auto fs::file_read(file_handle handle, void* buf, usize buf_size) -> usize {
 
     const usize remaining = stream->size - stream->position;
     usize to_copy = remaining < buf_size ? remaining : buf_size;
-    if (stream->backend == stream_backend::fat32 && stream->direct_fat) {
-        if (to_copy > MAX_DIRECT_FAT_READ_BYTES) {
-            to_copy = MAX_DIRECT_FAT_READ_BYTES;
+    if (stream->driver != null && stream->direct_backend) {
+        if (to_copy > stream->driver->max_direct_read_bytes) {
+            to_copy = stream->driver->max_direct_read_bytes;
         }
         usize read_count = 0;
-        if (!fat32::read_file(stream->fat_file, stream->position, buf, to_copy, read_count)) {
+        if (stream->driver->read_file_range == null
+            || !stream->driver->read_file_range(stream->backend_file, stream->position, buf, to_copy, read_count)) {
             stream->error = true;
             return 0;
         }
@@ -782,7 +788,7 @@ auto fs::file_remove(const char* path) -> int {
     }
 
     const auto normalized = normalize_path(string_view(path));
-    const bool removed = try_fat_remove_file(normalized);
+    const bool removed = try_backend_remove_file(normalized);
     log::debug() << "fs: file_remove path='" << normalized << "' result="
                  << (removed ? "removed" : "not-found-or-failed");
     return removed ? 0 : -1;

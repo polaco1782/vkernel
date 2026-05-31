@@ -57,7 +57,7 @@ enum class KNodeId : u16 {
     fs,
     fs_active_backend,
     fs_fallback_ready,
-    fs_fat32_mounted,
+    fs_mounted,
     fs_writable,
     fs_block_device,
     fs_root_path,

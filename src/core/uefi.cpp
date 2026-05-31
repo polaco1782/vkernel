@@ -16,6 +16,7 @@ namespace uefi {
 
 /* Global system table */
 system_table* g_system_table = null;
+handle g_image_handle = null;
 
 /* Initialize UEFI subsystem */
 auto init(handle image_handle, system_table* system_table) -> status {
@@ -25,6 +26,7 @@ auto init(handle image_handle, system_table* system_table) -> status {
     
     /* Store the system table */
     g_system_table = system_table;
+    g_image_handle = image_handle;
     
     /* Verify the system table signature */
     if (system_table->hdr.signature != SYSTEM_TABLE_SIGNATURE) {

@@ -122,6 +122,11 @@ auto load(string_view name) -> i32 {
                         }
                     }
                     break;
+                case driver_type::filesystem:
+                    if (s_drivers[i].desc->filesystem && s_drivers[i].desc->filesystem->init) {
+                        s_drivers[i].desc->filesystem->init();
+                    }
+                    break;
                 default:
                     log::error() << "driver: unknown type for " << s_drivers[i].desc->name;
                     return -1;
@@ -164,6 +169,9 @@ auto unload(string_view name) -> i32 {
                         s_drivers[i].desc->net->shutdown();
                     }
                     break;
+                case driver_type::filesystem:
+                    log::warn() << "driver: filesystem unload not supported for " << s_drivers[i].desc->name;
+                    return -1;
                 default:
                     break;
             }
@@ -217,6 +225,7 @@ void list_loaded() {
                 case driver_type::sound: log::info() << " (sound)"; break;
                 case driver_type::block: log::info() << " (block)"; break;
                 case driver_type::network: log::info() << " (network)"; break;
+                case driver_type::filesystem: log::info() << " (filesystem)"; break;
                 default: log::info() << " (unknown)"; break;
             }
             any = true;
@@ -239,6 +248,7 @@ void list_available() {
                 case driver_type::sound: log::info() << " (sound)"; break;
                 case driver_type::block: log::info() << " (block)"; break;
                 case driver_type::network: log::info() << " (network)"; break;
+                case driver_type::filesystem: log::info() << " (filesystem)"; break;
                 default: log::info() << " (unknown)"; break;
             }
         }

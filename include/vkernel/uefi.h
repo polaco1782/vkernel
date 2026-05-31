@@ -67,6 +67,7 @@ struct table_header {
 
 /* Simple Text Output Protocol interface */
 struct text_output_protocol;
+struct system_table;
 
 /*
  * ALL UEFI protocol function pointers use the Microsoft x64 ABI.
@@ -111,6 +112,80 @@ struct text_output_protocol {
     text_output_cursor_fn set_cursor_position; // offset 56
     void* enable_cursor;                    // offset 64
     text_output_mode* mode;                 // offset 72  ← was at 80 before (bug!)
+};
+
+struct efi_file_protocol;
+struct efi_sfs_protocol;
+
+using efi_file_open_fn = VK_MSABI status(*)(
+    efi_file_protocol* self,
+    efi_file_protocol** new_handle,
+    const char16_t* file_name,
+    u64 open_mode,
+    u64 attributes);
+using efi_file_close_fn = VK_MSABI status(*)(efi_file_protocol* self);
+using efi_file_read_fn = VK_MSABI status(*)(efi_file_protocol* self, usize* buffer_size, void* buffer);
+using efi_file_write_fn = VK_MSABI status(*)(efi_file_protocol* self, usize* buffer_size, const void* buffer);
+using efi_file_set_position_fn = VK_MSABI status(*)(efi_file_protocol* self, u64 position);
+using efi_file_get_info_fn = VK_MSABI status(*)(efi_file_protocol* self, const guid* info_type, usize* buffer_size, void* buffer);
+using efi_sfs_open_volume_fn = VK_MSABI status(*)(efi_sfs_protocol* self, efi_file_protocol** root);
+
+struct efi_file_protocol {
+    u64 revision;
+    efi_file_open_fn open;
+    efi_file_close_fn close;
+    void* del;
+    efi_file_read_fn read;
+    efi_file_write_fn write;
+    void* get_position;
+    efi_file_set_position_fn set_position;
+    efi_file_get_info_fn get_info;
+};
+
+struct efi_sfs_protocol {
+    u64 revision;
+    efi_sfs_open_volume_fn open_volume;
+};
+
+struct efi_time {
+    u16 year;
+    u8 month;
+    u8 day;
+    u8 hour;
+    u8 minute;
+    u8 second;
+    u8 pad1;
+    u32 nanosecond;
+    i16 time_zone;
+    u8 daylight;
+    u8 reserved;
+};
+
+struct efi_file_info {
+    u64 size;
+    u64 file_size;
+    u64 physical_size;
+    efi_time create_time;
+    efi_time last_access_time;
+    efi_time modification_time;
+    u64 attribute;
+    char16_t file_name[1];
+};
+
+struct efi_loaded_image_protocol {
+    u32 revision;
+    handle parent_handle;
+    system_table* system_table_ptr;
+    handle device_handle;
+    void* file_path;
+    void* reserved;
+    u32 load_options_size;
+    void* load_options;
+    void* image_base;
+    u64 image_size;
+    u32 image_code_type;
+    u32 image_data_type;
+    void* unload;
 };
 
 /* ============================================================
@@ -190,6 +265,11 @@ struct boot_services_table {
 constexpr uefi::guid GOP_GUID = {
     0x9042A9DE, 0x23DC, 0x4A38,
     { 0x96, 0xFB, 0x7A, 0xDE, 0xD0, 0x80, 0x51, 0x6A }
+};
+
+constexpr uefi::guid LOADED_IMAGE_GUID = {
+    0x5b1b31a1, 0x9562, 0x11d2,
+    { 0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b }
 };
 
 /* EFI_SIMPLE_FILE_SYSTEM_PROTOCOL GUID */
@@ -310,6 +390,7 @@ struct system_table {
 
 /* Global system table pointer */
 extern system_table* g_system_table;
+extern handle g_image_handle;
 
 /* UEFI initialization */
 auto init(handle image_handle, system_table* system_table) -> status;

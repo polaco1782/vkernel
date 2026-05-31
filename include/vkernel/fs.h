@@ -45,7 +45,7 @@ using directory_visit_callback = bool (*)(const directory_entry_info& entry, voi
 
 struct runtime_info {
     bool fallback_ready = false;
-    bool fat32_mounted = false;
+    bool mounted = false;
     bool writable = false;
     static_string<16> active_backend;
     static_string<32> block_device;

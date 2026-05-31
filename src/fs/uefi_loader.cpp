@@ -18,31 +18,10 @@
 namespace vk {
 namespace {
 
-struct efi_file_protocol;
-
-using efi_file_open_fn = VK_MSABI uefi::status(*)(
-    efi_file_protocol* self,
-    efi_file_protocol** new_handle,
-    const char16_t* file_name,
-    u64 open_mode,
-    u64 attributes);
-using efi_file_close_fn = VK_MSABI uefi::status(*)(efi_file_protocol* self);
-using efi_file_read_fn = VK_MSABI uefi::status(*)(efi_file_protocol* self, usize* buffer_size, void* buffer);
-using efi_file_write_fn = VK_MSABI uefi::status(*)(efi_file_protocol* self, usize* buffer_size, const void* buffer);
-using efi_file_set_position_fn = VK_MSABI uefi::status(*)(efi_file_protocol* self, u64 position);
-using efi_file_get_info_fn = VK_MSABI uefi::status(*)(efi_file_protocol* self, const uefi::guid* info_type, usize* buffer_size, void* buffer);
-
-struct efi_file_protocol {
-    u64 revision;
-    efi_file_open_fn open;
-    efi_file_close_fn close;
-    void* del;
-    efi_file_read_fn read;
-    efi_file_write_fn write;
-    void* get_position;
-    efi_file_set_position_fn set_position;
-    efi_file_get_info_fn get_info;
-};
+using efi_file_protocol = uefi::efi_file_protocol;
+using efi_sfs_protocol = uefi::efi_sfs_protocol;
+using efi_loaded_image_protocol = uefi::efi_loaded_image_protocol;
+using efi_file_info = uefi::efi_file_info;
 
 struct efi_file_handle_deleter {
     void operator()(efi_file_protocol* file) const noexcept {
@@ -52,48 +31,12 @@ struct efi_file_handle_deleter {
     }
 };
 
-struct efi_sfs_protocol;
-
-using efi_sfs_open_volume_fn = VK_MSABI uefi::status(*)(efi_sfs_protocol* self, efi_file_protocol** root);
-
-struct efi_sfs_protocol {
-    u64 revision;
-    efi_sfs_open_volume_fn open_volume;
-};
-
-struct efi_time {
-    u16 year;
-    u8 month;
-    u8 day;
-    u8 hour;
-    u8 minute;
-    u8 second;
-    u8 pad1;
-    u32 nanosecond;
-    i16 time_zone;
-    u8 daylight;
-    u8 reserved;
-};
-
-struct efi_file_info {
-    u64 size;
-    u64 file_size;
-    u64 physical_size;
-    efi_time create_time;
-    efi_time last_access_time;
-    efi_time modification_time;
-    u64 attribute;
-    char16_t file_name[1];
-};
-
 struct bootstrap_ramfs_entry {
     const char* esp_path;
     const char* ramfs_path;
 };
 
 static constexpr bootstrap_ramfs_entry k_bootstrap_ramfs_entries[] = {
-    { "\\bin\\shell.vbin", "/bin/shell.vbin" },
-    { "\\bin\\shell.vbin.lines", "/bin/shell.vbin.lines" },
     { "\\boot\\vkernel.elf.map", "/boot/vkernel.elf.map" },
     { "\\boot\\vkernel.elf.lines", "/boot/vkernel.elf.lines" },
 };
@@ -125,12 +68,46 @@ struct efi_pool_deleter {
 using efi_file_ptr = unique_ptr<efi_file_protocol, efi_file_handle_deleter>;
 using efi_pool_ptr = unique_ptr<u8, efi_pool_deleter>;
 
+static auto open_sfs_root(void* sfs_iface, const char* source_name) -> efi_file_protocol* {
+    if (sfs_iface == null) {
+        return null;
+    }
+
+    auto* sfs = static_cast<efi_sfs_protocol*>(sfs_iface);
+    efi_file_protocol* root = null;
+    const auto status = sfs->open_volume(sfs, &root);
+    if (status != uefi::status::success || root == null) {
+        log::warn() << "Failed to open " << source_name << " volume";
+        return null;
+    }
+
+    return root;
+}
+
 static auto open_esp_root() -> efi_file_protocol* {
     if (uefi::g_system_table == null || uefi::g_system_table->boot_services == null) {
         return null;
     }
 
     auto* boot_services = uefi::g_system_table->boot_services;
+    if (uefi::g_image_handle != null) {
+        void* loaded_image_iface = null;
+        auto status = boot_services->handle_protocol(uefi::g_image_handle, &uefi::LOADED_IMAGE_GUID, &loaded_image_iface);
+        if (status == uefi::status::success && loaded_image_iface != null) {
+            const auto* loaded_image = static_cast<efi_loaded_image_protocol*>(loaded_image_iface);
+            if (loaded_image->device_handle != null) {
+                void* image_sfs_iface = null;
+                status = boot_services->handle_protocol(loaded_image->device_handle, &uefi::SFS_GUID, &image_sfs_iface);
+                if (status == uefi::status::success && image_sfs_iface != null) {
+                    auto* root = open_sfs_root(image_sfs_iface, "loaded image filesystem");
+                    if (root != null) {
+                        return root;
+                    }
+                }
+            }
+        }
+    }
+
     void* sfs_iface = null;
     auto status = boot_services->locate_protocol(&uefi::SFS_GUID, null, &sfs_iface);
     if (status != uefi::status::success || sfs_iface == null) {
@@ -138,15 +115,7 @@ static auto open_esp_root() -> efi_file_protocol* {
         return null;
     }
 
-    auto* sfs = static_cast<efi_sfs_protocol*>(sfs_iface);
-    efi_file_protocol* root = null;
-    status = sfs->open_volume(sfs, &root);
-    if (status != uefi::status::success || root == null) {
-        log::warn() << "Failed to open ESP volume";
-        return null;
-    }
-
-    return root;
+    return open_sfs_root(sfs_iface, "fallback Simple File System");
 }
 
 } // namespace

@@ -29,6 +29,7 @@ namespace vk {
 
 /* Forward declarations for built-in driver registration */
 namespace ac97_driver { void register_builtin(); }
+namespace fat32_driver { void register_builtin(); }
 namespace virtio_blk_driver { void register_builtin(); }
 namespace virtio_net_driver { void register_builtin(); }
 
@@ -253,10 +254,13 @@ auto efi_main(
     virtio_blk_driver::register_builtin();
     virtio_net_driver::register_builtin();
     ac97_driver::register_builtin();
-    log::info() << "Driver framework initialised (3 built-in drivers registered)";
+    fat32_driver::register_builtin();
+    log::info() << "Driver framework initialised (" << static_cast<unsigned long long>(driver::registered_count())
+                << " built-in drivers registered)";
 
     /* Keep RAMFS alive while block-backed VFS comes up. */
     (void)driver::load("virtio_blk");
+    (void)driver::load("fat32");
     (void)driver::load("virtio_net");
     (void)fs::mount_boot_filesystem();
     (void)driver::load("ac97");

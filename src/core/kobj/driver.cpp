@@ -17,7 +17,7 @@ static KNode s_driver_entry_name;
 static KNode s_driver_entry_type;
 static KNode s_driver_entry_loaded;
 
-static constexpr const char* kDriverTypeLabels[] = { "none", "sound", "block", "network" };
+static constexpr const char* kDriverTypeLabels[] = { "none", "sound", "block", "network", "filesystem" };
 static constexpr static_child_definition kDriverFields[] = {
     { "name", KTag::Str },
     { "type", KTag::Enum },
@@ -39,6 +39,22 @@ static auto get_driver_loaded_count(KNode&) -> KVal {
     return KVal::from_u64(count);
 }
 
+static auto driver_type_index(driver_type type) -> u32 {
+    switch (type) {
+        case driver_type::none:
+            return 0;
+        case driver_type::sound:
+            return 1;
+        case driver_type::block:
+            return 2;
+        case driver_type::network:
+            return 3;
+        case driver_type::filesystem:
+            return 4;
+    }
+    return 0;
+}
+
 void register_driver_nodes() {
     static const node_definition kDefinitions[] = {
         { &s_driver, &s_root, KNodeId::driver, "driver", KTag::Struct },
@@ -46,7 +62,7 @@ void register_driver_nodes() {
         { &s_driver_loaded_count, &s_driver, KNodeId::driver_loaded_count, "loaded_count", KTag::U64, false, true, "count", 0x01, get_driver_loaded_count },
         { &s_driver_entry, null, KNodeId::driver_entry, "<driver>", KTag::Struct },
         { &s_driver_entry_name, null, KNodeId::driver_entry_name, "name", KTag::Str },
-        { &s_driver_entry_type, null, KNodeId::driver_entry_type, "type", KTag::Enum, false, false, "", 0x01, null, null, kDriverTypeLabels, 4 },
+        { &s_driver_entry_type, null, KNodeId::driver_entry_type, "type", KTag::Enum, false, false, "", 0x01, null, null, kDriverTypeLabels, 5 },
         { &s_driver_entry_loaded, null, KNodeId::driver_entry_loaded, "loaded", KTag::Bool, false, true },
     };
 
@@ -125,10 +141,7 @@ auto driver_query_value(const resolved_node& resolved) -> KVal {
         case KNodeId::driver_entry_name:
             return KVal::from_str(resolved.driver->name);
         case KNodeId::driver_entry_type:
-            return KVal::from_enum(static_cast<u32>(resolved.driver->type == driver_type::none ? 0
-                : resolved.driver->type == driver_type::sound ? 1
-                : resolved.driver->type == driver_type::block ? 2
-                : 3));
+            return KVal::from_enum(driver_type_index(resolved.driver->type));
         case KNodeId::driver_entry_loaded:
             return KVal::from_bool(driver::is_loaded(resolved.driver->name));
         default:

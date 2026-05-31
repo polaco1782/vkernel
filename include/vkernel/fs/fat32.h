@@ -1,5 +1,8 @@
 #pragma once
 
+#include "driver.h"
+
+#include "../block.h"
 #include "../resource_ptr.h"
 #include "../types.h"
 
@@ -44,7 +47,7 @@ struct directory_entry_info {
 using directory_visit_callback = bool (*)(const directory_entry_info& entry, void* context);
 
 void init();
-auto mount_first_available() -> status_code;
+auto mount_partition(block_device* device, u64 start_lba) -> status_code;
 auto is_mounted() -> bool;
 auto info() -> mount_info;
 
@@ -57,6 +60,7 @@ auto read_file(file_descriptor& file, usize offset, void* buffer, usize size, us
 auto read_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8*;
 auto write_file(string_view path, const u8* data, usize size) -> bool;
 auto remove_file(string_view path) -> bool;
+auto driver() -> const fs::filesystem_driver&;
 
 } // namespace fat32
 } // namespace vk

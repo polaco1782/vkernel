@@ -19,6 +19,7 @@
 #include "types.h"
 #include "sound.h"
 #include "block.h"
+#include "fs/driver.h"
 #include "net.h"
 
 namespace vk {
@@ -32,6 +33,7 @@ enum class driver_type : u32 {
     sound   = 1,
     block   = 2,
     network = 3,
+    filesystem = 4,
     /* Future: display, … */
 };
 
@@ -45,6 +47,7 @@ struct driver_descriptor {
     const sound_driver_t*  sound;    /* non-null for sound drivers */
     const block_driver_t*  block;    /* non-null for block drivers */
     const net_driver_t*    net;      /* non-null for network drivers */
+    const fs::filesystem_driver* filesystem; /* non-null for filesystem drivers */
 };
 
 /* ============================================================

@@ -537,6 +537,7 @@ static const driver_descriptor s_virtio_net_descriptor = {
     .sound = null,
     .block = null,
     .net = &s_virtio_net_driver,
+    .filesystem = null,
 };
 
 } // namespace

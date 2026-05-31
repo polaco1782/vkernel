@@ -11,31 +11,9 @@ ESP_DIR   := $(BUILD_DIR)/esp
 BOOT_IMG  := $(BUILD_DIR)/$(KERNEL_NAME)_boot.img
 SYMBOLS_DIR := $(BUILD_DIR)/symbols
 
-# Userspace programs
-USERSPACE_DIR  := userspace
-LIBC_DIR       := $(USERSPACE_DIR)/libc
-SYSROOT_DIR    := $(USERSPACE_DIR)/sysroot
-NEWLIB_BUILD_DIR := $(USERSPACE_DIR)/newlib-build
-NEWLIB_BUILD_LOG := $(NEWLIB_BUILD_DIR)/config.log
-NEWLIB_CFG_MAKEFILE := $(NEWLIB_BUILD_DIR)/x86_64-elf/newlib/Makefile
-HELLO_VBIN      := $(USERSPACE_DIR)/hello/hello.vbin
-FRAMEBUFFER_VBIN := $(USERSPACE_DIR)/framebuffer/framebuffer.vbin
-FRAMEBUFFER_TEXT_VBIN := $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.vbin
-RAYTRACER_VBIN := $(USERSPACE_DIR)/raytracer/raytracer.vbin
-SHELL_VBIN      := $(USERSPACE_DIR)/shell/shell.vbin
-DOOM_VBIN       := $(USERSPACE_DIR)/doom/doom.vbin
-QUAKE_VBIN      := $(USERSPACE_DIR)/quake/quake.vbin
-MODPLAY_VBIN    := $(USERSPACE_DIR)/MODPlay/modplay.vbin
-CLOWNMDEMU_VBIN := $(USERSPACE_DIR)/clownmdemu/clownmdemu.vbin
-MINIMP3_VBIN    := $(USERSPACE_DIR)/minimp3/minimp3.vbin
-ROTOZOOM_VBIN    := $(USERSPACE_DIR)/rotozoom/rotozoom.vbin
-VKGUI_VBIN        := $(USERSPACE_DIR)/vkgui/vkgui.vbin
-SR_CUBE_VBIN     := $(USERSPACE_DIR)/sr_cube/sr_cube.vbin
-CPPCOMPAT_VBIN   := $(USERSPACE_DIR)/cppcompat/cppcompat.vbin
-VKOBJ_VBIN       := $(USERSPACE_DIR)/vkobj/vkobj.vbin
-VNES_VBIN        := $(USERSPACE_DIR)/vnes/vnes.vbin
-SNES9X_VBIN      := $(USERSPACE_DIR)/snes9x/snes9x.vbin
-USERSPACE_BINARIES := $(HELLO_VBIN) $(FRAMEBUFFER_VBIN) $(FRAMEBUFFER_TEXT_VBIN) $(RAYTRACER_VBIN) $(SHELL_VBIN) $(DOOM_VBIN) $(QUAKE_VBIN) $(MODPLAY_VBIN) $(CLOWNMDEMU_VBIN) $(MINIMP3_VBIN) $(ROTOZOOM_VBIN) $(VKGUI_VBIN) $(SR_CUBE_VBIN) $(CPPCOMPAT_VBIN) $(VKOBJ_VBIN) $(VNES_VBIN) $(SNES9X_VBIN)
+# Userspace build delegation
+USERSPACE_DIR := userspace
+USERSPACE_STAMP := $(USERSPACE_DIR)/.build/userspace$(if $(DEBUG),-debug,).stamp
 
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
@@ -45,14 +23,14 @@ OBJCOPY := objcopy
 OBJDUMP := objdump
 NM := nm
 
+USERSPACE_MAKE_ARGS := ROOT_DIR=$(CURDIR) ROOT_BUILD_DIR=$(abspath $(BUILD_DIR)) CROSS_PREFIX=$(CROSS_PREFIX) NM=$(NM) $(if $(DEBUG),DEBUG=$(DEBUG),)
+
 # Text symbol maps live under build/symbols/<original-path>.map.
 symbol_map_target = $(SYMBOLS_DIR)/$(1).map
 line_map_target = $(SYMBOLS_DIR)/$(1).lines
 KERNEL_SYMBOL_MAP := $(call symbol_map_target,$(BUILD_DIR)/$(KERNEL_NAME).elf)
 KERNEL_LINE_MAP := $(call line_map_target,$(BUILD_DIR)/$(KERNEL_NAME).elf)
-USERSPACE_DEBUG_BINARIES := $(USERSPACE_BINARIES)
-USERSPACE_SYMBOL_MAPS := $(foreach bin,$(USERSPACE_DEBUG_BINARIES),$(call symbol_map_target,$(bin)))
-USERSPACE_LINE_MAPS := $(foreach bin,$(USERSPACE_DEBUG_BINARIES),$(call line_map_target,$(bin)))
+KERNEL_BUILD_CONFIG_STAMP := $(BUILD_DIR)/.kernel_build_config$(if $(DEBUG),.debug,.release)$(if $(GDB_WAIT),.gdbwait,)
 
 # Compiler flags
 CXXFLAGS := -Wall -Wextra -Werror
@@ -103,6 +81,8 @@ ASM_OBJS := $(patsubst src/%.S,$(BUILD_DIR)/obj/%.o,$(ASM_SRCS))
 
 ALL_OBJS := $(CXX_OBJS) $(ASM_OBJS)
 
+.DELETE_ON_ERROR:
+
 # Default target
 all: $(EFI_FILE)
 
@@ -110,14 +90,29 @@ all: $(EFI_FILE)
 $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/fs $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64:
 	@mkdir -p $@
 
+$(KERNEL_BUILD_CONFIG_STAMP): Makefile | $(BUILD_DIR)
+	@tmp="$@.tmp"; rm -f "$$tmp"; \
+	{ \
+		printf 'CXX=%s\n' '$(CXX)'; \
+		printf 'CXXFLAGS=%s\n' '$(CXXFLAGS)'; \
+		printf 'LDFLAGS=%s\n' '$(LDFLAGS)'; \
+		printf 'DEBUG=%s\n' '$(if $(DEBUG),$(DEBUG),0)'; \
+		printf 'GDB_WAIT=%s\n' '$(if $(GDB_WAIT),$(GDB_WAIT),0)'; \
+	} > "$$tmp"; \
+	if ! cmp -s "$$tmp" "$@" 2>/dev/null; then \
+		mv -f "$$tmp" "$@"; \
+	else \
+		rm -f "$$tmp"; \
+	fi
+
 # Compile C++ files
-$(BUILD_DIR)/obj/%.o: src/%.cpp | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/fs $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
+$(BUILD_DIR)/obj/%.o: src/%.cpp $(KERNEL_BUILD_CONFIG_STAMP) | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/fs $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
 	@echo "  CXX     $<"
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Compile assembly files
-$(BUILD_DIR)/obj/%.o: src/%.S | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/fs $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
+$(BUILD_DIR)/obj/%.o: src/%.S $(KERNEL_BUILD_CONFIG_STAMP) | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/boot $(BUILD_DIR)/obj/core $(BUILD_DIR)/obj/fs $(BUILD_DIR)/obj/drivers $(BUILD_DIR)/obj/arch $(BUILD_DIR)/obj/arch/x86_64
 	@echo "  ASM     $<"
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -125,7 +120,11 @@ $(BUILD_DIR)/obj/%.o: src/%.S | $(BUILD_DIR) $(BUILD_DIR)/obj $(BUILD_DIR)/obj/b
 # Link ELF kernel
 $(BUILD_DIR)/$(KERNEL_NAME).elf: $(ALL_OBJS)
 	@echo "  LD      $@"
-	@$(LD) $(LDFLAGS) -o $@ $^
+	@tmp="$@.tmp"; rm -f "$$tmp"; \
+	trap 'rm -f "$$tmp"' EXIT INT TERM; \
+	$(LD) $(LDFLAGS) -o "$$tmp" $^; \
+	mv -f "$$tmp" "$@"; \
+	trap - EXIT INT TERM
 
 # Emit a sorted text symbol map for addr2line / post-mortem work.
 $(SYMBOLS_DIR)/%.map: %
@@ -149,7 +148,9 @@ endif
 
 $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@echo "  OBJCOPY $@"
-	@$(OBJCOPY) -O efi-app-x86_64 \
+	@tmp="$@.tmp"; rm -f "$$tmp"; \
+	trap 'rm -f "$$tmp"' EXIT INT TERM; \
+	$(OBJCOPY) -O efi-app-x86_64 \
 		--remove-section=.debug_info \
 		--remove-section=.debug_abbrev \
 		--remove-section=.debug_aranges \
@@ -162,7 +163,9 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 		--remove-section=.debug_macro \
 		--remove-section=.debug_loc \
 		--remove-section=.debug_frame \
-		$< $@
+		$< "$$tmp"; \
+	mv -f "$$tmp" "$@"; \
+	trap - EXIT INT TERM
 	@mkdir -p $(ESP_DIR)/EFI/BOOT
 	@cp $@ $(ESP_DIR)/EFI/BOOT/bootx64.efi
 	@echo ""
@@ -173,134 +176,35 @@ $(EFI_FILE): $(BUILD_DIR)/$(KERNEL_NAME).elf
 BOOT_DEBUG_FILES := $(KERNEL_SYMBOL_MAP)
 ifdef DEBUG
 BOOT_DEBUG_FILES += $(KERNEL_LINE_MAP)
-BOOT_DEBUG_FILES += $(USERSPACE_LINE_MAPS)
 endif
 
-$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh userspace $(BOOT_DEBUG_FILES)
+$(USERSPACE_STAMP): | userspace
+	@test -f $@
+
+$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh $(USERSPACE_STAMP) $(BOOT_DEBUG_FILES)
 	@echo "  DISK    $@"
 	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(BOOT_DEBUG_FILES)
 
-# Build all userspace binaries
-.PHONY: userspace libc-glue newlib-setup
-USERSPACE_TARGETS := $(USERSPACE_BINARIES)
-ifdef DEBUG
-USERSPACE_TARGETS += $(USERSPACE_SYMBOL_MAPS)
-USERSPACE_TARGETS += $(USERSPACE_LINE_MAPS)
-endif
-
-userspace: $(USERSPACE_TARGETS)
-
-# newlib sysroot (headers + libc.a/libm.a) — run once
-newlib-setup:
-	@if [ ! -f $(SYSROOT_DIR)/lib/libc.a ] || \
-	    grep -q -- '--disable-newlib-io-float' $(NEWLIB_BUILD_LOG) 2>/dev/null || \
-	    grep -q 'NO_FLOATING_POINT' $(NEWLIB_CFG_MAKEFILE) 2>/dev/null; then \
-		echo "  NEWLIB  Building sysroot..."; \
-		bash scripts/setup_newlib.sh; \
-	else \
-		echo "  NEWLIB  sysroot already built"; \
-	fi
-
-# Pass DEBUG down to sub-makes so userspace also gets debug/release flags.
-_DEBUG_FLAG := $(if $(DEBUG),DEBUG=$(DEBUG),)
-
-# CRT glue library (crt0.o + libvksys.a) — depends on sysroot
-libc-glue: newlib-setup
-	@$(MAKE) --no-print-directory -C $(LIBC_DIR) CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
-
-# hello.vbin depends on the CRT glue (newlib-based program)
-$(HELLO_VBIN): $(USERSPACE_DIR)/hello/hello.c $(USERSPACE_DIR)/hello/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
-
-$(FRAMEBUFFER_VBIN): $(USERSPACE_DIR)/framebuffer/framebuffer.c $(USERSPACE_DIR)/framebuffer/Makefile
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer $(_DEBUG_FLAG)
-
-$(FRAMEBUFFER_TEXT_VBIN): $(USERSPACE_DIR)/framebuffer_text/framebuffer_text.c $(USERSPACE_DIR)/framebuffer_text/Makefile
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer_text $(_DEBUG_FLAG)
-
-$(RAYTRACER_VBIN): $(USERSPACE_DIR)/raytracer/raytracer.c $(USERSPACE_DIR)/raytracer/Makefile
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer $(_DEBUG_FLAG)
-
-$(SHELL_VBIN): $(USERSPACE_DIR)/shell/shell.cpp $(USERSPACE_DIR)/shell/Makefile
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell $(_DEBUG_FLAG)
-
-$(DOOM_VBIN): $(USERSPACE_DIR)/doom/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
-
-$(QUAKE_VBIN): $(USERSPACE_DIR)/quake/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/quake CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
-
-$(MODPLAY_VBIN): $(USERSPACE_DIR)/MODPlay/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
-
-$(CLOWNMDEMU_VBIN): $(USERSPACE_DIR)/clownmdemu/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/clownmdemu CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
-
-$(MINIMP3_VBIN): $(USERSPACE_DIR)/minimp3/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/minimp3 CC=$(CROSS_PREFIX)gcc CXX=$(CROSS_PREFIX)g++ $(_DEBUG_FLAG)
-
-$(ROTOZOOM_VBIN): $(USERSPACE_DIR)/rotozoom/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/rotozoom CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
-
-# vkgui requires ImGui to be downloaded first (run bash userspace/vkgui/setup_imgui.sh)
-$(VKGUI_VBIN): $(wildcard $(USERSPACE_DIR)/vkgui/*.cpp) $(USERSPACE_DIR)/vkgui/Makefile libc-glue
-	@test -f $(USERSPACE_DIR)/vkgui/imgui/imgui.h || \
-	    (echo "  IMGUI   Downloading Dear ImGui for vkgui..."; \
-	     bash $(USERSPACE_DIR)/vkgui/setup_imgui.sh)
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkgui $(_DEBUG_FLAG)
-
-$(SR_CUBE_VBIN): $(USERSPACE_DIR)/sr_cube/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
-
-$(CPPCOMPAT_VBIN): $(USERSPACE_DIR)/cppcompat/main.cpp $(USERSPACE_DIR)/cppcompat/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat $(_DEBUG_FLAG)
-
-$(VKOBJ_VBIN): $(USERSPACE_DIR)/vkobj/main.cpp $(USERSPACE_DIR)/vkobj/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkobj $(_DEBUG_FLAG)
-
-$(VNES_VBIN): $(wildcard $(USERSPACE_DIR)/vnes/*.cpp) $(USERSPACE_DIR)/vnes/Makefile libc-glue
-	@test -f $(USERSPACE_DIR)/vkgui/imgui/imgui.h || \
-	    (echo "  IMGUI   Downloading Dear ImGui for vnes..."; \
-	     bash $(USERSPACE_DIR)/vkgui/setup_imgui.sh)
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vnes $(_DEBUG_FLAG)
-
-$(SNES9X_VBIN): $(USERSPACE_DIR)/snes9x/Makefile libc-glue
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/snes9x CXX=$(CROSS_PREFIX)g++ CC=$(CROSS_PREFIX)gcc $(_DEBUG_FLAG)
+# Delegate userspace builds to userspace/Makefile
+userspace:
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR) $(USERSPACE_MAKE_ARGS) all
 
 # Disassembly for debugging
 disasm: $(BUILD_DIR)/$(KERNEL_NAME).elf
 	@$(OBJDUMP) -d $< > $(BUILD_DIR)/$(KERNEL_NAME).dis
 	@echo "Disassembly written to $(BUILD_DIR)/$(KERNEL_NAME).dis"
 
+userspace-clean:
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR) $(USERSPACE_MAKE_ARGS) clean
+
 # Clean build artifacts
-clean:
+clean: userspace-clean
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
-	@$(MAKE) --no-print-directory -C $(LIBC_DIR) clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/hello clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/framebuffer_text clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/raytracer clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/shell clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/doom clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/quake clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/MODPlay clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/clownmdemu clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/minimp3 clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cpp clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/cppcompat clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkobj clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vkgui clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/vnes clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/snes9x clean
-	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR)/sr_cube clean
 
 # Deep clean — also remove newlib sysroot and source (requires re-running setup_newlib.sh)
 distclean: clean
-	@echo "Removing newlib sysroot and build..."
-	@$(MAKE) --no-print-directory -C $(LIBC_DIR) distclean
-	@bash scripts/setup_newlib.sh clean 2>/dev/null || true
-	@rm -rf $(SYSROOT_DIR)
+	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR) $(USERSPACE_MAKE_ARGS) distclean
 
 # Show build info
 info:
@@ -313,6 +217,6 @@ info:
 	@echo "  Objects:      $(ALL_OBJS)"
 
 # Phony targets
-.PHONY: all clean distclean disasm qemu qemu-debug info userspace disk newlib-setup libc-glue
+.PHONY: all clean distclean disasm qemu qemu-debug info userspace userspace-clean disk
 
 disk: $(BOOT_IMG)

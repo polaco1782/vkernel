@@ -40,7 +40,7 @@ static KNode s_sys_log_route;
 static KNode s_fs;
 static KNode s_fs_active_backend;
 static KNode s_fs_fallback_ready;
-static KNode s_fs_fat32_mounted;
+static KNode s_fs_mounted;
 static KNode s_fs_writable;
 static KNode s_fs_block_device;
 static KNode s_fs_root_path;
@@ -323,8 +323,8 @@ static auto get_fs_fallback_ready(KNode&) -> KVal {
     return KVal::from_bool(fs::query_info().fallback_ready);
 }
 
-static auto get_fs_fat32_mounted(KNode&) -> KVal {
-    return KVal::from_bool(fs::query_info().fat32_mounted);
+static auto get_fs_mounted(KNode&) -> KVal {
+    return KVal::from_bool(fs::query_info().mounted);
 }
 
 static auto get_fs_writable(KNode&) -> KVal {
@@ -373,7 +373,7 @@ void register_core_nodes() {
         { &s_fs, &s_root, KNodeId::fs, "fs", KTag::Struct },
         { &s_fs_active_backend, &s_fs, KNodeId::fs_active_backend, "active_backend", KTag::Str, false, false, "", 0x01, get_fs_active_backend },
         { &s_fs_fallback_ready, &s_fs, KNodeId::fs_fallback_ready, "fallback_ready", KTag::Bool, false, false, "", 0x01, get_fs_fallback_ready },
-        { &s_fs_fat32_mounted, &s_fs, KNodeId::fs_fat32_mounted, "fat32_mounted", KTag::Bool, false, false, "", 0x01, get_fs_fat32_mounted },
+        { &s_fs_mounted, &s_fs, KNodeId::fs_mounted, "mounted", KTag::Bool, false, false, "", 0x01, get_fs_mounted },
         { &s_fs_writable, &s_fs, KNodeId::fs_writable, "writable", KTag::Bool, false, false, "", 0x01, get_fs_writable },
         { &s_fs_block_device, &s_fs, KNodeId::fs_block_device, "block_device", KTag::Str, false, false, "", 0x01, get_fs_block_device },
         { &s_fs_root_path, &s_fs, KNodeId::fs_root_path, "root_path", KTag::Str, false, false, "", 0x01, get_fs_root_path },
