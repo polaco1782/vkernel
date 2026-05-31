@@ -15,6 +15,8 @@ SYMBOLS_DIR := $(BUILD_DIR)/symbols
 USERSPACE_DIR := userspace
 USERSPACE_STAMP := $(USERSPACE_DIR)/.build/userspace$(if $(DEBUG),-debug,).stamp
 
+include $(USERSPACE_DIR)/artifacts.mk
+
 # Toolchain
 CROSS_PREFIX ?= x86_64-redhat-linux-
 CXX := $(CROSS_PREFIX)g++
@@ -24,13 +26,20 @@ OBJDUMP := objdump
 NM := nm
 
 USERSPACE_MAKE_ARGS := ROOT_DIR=$(CURDIR) ROOT_BUILD_DIR=$(abspath $(BUILD_DIR)) CROSS_PREFIX=$(CROSS_PREFIX) NM=$(NM) $(if $(DEBUG),DEBUG=$(DEBUG),)
+USERSPACE_BINARIES := $(addprefix $(USERSPACE_DIR)/,$(USERSPACE_BINARY_RELATIVE))
 
 # Text symbol maps live under build/symbols/<original-path>.map.
 symbol_map_target = $(SYMBOLS_DIR)/$(1).map
 line_map_target = $(SYMBOLS_DIR)/$(1).lines
 KERNEL_SYMBOL_MAP := $(call symbol_map_target,$(BUILD_DIR)/$(KERNEL_NAME).elf)
 KERNEL_LINE_MAP := $(call line_map_target,$(BUILD_DIR)/$(KERNEL_NAME).elf)
+USERSPACE_LINE_MAPS := $(foreach bin,$(USERSPACE_BINARY_RELATIVE),$(call line_map_target,$(USERSPACE_DIR)/$(bin)))
 KERNEL_BUILD_CONFIG_STAMP := $(BUILD_DIR)/.kernel_build_config$(if $(DEBUG),.debug,.release)$(if $(GDB_WAIT),.gdbwait,)
+
+USERSPACE_STAGE_INPUTS := $(USERSPACE_BINARIES)
+ifdef DEBUG
+USERSPACE_STAGE_INPUTS += $(USERSPACE_LINE_MAPS)
+endif
 
 # Compiler flags
 CXXFLAGS := -Wall -Wextra -Werror
@@ -181,7 +190,10 @@ endif
 $(USERSPACE_STAMP): | userspace
 	@test -f $@
 
-$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh $(USERSPACE_STAMP) $(BOOT_DEBUG_FILES)
+$(USERSPACE_STAGE_INPUTS): $(USERSPACE_STAMP)
+	@test -e $@
+
+$(BOOT_IMG): $(EFI_FILE) scripts/make_disk.sh $(USERSPACE_STAMP) $(USERSPACE_STAGE_INPUTS) $(BOOT_DEBUG_FILES)
 	@echo "  DISK    $@"
 	@bash scripts/make_disk.sh $(EFI_FILE) $@ $(BOOT_DEBUG_FILES)
 
