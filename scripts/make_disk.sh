@@ -162,80 +162,53 @@ copy_dir_into_data() {
     copy_dir_into_fat "$(data_image_spec)" "$1" "$2"
 }
 
-stage_clownmdemu_roms() {
-    local rom
-    for rom in userspace/clownmdemu/roms/*; do
-        local base
-        local ext
+copy_filtered_tree_into_data() {
+    local src_dir="$1"
+    local dest_dir="$2"
+    shift 2
 
-        [ -f "${rom}" ] || continue
-        base=$(basename "${rom}")
-        ext="${base##*.}"
+    [ -d "${src_dir}" ] || return 0
+
+    ensure_data_dir "${dest_dir}"
+
+    local src_file rel_path ext allowed_ext
+    while IFS= read -r -d '' src_file; do
+        rel_path="${src_file#${src_dir}/}"
+        ext="${src_file##*.}"
         ext="${ext,,}"
 
-        case "${ext}" in
-            bin|gen|smd|32x|md)
-                copy_into_data "${rom}" "data/clownmdemu/roms/${base}"
-                ;;
-        esac
-    done
+        for allowed_ext in "$@"; do
+            if [ "${ext}" = "${allowed_ext}" ]; then
+                copy_into_data "${src_file}" "${dest_dir}/${rel_path}"
+                break
+            fi
+        done
+    done < <(find "${src_dir}" -type f -print0)
+}
+
+stage_clownmdemu_roms() {
+    copy_filtered_tree_into_data "userspace/clownmdemu/roms" "data/clownmdemu/roms" \
+        bin gen smd 32x md
 }
 
 stage_snes9x_roms() {
-    local rom
-    for rom in userspace/snes9x/roms/*; do
-        local base
-        local ext
-
-        [ -f "${rom}" ] || continue
-        base=$(basename "${rom}")
-        ext="${base##*.}"
-        ext="${ext,,}"
-
-        case "${ext}" in
-            smc|sfc)
-                copy_into_data "${rom}" "data/snes9x/roms/${base}"
-                ;;
-        esac
-    done
+    copy_filtered_tree_into_data "userspace/snes9x/roms" "data/snes9x/roms" \
+        smc sfc
 }
 
 stage_vnes_roms() {
-    local rom
-    for rom in userspace/vnes/roms/*; do
-        local base
-        local ext
+    copy_filtered_tree_into_data "userspace/vnes/roms" "data/vnes/roms" \
+        nes
+}
 
-        [ -f "${rom}" ] || continue
-        base=$(basename "${rom}")
-        ext="${base##*.}"
-        ext="${ext,,}"
-
-        case "${ext}" in
-            nes)
-                copy_into_data "${rom}" "data/vnes/roms/${base}"
-                ;;
-        esac
-    done
+stage_vspcplay_tracks() {
+    copy_filtered_tree_into_data "userspace/vspcplay/tracks" "data/vspcplay/tracks" \
+        spc
 }
 
 stage_minimp3_tracks() {
-    local track
-    for track in userspace/minimp3/tracks/*; do
-        local base
-        local ext
-
-        [ -f "${track}" ] || continue
-        base=$(basename "${track}")
-        ext="${base##*.}"
-        ext="${ext,,}"
-
-        case "${ext}" in
-            mp3)
-                copy_into_data "${track}" "data/minimp3/tracks/${base}"
-                ;;
-        esac
-    done
+    copy_filtered_tree_into_data "userspace/minimp3/tracks" "data/minimp3/tracks" \
+        mp3
 }
 
 stage_userspace_line_maps() {
@@ -304,6 +277,7 @@ ensure_data_dir "data/clownmdemu/roms"
 ensure_data_dir "data/vnes/roms"
 ensure_data_dir "data/snes9x/roms"
 ensure_data_dir "data/minimp3/tracks"
+ensure_data_dir "data/vspcplay/tracks"
 
 manifest_file=$(mktemp)
 while IFS= read -r -d '' vbin; do
@@ -327,6 +301,7 @@ copy_into_data "userspace/rotozoom/head.bmp" "data/rotozoom/head.bmp"
 copy_into_data "userspace/quake/pak0.pak" "data/quake/id1/pak0.pak"
 copy_into_data "userspace/quake/progs.dat" "data/quake/zeusbot/progs.dat"
 copy_into_data "userspace/quake/zeus_pak0.pak" "data/quake/zeusbot/pak0.pak"
+
 for plugin in userspace/vkgui/runtime_plugins/*.vplg; do
     [ -f "${plugin}" ] || continue
     copy_into_data "${plugin}" "data/vkgui/plugins/$(basename "${plugin}")"
@@ -356,6 +331,7 @@ echo "  Staging reaperfx..."
 copy_dir_into_data "userspace/quake/reaperfx" "data/quake/reaperfx"
 stage_clownmdemu_roms
 stage_vnes_roms
+stage_vspcplay_tracks
 stage_snes9x_roms
 stage_minimp3_tracks
 

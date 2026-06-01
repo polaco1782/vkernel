@@ -877,6 +877,23 @@ auto sched::snapshot_task(u64 task_id, task_snapshot* out) -> bool {
     return false;
 }
 
+auto sched::task_blocked_off_cpu(u64 task_id) -> bool {
+    g_sched_lock.acquire();
+    for (usize i = 0; i < g_task_count; ++i) {
+        if (g_tasks[i].id != task_id || g_tasks[i].state == task_state::terminated) {
+            continue;
+        }
+
+        const bool blocked_off_cpu =
+            g_tasks[i].state == task_state::blocked && g_tasks[i].current_cpu == SCHED_CPU_NONE;
+        g_sched_lock.release();
+        return blocked_off_cpu;
+    }
+
+    g_sched_lock.release();
+    return false;
+}
+
 void sched::sleep(u64 ticks) {
     if (ticks == 0) {
         yield();

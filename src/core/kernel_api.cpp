@@ -912,8 +912,7 @@ static auto remap_target_framebuffer(process::process_task_context* target,
 static int stub_set_task_framebuffer(vk_u64 task_id, const vk_framebuffer_info_t* fb) {
     if (fb == null) return 0;
 
-    task_snapshot snapshot = {};
-    if (!sched::snapshot_task(task_id, &snapshot) || snapshot.state == task_state::running) {
+    if (!sched::task_blocked_off_cpu(task_id)) {
         return 0;
     }
 

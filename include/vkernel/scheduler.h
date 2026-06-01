@@ -152,6 +152,7 @@ auto detach_current_task() -> void*;
 [[nodiscard]] auto tick_count() -> u64;
 [[nodiscard]] auto snapshot_tasks(task_snapshot* out, usize max_tasks) -> usize;
 [[nodiscard]] auto snapshot_task(u64 task_id, task_snapshot* out) -> bool;
+[[nodiscard]] auto task_blocked_off_cpu(u64 task_id) -> bool;
 
 /* Debug: print task list */
 void dump_tasks();
