@@ -257,16 +257,28 @@ static void sort_lines_by_address(process_line* entries, usize count) {
 
 static auto build_line_map_path(string_view program_path,
                                 static_string<256>& out_path) -> bool {
+    constexpr string_view k_line_map_directory("/data/debug/lines/");
     constexpr string_view k_suffix(".lines");
-    if (program_path.size() + k_suffix.size() > out_path.capacity()) {
+    usize program_name_offset = 0;
+    for (usize i = 0; i < program_path.size(); ++i) {
+        if (program_path[i] == '/') {
+            program_name_offset = i + 1;
+        }
+    }
+    const string_view program_name(program_path.data() + program_name_offset,
+                                   program_path.size() - program_name_offset);
+    if (k_line_map_directory.size() + program_name.size() + k_suffix.size() > out_path.capacity()) {
         out_path.clear();
         return false;
     }
 
     char buffer[256];
     usize offset = 0;
-    for (usize i = 0; i < program_path.size(); ++i) {
-        buffer[offset++] = program_path[i];
+    for (usize i = 0; i < k_line_map_directory.size(); ++i) {
+        buffer[offset++] = k_line_map_directory[i];
+    }
+    for (usize i = 0; i < program_name.size(); ++i) {
+        buffer[offset++] = program_name[i];
     }
     for (usize i = 0; i < k_suffix.size(); ++i) {
         buffer[offset++] = k_suffix[i];

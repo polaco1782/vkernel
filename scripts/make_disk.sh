@@ -215,8 +215,16 @@ stage_userspace_line_maps() {
     local line_map
 
     while IFS= read -r -d '' line_map; do
-        copy_into_data "${line_map}" "bin/$(basename "${line_map}")"
+        copy_into_data "${line_map}" "data/debug/lines/$(basename "${line_map}")"
     done < <(find build/symbols/userspace -type f -name '*.vbin.lines' -print0 2>/dev/null)
+}
+
+stage_userspace_symbol_maps() {
+    local symbol_map
+
+    while IFS= read -r -d '' symbol_map; do
+        copy_into_data "${symbol_map}" "data/debug/maps/$(basename "${symbol_map}")"
+    done < <(find build/symbols/userspace -type f -name '*.vbin.map' -print0 2>/dev/null)
 }
 
 TEMP_IMAGE=$(mktemp "${OUTPUT}.tmp.XXXXXX")
@@ -268,6 +276,8 @@ ensure_data_dir "bin"
 ensure_data_dir "data/shell"
 ensure_data_dir "data/vkgui"
 ensure_data_dir "data/vkgui/plugins"
+ensure_data_dir "data/debug/maps"
+ensure_data_dir "data/debug/lines"
 ensure_data_dir "data/doom"
 ensure_data_dir "data/quake/id1"
 ensure_data_dir "data/quake/zeusbot"
@@ -279,18 +289,13 @@ ensure_data_dir "data/snes9x/roms"
 ensure_data_dir "data/minimp3/tracks"
 ensure_data_dir "data/vspcplay/tracks"
 
-manifest_file=$(mktemp)
 while IFS= read -r -d '' vbin; do
     name=$(basename "${vbin}")
     copy_into_data "${vbin}" "bin/${name}"
-    printf '/bin/%s\n' "${name}" >> "${manifest_file}"
 done < <(find userspace -name "*.vbin" -print0)
 
-sort -u "${manifest_file}" -o "${manifest_file}"
-copy_into_data "${manifest_file}" "data/vkgui/vkgui_apps.txt"
-rm -f "${manifest_file}"
-
 stage_userspace_line_maps
+stage_userspace_symbol_maps
 
 copy_into_data "userspace/doom/doom1.wad" "data/doom/doom1.wad"
 copy_into_data "userspace/doom/doom2.wad" "data/doom/doom2.wad"
@@ -317,7 +322,11 @@ for extra in "$@"; do
             copy_into_esp "${extra}" "${local_dest}"
             ;;
         *.vbin.lines)
-            local_dest="bin/${extra_name}"
+            local_dest="data/debug/lines/${extra_name}"
+            copy_into_data "${extra}" "${local_dest}"
+            ;;
+        *.vbin.map)
+            local_dest="data/debug/maps/${extra_name}"
             copy_into_data "${extra}" "${local_dest}"
             ;;
         *)

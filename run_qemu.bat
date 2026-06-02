@@ -21,6 +21,9 @@ set "ESP_DATA=%ESP_ROOT%\data"
 set "ESP_DATA_SHELL=%ESP_DATA%\shell"
 set "ESP_DATA_VKGUI=%ESP_DATA%\vkgui"
 set "ESP_DATA_VKGUI_PLUGINS=%ESP_DATA_VKGUI%\plugins"
+set "ESP_DATA_DEBUG=%ESP_DATA%\debug"
+set "ESP_DATA_DEBUG_MAPS=%ESP_DATA_DEBUG%\maps"
+set "ESP_DATA_DEBUG_LINES=%ESP_DATA_DEBUG%\lines"
 set "ESP_DATA_DOOM=%ESP_DATA%\doom"
 set "ESP_DATA_QUAKE_ID1=%ESP_DATA%\quake\id1"
 set "ESP_DATA_QUAKE_ZEUSBOT=%ESP_DATA%\quake\zeusbot"
@@ -40,7 +43,6 @@ set "QEMU_EXE=C:\Program Files\qemu\qemu-system-x86_64.exe"
 set "QEMU_DIR=C:\Program Files\qemu"
 set "OVMF_CODE=%QEMU_DIR%\share\edk2-x86_64-code.fd"
 set "OVMF_VARS=%QEMU_DIR%\share\edk2-i386-vars.fd"
-set "MANIFEST_FILE=%BUILD_DIR%\vkgui_apps.txt"
 set "DISKPART_CREATE_SCRIPT=%TEMP%\vkernel_diskpart_create_%RANDOM%%RANDOM%.txt"
 set "DISKPART_DETACH_SCRIPT=%TEMP%\vkernel_diskpart_detach_%RANDOM%%RANDOM%.txt"
 
@@ -92,6 +94,8 @@ mkdir "%ESP_BOOTDATA%" || exit /b 1
 mkdir "%ESP_DATA_SHELL%" || exit /b 1
 mkdir "%ESP_DATA_VKGUI%" || exit /b 1
 mkdir "%ESP_DATA_VKGUI_PLUGINS%" || exit /b 1
+mkdir "%ESP_DATA_DEBUG_MAPS%" || exit /b 1
+mkdir "%ESP_DATA_DEBUG_LINES%" || exit /b 1
 mkdir "%ESP_DATA_DOOM%" || exit /b 1
 mkdir "%ESP_DATA_QUAKE_ID1%" || exit /b 1
 mkdir "%ESP_DATA_QUAKE_ZEUSBOT%" || exit /b 1
@@ -108,11 +112,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if exist "%MANIFEST_FILE%" del /q "%MANIFEST_FILE%"
-type nul > "%MANIFEST_FILE%"
-
 powershell -NoProfile -Command ^
-    "$root = (Get-Location).Path; $config = '%BUILD_CONFIG%'; $binDir = (Resolve-Path '%ESP_BIN%').Path; $manifest = [System.IO.Path]::GetFullPath('%MANIFEST_FILE%'); $manifestDest = [System.IO.Path]::GetFullPath('%ESP_DATA_VKGUI%\vkgui_apps.txt');" ^
+    "$root = (Get-Location).Path; $config = '%BUILD_CONFIG%'; $binDir = (Resolve-Path '%ESP_BIN%').Path;" ^
     "function Collect-Vbins([string]$base, [int]$priority) { if (-not (Test-Path -LiteralPath $base)) { return @() }; Get-ChildItem -LiteralPath $base -Recurse -Filter *.vbin | Where-Object { $_.FullName -notlike '*\esp\*' -and $_.FullName -notlike '*\obj\*' -and $_.Directory.Name -ieq $config } | ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; Priority = $priority } } };" ^
     "$candidates = @();" ^
     "$candidates += Collect-Vbins (Join-Path $root 'build_clang') 0;" ^
@@ -120,8 +121,7 @@ powershell -NoProfile -Command ^
     "$userspaceRoot = Join-Path $root 'userspace';" ^
     "if (Test-Path -LiteralPath $userspaceRoot) { $candidates += Get-ChildItem -LiteralPath $userspaceRoot -Recurse -Filter *.vbin | Where-Object { $_.FullName -match '[\\/]userspace[\\/][^\\/]+[\\/][^\\/]+\.vbin$' } | ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; Priority = 2 } } };" ^
     "$vbins = $candidates | Sort-Object Priority, FullName | Group-Object Name | ForEach-Object { $_.Group | Select-Object -First 1 } | Sort-Object Name;" ^
-    "foreach ($file in $vbins) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $binDir $file.Name) -Force; Write-Output ('Staged bin\' + $file.Name + ' from ' + $file.FullName) };" ^
-    "$lines = $vbins | ForEach-Object { '/bin/' + $_.Name } | Sort-Object -Unique; Set-Content -LiteralPath $manifest -Value $lines; Set-Content -LiteralPath $manifestDest -Value $lines"
+    "foreach ($file in $vbins) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $binDir $file.Name) -Force; Write-Output ('Staged bin\' + $file.Name + ' from ' + $file.FullName) }"
 if errorlevel 1 (
     echo Error: failed to stage userspace .vbin files
     exit /b 1
@@ -156,8 +156,12 @@ if errorlevel 1 exit /b 1
 call :copy_if_exists "build\symbols\build\vkernel.elf.lines" "boot\vkernel.elf.lines"
 if errorlevel 1 exit /b 1
 if exist "build\symbols\userspace" (
+    for /r "build\symbols\userspace" %%F in (*.vbin.map) do (
+        call :copy_if_exists "%%~fF" "data\debug\maps\%%~nxF"
+        if errorlevel 1 exit /b 1
+    )
     for /r "build\symbols\userspace" %%F in (*.vbin.lines) do (
-        call :copy_if_exists "%%~fF" "bin\%%~nxF"
+        call :copy_if_exists "%%~fF" "data\debug\lines\%%~nxF"
         if errorlevel 1 exit /b 1
     )
 )
@@ -305,5 +309,4 @@ exit /b 1
 :cleanup_temp_files
 if exist "%DISKPART_CREATE_SCRIPT%" del /q "%DISKPART_CREATE_SCRIPT%"
 if exist "%DISKPART_DETACH_SCRIPT%" del /q "%DISKPART_DETACH_SCRIPT%"
-if exist "%MANIFEST_FILE%" del /q "%MANIFEST_FILE%"
 goto :eof

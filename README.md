@@ -195,18 +195,20 @@ the filesystem facade:
 strict `/bin`, `/boot`, and `/data` layout while preserving the firmware boot
 path at `\EFI\BOOT\bootx64.efi`:
 
-- `/bin` contains `.vbin` executables and per-app `.lines`
-    files.
+- `/bin` contains `.vbin` executables.
 - `/boot` contains kernel debug metadata such as `vkernel.elf.map` and
     `vkernel.elf.lines`.
-- `/data` contains startup scripts, vkGUI manifests/settings/plugins, game data,
-    emulator ROMs, audio tracks, and demo assets.
+- `/data` contains startup scripts, userspace symbol maps under
+    `/data/debug/maps`, userspace line maps under `/data/debug/lines`,
+    vkGUI settings/plugins, game data, emulator ROMs, audio tracks, and demo
+    assets.
 
 The ESP's `\EFI` directory is visible inside the OS as `/EFI`, which leaves
 room for later firmware-side or in-OS kernel update flows.
 
 Representative paths include `/data/shell/shell.txt`,
-`/data/vkgui/vkgui_apps.txt`, `/data/vkgui/plugins/*.vplg`,
+`/data/debug/maps/*.vbin.map`, `/data/debug/lines/*.vbin.lines`,
+`/data/vkgui/plugins/*.vplg`,
 `/data/doom/doom1.wad`, `/data/quake/id1/pak0.pak`,
 `/data/quake/zeusbot/progs.dat`, `/data/modplay/makemove.mod`, and
 `/data/minimp3/tracks/*.mp3`.
@@ -239,7 +241,7 @@ There are no syscall instructions yet; the ABI is a function-pointer table.
 
 Current panels and features:
 
-- Launch menu populated from `/data/vkgui/vkgui_apps.txt`
+- Launch menu populated by scanning `/bin` for `.vbin` apps
 - Window manager for graphical `.vbin` tasks
 - Per-window framebuffer routing and input routing
 - Console log window
