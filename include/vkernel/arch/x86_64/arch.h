@@ -164,6 +164,7 @@ inline constexpr u64 EFER_SCE              = (1ULL << 0);  /* Syscall enable */
 inline constexpr u64 EFER_LME              = (1ULL << 8);  /* Long mode enable */
 inline constexpr u64 EFER_LMA              = (1ULL << 10); /* Long mode active */
 inline constexpr u64 EFER_NXE              = (1ULL << 11); /* No-execute enable */
+inline constexpr u32 MSR_FS_BASE           = 0xC0000100u;
 
 /* ============================================================
  * CPU primitives — thin inline wrappers around arch-specific
@@ -187,6 +188,8 @@ inline auto outl(u16 port, u32 value) -> void  { asm_outl(port, value); }
 /* MSR access */
 [[nodiscard]] inline auto rdmsr(u32 msr) -> u64 { return asm_rdmsr(msr); }
 inline auto wrmsr(u32 msr, u64 value) -> void   { asm_wrmsr(msr, value); }
+[[nodiscard]] inline auto read_fs_base() -> u64 { return rdmsr(MSR_FS_BASE); }
+inline auto write_fs_base(u64 value) -> void    { wrmsr(MSR_FS_BASE, value); }
 
 /* Control register access */
 [[nodiscard]] inline auto read_cr0() -> u64  { return asm_read_cr0(); }

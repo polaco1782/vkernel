@@ -49,6 +49,14 @@ static auto load_impl(const u8* file_data,
     result.image_from_phys = false;
     result.image_phys     = 0;
     result.image_vm_mapped = false;
+    result.phdr_addr      = 0;
+    result.phnum          = 0;
+    result.phentsize      = 0;
+    result.has_tls        = false;
+    result.tls_vaddr      = 0;
+    result.tls_filesz     = 0;
+    result.tls_memsz      = 0;
+    result.tls_align      = 0;
 
     /* ---- 1. Basic size check ---- */
     if (file_size < sizeof(Elf64_Ehdr)) {
@@ -106,9 +114,21 @@ static auto load_impl(const u8* file_data,
     u64 vaddr_max = 0;
     u64 max_align  = 4096ULL;
     u32 load_count = 0;
+    const Elf64_Phdr* phdr_segment = null;
 
     for (u16 i = 0; i < ehdr->e_phnum; ++i) {
         const auto& ph = phdrs[i];
+        if (ph.p_type == PT_INTERP) {
+            result.error = elf_error::unsupported_interp;
+            return result;
+        }
+        if (ph.p_type == PT_TLS) {
+            result.has_tls = true;
+            result.tls_vaddr = ph.p_vaddr;
+            result.tls_filesz = ph.p_filesz;
+            result.tls_memsz = ph.p_memsz;
+            result.tls_align = ph.p_align;
+        }
         if (ph.p_type != PT_LOAD) continue;
 
         if (!range_ok(file_size, ph.p_offset, ph.p_filesz)) {
@@ -122,6 +142,11 @@ static auto load_impl(const u8* file_data,
         if (seg_start < vaddr_min) vaddr_min = seg_start;
         if (seg_end   > vaddr_max) vaddr_max = seg_end;
         if (ph.p_align > max_align) max_align = ph.p_align;
+        if (ehdr->e_phoff >= ph.p_offset &&
+            ehdr->e_phoff + static_cast<u64>(ehdr->e_phnum) * sizeof(Elf64_Phdr)
+                <= ph.p_offset + ph.p_filesz) {
+            phdr_segment = &ph;
+        }
 
         ++load_count;
     }
@@ -209,6 +234,21 @@ static auto load_impl(const u8* file_data,
         reinterpret_cast<u64>(image_runtime_base)) - static_cast<i64>(vaddr_min);
     i64 write_bias = static_cast<i64>(
         reinterpret_cast<u64>(image_write_base)) - static_cast<i64>(vaddr_min);
+    result.phnum = ehdr->e_phnum;
+    result.phentsize = ehdr->e_phentsize;
+
+    for (u16 i = 0; i < ehdr->e_phnum; ++i) {
+        if (phdrs[i].p_type == PT_PHDR) {
+            result.phdr_addr = static_cast<u64>(
+                static_cast<i64>(phdrs[i].p_vaddr) + load_bias);
+            break;
+        }
+    }
+    if (result.phdr_addr == 0 && phdr_segment != null) {
+        const u64 phdr_runtime_offset = ehdr->e_phoff - phdr_segment->p_offset;
+        result.phdr_addr = static_cast<u64>(
+            static_cast<i64>(phdr_segment->p_vaddr + phdr_runtime_offset) + load_bias);
+    }
 
     /* ---- 8. Copy PT_LOAD segments ---- */
     for (u16 i = 0; i < ehdr->e_phnum; ++i) {
@@ -307,6 +347,7 @@ auto error_string(elf_error err) -> const char* {
         case elf_error::bad_machine:      return "not x86-64";
         case elf_error::bad_type:         return "not ET_EXEC or ET_DYN";
         case elf_error::no_load_segments: return "no PT_LOAD segments";
+        case elf_error::unsupported_interp: return "PT_INTERP requires a dynamic loader";
         case elf_error::no_memory:        return "out of memory";
         case elf_error::segment_overflow: return "segment exceeds file";
         default:                          return "unknown error";

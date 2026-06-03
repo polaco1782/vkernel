@@ -220,6 +220,14 @@ static auto load_process_context(string_view filename,
     bool  image_from_phys = false;
     phys_addr image_phys  = 0;
     bool  image_vm_mapped = false;
+    u64   phdr_addr       = 0;
+    u16   phnum           = 0;
+    u16   phentsize       = 0;
+    bool  has_tls         = false;
+    u64   tls_vaddr       = 0;
+    u64   tls_filesz      = 0;
+    u64   tls_memsz       = 0;
+    u64   tls_align       = 0;
 
     auto* address_space = vm::create_address_space();
     if (address_space == null) {
@@ -246,6 +254,14 @@ static auto load_process_context(string_view filename,
         image_from_phys = result.image_from_phys;
         image_phys      = result.image_phys;
         image_vm_mapped = result.image_vm_mapped;
+        phdr_addr       = result.phdr_addr;
+        phnum           = result.phnum;
+        phentsize       = result.phentsize;
+        has_tls         = result.has_tls;
+        tls_vaddr       = result.tls_vaddr;
+        tls_filesz      = result.tls_filesz;
+        tls_memsz       = result.tls_memsz;
+        tls_align       = result.tls_align;
     } else if (is_pe) {
         auto result = pe::load(data, sz);
         if (result.error != pe::pe_error::ok) {
@@ -304,6 +320,18 @@ static auto load_process_context(string_view filename,
     ctx->address_space   = owned_address_space.get();
     ctx->image_phys      = image_phys;
     ctx->image_vm_mapped = image_vm_mapped;
+    ctx->phdr_addr       = phdr_addr;
+    ctx->phnum           = phnum;
+    ctx->phentsize       = phentsize;
+    ctx->has_tls         = has_tls;
+    ctx->tls_vaddr       = tls_vaddr;
+    ctx->tls_filesz      = tls_filesz;
+    ctx->tls_memsz       = tls_memsz;
+    ctx->tls_align       = tls_align;
+    ctx->brk_base        = vm::USER_HEAP_BASE;
+    ctx->brk_current     = vm::USER_HEAP_BASE;
+    ctx->brk_mapped_end  = vm::USER_HEAP_BASE;
+    ctx->user_thread_pointer = 0;
     init_debug_metadata(ctx.get());
     ctx->interface       = interface;
     ctx->key_q_head      = 0;
@@ -435,6 +463,7 @@ void cleanup_process_context(process_task_context* ctx, int exit_code) {
 
 void process_task_main(void* user_data) {
     auto* ctx = static_cast<process_task_context*>(user_data);
+    arch::write_fs_base(ctx != null ? ctx->user_thread_pointer : 0);
 
     int ret = asm_call_process_entry(ctx->entry, kernel_api::get_api());
 
@@ -610,6 +639,7 @@ static auto exec_impl(string_view filename,
     } else {
         vm::activate_kernel();
     }
+    arch::write_fs_base(next_ctx->user_thread_pointer);
 
     int ret = asm_call_process_entry(next_ctx->entry, kernel_api::get_api());
     cleanup_process_context(next_ctx, ret);

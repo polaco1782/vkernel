@@ -55,6 +55,8 @@ inline constexpr u32 PT_NULL    = 0;
 inline constexpr u32 PT_LOAD    = 1;
 inline constexpr u32 PT_DYNAMIC = 2;
 inline constexpr u32 PT_INTERP  = 3;
+inline constexpr u32 PT_PHDR    = 6;
+inline constexpr u32 PT_TLS     = 7;
 
 /* Section header types */
 inline constexpr u32 SHT_NULL   = 0;
@@ -183,6 +185,7 @@ enum class elf_error {
     bad_machine,        /* Not x86-64 */
     bad_type,           /* Not ET_EXEC or ET_DYN */
     no_load_segments,   /* No PT_LOAD segments found */
+    unsupported_interp, /* PT_INTERP requires a dynamic loader */
     no_memory,          /* Heap allocation failed */
     segment_overflow,   /* File offset + filesz exceeds file */
 };
@@ -195,6 +198,14 @@ struct load_result {
     bool        image_from_phys; /* true = allocated via g_phys_alloc (free with free_pages) */
     phys_addr   image_phys;    /* Physical backing when image_vm_mapped is true */
     bool        image_vm_mapped;
+    u64         phdr_addr;     /* Runtime VA for AT_PHDR */
+    u16         phnum;         /* Program-header count */
+    u16         phentsize;     /* Program-header entry size */
+    bool        has_tls;
+    u64         tls_vaddr;
+    u64         tls_filesz;
+    u64         tls_memsz;
+    u64         tls_align;
 };
 
 /* ============================================================

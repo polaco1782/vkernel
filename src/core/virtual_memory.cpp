@@ -141,9 +141,11 @@ auto create_address_space() -> address_space*
 
     as->pml4_phys = pml4_phys;
     as->heap_next = USER_HEAP_BASE;
+    as->map_next = USER_MMAP_BASE;
     log::debug() << "vm: create_address_space as=" << reinterpret_cast<const void*>(as)
                  << " pml4=" << reinterpret_cast<const void*>(static_cast<usize>(as->pml4_phys))
-                 << " heap_next=" << reinterpret_cast<const void*>(static_cast<usize>(as->heap_next));
+                 << " heap_next=" << reinterpret_cast<const void*>(static_cast<usize>(as->heap_next))
+                 << " map_next=" << reinterpret_cast<const void*>(static_cast<usize>(as->map_next));
     return as;
 }
 

@@ -116,6 +116,165 @@ typedef struct vk_kobj_node_info {
     char   enum_labels[VK_KOBJ_ENUM_MAX][VK_KOBJ_ENUM_LABEL_MAX];
 } vk_kobj_node_info_t;
 
+typedef struct vk_stat {
+    vk_u64 st_dev;
+    vk_u64 st_ino;
+    vk_u64 st_size;
+    vk_u32 st_mode;
+    vk_u32 st_nlink;
+    vk_u32 st_blksize;
+    vk_u32 _reserved0;
+    vk_u32 _reserved1;
+} vk_stat_t;
+
+typedef struct vk_timeval {
+    vk_i64 tv_sec;
+    vk_i64 tv_usec;
+} vk_timeval_t;
+
+typedef struct vk_timespec {
+    vk_i64 tv_sec;
+    vk_i64 tv_nsec;
+} vk_timespec_t;
+
+typedef struct vk_process_image_info {
+    vk_u64 entry;
+    vk_u64 phdr_addr;
+    vk_u64 page_size;
+    vk_u64 tls_vaddr;
+    vk_u64 tls_filesz;
+    vk_u64 tls_memsz;
+    vk_u64 tls_align;
+    vk_u32 phent;
+    vk_u32 phnum;
+    vk_u32 has_tls;
+    vk_u32 _reserved;
+} vk_process_image_info_t;
+
+enum {
+    VK_ERR_PERM = 1,
+    VK_ERR_NOENT = 2,
+    VK_ERR_SRCH = 3,
+    VK_ERR_INTR = 4,
+    VK_ERR_IO = 5,
+    VK_ERR_NXIO = 6,
+    VK_ERR_2BIG = 7,
+    VK_ERR_NOEXEC = 8,
+    VK_ERR_BADF = 9,
+    VK_ERR_CHILD = 10,
+    VK_ERR_AGAIN = 11,
+    VK_ERR_NOMEM = 12,
+    VK_ERR_ACCES = 13,
+    VK_ERR_FAULT = 14,
+    VK_ERR_BUSY = 16,
+    VK_ERR_EXIST = 17,
+    VK_ERR_XDEV = 18,
+    VK_ERR_NODEV = 19,
+    VK_ERR_NOTDIR = 20,
+    VK_ERR_ISDIR = 21,
+    VK_ERR_INVAL = 22,
+    VK_ERR_NFILE = 23,
+    VK_ERR_MFILE = 24,
+    VK_ERR_NOTTY = 25,
+    VK_ERR_FBIG = 27,
+    VK_ERR_NOSPC = 28,
+    VK_ERR_SPIPE = 29,
+    VK_ERR_ROFS = 30,
+    VK_ERR_MLINK = 31,
+    VK_ERR_PIPE = 32,
+    VK_ERR_RANGE = 34,
+    VK_ERR_NOSYS = 38,
+    VK_ERR_NOTEMPTY = 39,
+    VK_ERR_LOOP = 40,
+    VK_ERR_NODATA = 61,
+};
+
+enum {
+    VK_O_RDONLY = 0,
+    VK_O_WRONLY = 1,
+    VK_O_RDWR = 2,
+    VK_O_ACCMODE = 3,
+    VK_O_CREAT = 0100,
+    VK_O_TRUNC = 01000,
+    VK_O_APPEND = 02000,
+};
+
+enum {
+    VK_SEEK_SET = 0,
+    VK_SEEK_CUR = 1,
+    VK_SEEK_END = 2,
+};
+
+enum {
+    VK_PROT_NONE = 0,
+    VK_PROT_READ = 1 << 0,
+    VK_PROT_WRITE = 1 << 1,
+    VK_PROT_EXEC = 1 << 2,
+};
+
+enum {
+    VK_MAP_PRIVATE = 1 << 0,
+    VK_MAP_FIXED = 1 << 1,
+    VK_MAP_ANONYMOUS = 1 << 2,
+};
+
+enum {
+    VK_CLOCK_REALTIME = 0,
+    VK_CLOCK_MONOTONIC = 1,
+};
+
+enum {
+    VK_F_GETFD = 1,
+    VK_F_SETFD = 2,
+    VK_F_GETFL = 3,
+    VK_F_SETFL = 4,
+    VK_F_GETLK = 5,
+    VK_F_SETLK = 6,
+    VK_F_SETLKW = 7,
+};
+
+enum {
+    VK_F_RDLCK = 0,
+    VK_F_WRLCK = 1,
+    VK_F_UNLCK = 2,
+};
+
+enum {
+    VK_SYS_EXIT = 1,
+    VK_SYS_OPEN = 2,
+    VK_SYS_CLOSE = 3,
+    VK_SYS_READ = 4,
+    VK_SYS_WRITE = 5,
+    VK_SYS_LSEEK = 6,
+    VK_SYS_FSTAT = 7,
+    VK_SYS_STAT = 8,
+    VK_SYS_UNLINK = 9,
+    VK_SYS_GETPID = 10,
+    VK_SYS_GETTIMEOFDAY = 11,
+    VK_SYS_CLOCK_GETTIME = 12,
+    VK_SYS_MMAP = 13,
+    VK_SYS_MUNMAP = 14,
+    VK_SYS_MPROTECT = 15,
+    VK_SYS_SET_THREAD_POINTER = 16,
+    VK_SYS_GET_THREAD_POINTER = 17,
+    VK_SYS_SET_TID_ADDRESS = 18,
+    VK_SYS_PROCESS_IMAGE_INFO = 19,
+    VK_SYS_FTRUNCATE = 20,
+    VK_SYS_ACCESS = 21,
+    VK_SYS_GETCWD = 22,
+    VK_SYS_PREAD = 23,
+    VK_SYS_PWRITE = 24,
+    VK_SYS_FCNTL = 25,
+    VK_SYS_BRK = 26,
+    VK_SYS_NANOSLEEP = 27,
+    VK_SYS_CLOCK_NANOSLEEP = 28,
+    VK_SYS_READV = 29,
+    VK_SYS_WRITEV = 30,
+    VK_SYS_FSTATAT = 31,
+    VK_SYS_IOCTL = 34,
+    VK_SYS_SCHED_YIELD = 35,
+};
+
 /* ============================================================
  * Add new fields only at the END to preserve ABI compatibility.
  * Bump VK_API_VERSION when the layout changes in a breaking way.
@@ -228,11 +387,18 @@ typedef struct vk_api {
     int (*vk_driver_unload)(const char* name);
     void (*vk_reboot)(void);
     int (*vk_file_truncate)(vk_file_handle_t handle, vk_i64 length);
+    vk_i64 (*vk_syscall)(vk_u64 nr,
+                         vk_u64 a1,
+                         vk_u64 a2,
+                         vk_u64 a3,
+                         vk_u64 a4,
+                         vk_u64 a5,
+                         vk_u64 a6);
 
 } vk_api_t;
 
 /* Current API version */
-#define VK_API_VERSION 37ULL
+#define VK_API_VERSION 39ULL
 
 #if defined(_MSC_VER)
 __declspec(selectany) const vk_api_t* _vk_api_ptr = 0;
@@ -254,6 +420,20 @@ static inline void vk_init(const vk_api_t* api) {
 
 static inline const vk_api_t* vk_get_api(void) {
     return _vk_api_ptr;
+}
+
+static inline vk_i64 vk_syscall(vk_u64 nr,
+                                vk_u64 a1,
+                                vk_u64 a2,
+                                vk_u64 a3,
+                                vk_u64 a4,
+                                vk_u64 a5,
+                                vk_u64 a6) {
+    const vk_api_t* api = vk_get_api();
+    if (api == (const vk_api_t*)0 || api->vk_syscall == 0) {
+        return -VK_ERR_NOSYS;
+    }
+    return api->vk_syscall(nr, a1, a2, a3, a4, a5, a6);
 }
 
 /* Sound format constants for mixer playback */

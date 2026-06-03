@@ -214,7 +214,7 @@ clean: userspace-clean
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
 
-# Deep clean — also remove newlib sysroot and source (requires re-running setup_newlib.sh)
+# Deep clean — also remove the generated musl runtime sysroot/build state
 distclean: clean
 	@$(MAKE) --no-print-directory -C $(USERSPACE_DIR) $(USERSPACE_MAKE_ARGS) distclean
 

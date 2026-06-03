@@ -33,8 +33,9 @@ heap, and shared framebuffer mappings.
 | FAT32 runtime filesystem | Working; read, write, list, seek, remove |
 | UEFI-loaded ramfs fallback | Working |
 | ELF64 and PE/COFF loaders | Working |
-| Kernel API (`vk_api_t`, ABI v28) | Working |
-| newlib-backed userspace libc | Working |
+| Kernel API (`vk_api_t`, ABI v39) | Working |
+| musl-backed userspace libc | Working |
+| libc++ userspace runtime | Working |
 | Keyboard, mouse, and serial input | Working |
 | vkGUI compositor/window manager | Working |
 | KObj typed kernel object tree | Working; JSON RPC from userspace |
@@ -46,17 +47,17 @@ heap, and shared framebuffer mappings.
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                 Userspace programs (.vbin ELF64)                │
-│  shell  vkgui  hello  doom  quake  clownmdemu  modplay  minimp3  │
-│  raytracer  rotozoom  sr_cube  framebuffer demos  cppcompat     │
+│  shell  vkgui  hello  doom  quake  clownmdemu  modplay  minimp3 │
+│  raytracer  rotozoom  sr_cube  cppcompat  vkobj  vnes  snes9x   │
 │                                                                 │
 │  Runs in ring 0, but each process has its own CR3/address space │
 ├─────────────────────────────────────────────────────────────────┤
-│               Userspace libc and C++ compatibility layer        │
-│        crt0 · newlib syscall glue · userspace/include/vk.h      │
+│                  Userspace runtime and libraries                │
+│  crt0 · runtime_glue · musl libc · libc++/libc++abi · vkrt.h    │
 ├─────────────────────────────────────────────────────────────────┤
-│                    Kernel API (vk_api_t v28)                    │
-│ console · input · memory · files · process · framebuffer · sound │
-│ mixer · compositor · task snapshot · kobj JSON RPC              │
+│                    Kernel ABI (vk_api_t v39)                    │
+│ api table bootstrap · raw vk_syscall · files · process · fb     │
+│ input · sound mixer · compositor · task snapshot · kobj RPC     │
 ├─────────────────────────────────────────────────────────────────┤
 │                         Kernel core                             │
 │ scheduler · VM · heap · phys pages · FAT32 · ramfs · loaders    │
@@ -130,17 +131,21 @@ src/arch/x86_64/
     ap_trampoline.S        AP startup trampoline
     smp.cpp                 AP discovery and INIT-SIPI-SIPI bringup
 
-userspace/               Git submodule with libc, apps, ports, demos
-    libc/                   newlib syscall glue and CRT
-    include/vk.h            libc-friendly API wrapper
+userspace/               Git submodule with runtime, apps, ports, demos
+    libc/                   crt0, syscall glue, C/C++ main bridges
+    include/vk.h            raw ABI wrapper used by the runtime
+    include/vkrt.h          stable userspace runtime services layer
+    runtime/                vendored musl/libc++ sysroot staging tree
     shell/                  Interactive shell
-    vkgui/                   Dear ImGui shell/window manager
-    doom/, quake/           Game ports through vk_api_t shims
+    vkgui/                  Dear ImGui shell/window manager
+    doom/, quake/           Game ports through vkernel runtime shims
     clownmdemu/             Sega Mega Drive emulator port
     MODPlay/, minimp3/      Audio demos
-    framebuffer*/           Framebuffer demos
     raytracer/, rotozoom/   Graphics demos
     sr_cube/, cppcompat/    C/C++ demos
+    vkobj/                  KObj CLI
+    vnes/, snes9x/          Emulator frontends
+    vspcplay/               SPC player frontend
 ```
 
 ## Boot Flow
@@ -171,10 +176,11 @@ fixed high virtual regions:
 | Shared/compositor mappings | `0x00007E0000000000` |
 | User map limit | `0x0000800000000000` |
 
-ELF images are loaded at the process image base, `vk_malloc` allocates pages
-from the per-process heap region, and graphical tasks can receive a shared
-framebuffer mapping owned by the compositor. This is address-space separation,
-not privilege separation: code still executes in ring 0.
+ELF images are loaded at the process image base, the C heap grows through the
+userspace `brk` path, and larger runtime allocations can come from `mmap` in
+the user mapping region. Graphical tasks can also receive a shared framebuffer
+mapping owned by the compositor. This is address-space separation, not
+privilege separation: code still executes in ring 0.
 
 ## Filesystem and Disk Image
 
@@ -191,20 +197,17 @@ the filesystem facade:
 | List directories | Working |
 | Ramfs fallback | Read-only fallback if FAT32 is unavailable |
 
-`scripts/make_disk.sh` stages the runtime tree directly at the ESP root with a
-strict `/bin`, `/boot`, and `/data` layout while preserving the firmware boot
-path at `\EFI\BOOT\bootx64.efi`:
+`scripts/make_disk.sh` builds a GPT image with a small FAT32 ESP plus a
+separate FAT32 data partition. The ESP stays limited to firmware and early
+loader files while preserving the removable-media boot path at
+`\EFI\BOOT\bootx64.efi`:
 
-- `/bin` contains `.vbin` executables.
-- `/boot` contains kernel debug metadata such as `vkernel.elf.map` and
-    `vkernel.elf.lines`.
-- `/data` contains startup scripts, userspace symbol maps under
-    `/data/debug/maps`, userspace line maps under `/data/debug/lines`,
-    vkGUI settings/plugins, game data, emulator ROMs, audio tracks, and demo
-    assets.
-
-The ESP's `\EFI` directory is visible inside the OS as `/EFI`, which leaves
-room for later firmware-side or in-OS kernel update flows.
+- The ESP contains `\EFI\BOOT\bootx64.efi` plus `/boot/vkernel.elf.map` and
+  `/boot/vkernel.elf.lines`.
+- The data partition carries the runtime tree with `/bin`, `/data`, userspace
+  debug maps under `/data/debug/maps`, userspace line maps under
+  `/data/debug/lines`, vkGUI settings/plugins, game data, emulator ROMs,
+  audio tracks, and demo assets.
 
 Representative paths include `/data/shell/shell.txt`,
 `/data/debug/maps/*.vbin.map`, `/data/debug/lines/*.vbin.lines`,
@@ -213,26 +216,93 @@ Representative paths include `/data/shell/shell.txt`,
 `/data/quake/zeusbot/progs.dat`, `/data/modplay/makemove.mod`, and
 `/data/minimp3/tracks/*.mp3`.
 
-## Kernel API
+## Userspace Runtime and ABI
 
-Every userspace binary receives a `const vk_api_t*` as its first argument.
-There are no syscall instructions yet; the ABI is a function-pointer table.
+Every userspace binary still enters at `_start(const vk_api_t* api)`. The
+kernel passes a bootstrap `vk_api_t` pointer, `crt0` stores it, builds a
+musl-style `argc/argv/envp/auxv` block, and then transfers control into libc
+startup.
 
-| Group | Examples |
+The ABI now has two layers:
+
+- `include/vkernel/vk.h` is the canonical kernel ABI shared by kernel and
+  runtime code.
+- `userspace/include/vk.h` is the userspace-facing raw wrapper around that ABI.
+- `userspace/include/vkrt.h` is the stable runtime services layer that app code
+  should prefer over direct kernel calls.
+
+The raw ABI still includes the historical `vk_api_t` function table, but it
+also exposes `vk_syscall(...)` through `vk_api_t::vk_syscall`. musl uses that
+raw syscall path, while app code is being moved toward libc and `vkrt_*`
+helpers instead of talking to the kernel ABI directly.
+
+Representative runtime surface today:
+
+| Layer | Examples |
 |---|---|
-| Console | `vk_puts`, `vk_putc`, `vk_clear` |
-| Input | `vk_getc`, `vk_try_getc`, `vk_poll_key`, `vk_poll_mouse` |
-| Memory | `vk_malloc`, `vk_free`, `vk_memcpy`, `vk_memset` |
-| Files | `vk_file_open`, `vk_file_read_handle`, `vk_file_write_handle`, `vk_file_seek`, `vk_file_remove` |
-| Process | `vk_run`, `vk_run_auto`, `vk_run_with_fb`, `vk_run_cmdline`, `vk_wait_task`, `vk_terminate_task` |
-| Tasks/time | `vk_task_snapshot`, `vk_tick_count`, `vk_ticks_per_sec` |
-| Framebuffer | `vk_framebuffer_info`, `vk_set_task_framebuffer` |
-| Compositor | `vk_set_compositor_active`, `vk_set_compositor_default_fb` |
-| Audio | `vk_snd_play`, `vk_snd_stop`, `vk_snd_set_sample_rate`, `vk_snd_set_volume` |
-| Mixer | `vk_snd_mix_play`, `vk_snd_mix_stop`, `vk_snd_mix_update` |
-| KObj | `vk_kobj_rpc` with `ls`, `get`, `set`, `describe` |
+| libc / libc++ | `printf`, `malloc`, `free`, `open`, `read`, `write`, `std::string`, `std::vector` |
+| `vkrt_*` services | `vkrt_framebuffer_info`, `vkrt_poll_key`, `vkrt_run_cmdline`, `vkrt_task_snapshot`, `vkrt_kobj_rpc_json` |
+| raw ABI | `vk_syscall`, `vk_api_t`, KObj/process/framebuffer primitives used by runtime glue |
 
-`VK_API_VERSION` is currently `28`.
+`VK_API_VERSION` is currently `39`.
+
+## Userspace Linking
+
+Userspace programs are built as freestanding static PIE ELF64 binaries:
+
+- `-nostdlib`
+- `-static-pie`
+- entrypoint `-e _start`
+- no interpreter (`PT_INTERP` is rejected by the loader and by
+  `scripts/check_userspace_elf.sh`)
+
+The staged runtime sysroot lives under `userspace/runtime/sysroot` and is
+prepared by `scripts/setup_userspace_runtime.sh`. It installs the headers and
+archives used by app builds:
+
+- musl C headers and `libc.a`
+- `libm.a`
+- libc++ headers plus `libc++.a` and `libc++abi.a`
+- the runtime glue objects built from `userspace/libc/`
+
+`userspace/libc/Makefile` builds four always-reused runtime objects:
+
+| Object | Purpose |
+|---|---|
+| `crt0.o` | Entry bridge from `_start` into musl startup |
+| `runtime_glue.o` | Shared `__dso_handle`, syscall dispatch, and `vkrt_*` wrappers |
+| `c_main_bridge.o` | Maps the runtime entry to a normal C `main(int, char**)` |
+| `cxx_main_bridge.o` | Maps the runtime entry to a normal C++ `main(int, char**)` |
+
+### C program link flow
+
+For a C target such as `hello.vbin`, the final link is conceptually:
+
+```text
+cc -nostdlib -static-pie -e _start \
+  crt0.o runtime_glue.o c_main_bridge.o app.o \
+  -Wl,--start-group -lc -lm -lgcc -Wl,--end-group
+```
+
+That gives the binary one shared entry path while keeping the app source
+conventional: the program just defines `int main(int argc, char** argv)`.
+
+### C++ program link flow
+
+For a C++ target such as `shell.vbin` or `vkgui.vbin`, the final link is
+conceptually:
+
+```text
+clang++ -nostdlib -static-pie -e _start \
+  crt0.o runtime_glue.o cxx_main_bridge.o app_objects... \
+  -Wl,--start-group -lc++ -lc++abi -lc -lm -lgcc -Wl,--end-group
+```
+
+The C++ build injects `-Dmain=__vkernel_cpp_main` through
+`userspace/cxx_runtime_config.mk`. That lets application source keep writing a
+normal `int main(...)`, while `cxx_main_bridge.o` provides the C-linkage bridge
+that `crt0` calls. App code no longer needs to spell `extern "C" int main(...)`
+just to satisfy the freestanding startup ABI.
 
 ## vkGUI
 
@@ -250,7 +320,8 @@ Current panels and features:
 - `vkfm` file manager and file preview/launch panel
 - Info/settings panels and optional ImGui demo window
 
-The top-level build downloads Dear ImGui automatically if it is missing.
+vkGUI depends on the tracked `userspace/vkgui/deps/` tree; the build expects
+those vendored sources to already be present.
 
 ## Userspace Programs
 
@@ -259,17 +330,19 @@ The top-level build downloads Dear ImGui automatically if it is missing.
 | `shell.vbin` | Interactive command shell |
 | `vkgui.vbin` | Dear ImGui graphical shell/window manager |
 | `hello.vbin` | Runtime, file, and stdio smoke test |
-| `framebuffer.vbin` | Direct framebuffer pixel demo |
-| `framebuffer_text.vbin` | Text rendering into a framebuffer |
 | `raytracer.vbin` | Realtime software raytracer |
 | `rotozoom.vbin` | Rotate/zoom graphics effect |
 | `sr_cube.vbin` | Software-rendered 3D cube |
+| `cppcompat.vbin` | libc++ runtime smoke test |
+| `vkobj.vbin` | KObj CLI and JSON RPC helper |
 | `modplay.vbin` | MOD/S3M tracker playback |
 | `minimp3.vbin` | MP3 playback through minimp3 |
+| `vnes.vbin` | NES emulator frontend |
+| `snes9x.vbin` | SNES emulator frontend |
+| `vspcplay.vbin` | SPC music player frontend |
 | `doom.vbin` | Chocolate Doom port |
 | `quake.vbin` | Quake port |
 | `clownmdemu.vbin` | Sega Mega Drive emulator |
-| `cppcompat.vbin` | Small C++ runtime compatibility demo |
 
 ## Shell Commands
 
@@ -335,12 +408,13 @@ make userspace        # Build all userspace .vbin programs
 make disk             # Build build/vkernel_boot.img
 make disasm           # Write build/vkernel.dis
 make clean            # Remove build artifacts
-make distclean        # Also remove generated sysroot/newlib state
+make distclean        # Also remove generated runtime sysroot/build state
 ```
 
-`make userspace` builds the libc glue and calls `scripts/setup_newlib.sh` if the
-newlib sysroot is missing. The vkGUI build calls `userspace/vkgui/setup_imgui.sh`
-if Dear ImGui has not been staged yet.
+`make userspace` builds the libc glue and calls
+`scripts/setup_userspace_runtime.sh` if the musl/libc++ sysroot is missing.
+That runtime setup stages musl, libc++, libc++abi, and the userspace startup
+objects before app links begin.
 
 ## Run
 
@@ -432,8 +506,10 @@ continue
 as a PE image. Because the relocation section is intentionally empty,
 `self_relocate()` patches pointer-sized values in `.data` using the load delta.
 
-**Function-table ABI.** Userspace calls into the kernel through `vk_api_t`.
-This keeps the ABI simple while the kernel is still ring 0 everywhere.
+**Bootstrap table plus raw syscall ABI.** Userspace still receives `vk_api_t`
+at entry, but musl now uses the raw `vk_syscall(...)` entry carried inside that
+table. The long-term direction is libc and `vkrt_*` for apps, with raw ABI use
+kept inside runtime glue.
 
 **Address-space separation without privilege separation.** Each process has a
 private CR3 and fixed virtual layout. This prevents raw heap/image virtual

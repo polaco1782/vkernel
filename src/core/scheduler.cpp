@@ -477,6 +477,14 @@ static void activate_task_address_space(const task& t) {
     }
 }
 
+static void activate_task_thread_pointer(const task& t) {
+    auto* ctx = static_cast<process::process_task_context*>(t.user_data);
+    const u64 thread_pointer = ctx != null ? ctx->user_thread_pointer : 0;
+    if (arch::read_fs_base() != thread_pointer) {
+        arch::write_fs_base(thread_pointer);
+    }
+}
+
 /* ============================================================
  * Scheduler API
  * ============================================================ */
@@ -658,6 +666,9 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
             init_cpu_idle_frame(this_apic);
             g_sched_lock.release();
             vm::activate_kernel();
+            if (arch::read_fs_base() != 0) {
+                arch::write_fs_base(0);
+            }
             if (terminated_ctx != null) {
                 process::cleanup_process_context(terminated_ctx, -1);
             }
@@ -690,6 +701,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     }
 
     activate_task_address_space(g_tasks[next]);
+    activate_task_thread_pointer(g_tasks[next]);
     return reinterpret_cast<arch::register_state*>(next_rsp);
 }
 
@@ -725,6 +737,7 @@ auto sched::preempt(arch::register_state* regs) -> arch::register_state* {
     g_tasks[first].run_tick_start = g_tick_count;
     g_scheduler_active = true;
     activate_task_address_space(g_tasks[first]);
+    activate_task_thread_pointer(g_tasks[first]);
     g_sched_lock.release();
 
     /* Unmask IRQ0 and enable interrupts (BSP only) */

@@ -5,11 +5,11 @@
 # make_disk.sh - Create a bootable UEFI disk image
 #
 # Creates a 512 MiB raw GPT disk image with:
-#   - EFI System Partition (64 MiB, FAT32) for EFI/BOOT and /boot
-#   - FAT32 data partition (446 MiB) for /bin and /data
+#   - EFI System Partition (126 MiB, FAT32) for EFI/BOOT and /boot
+#   - FAT32 data partition (384 MiB) for /bin and /data
 #
 # Usage: make_disk.sh <efi_file> <output_image> [elf_file ...]
-# Requires: truncate, parted, mformat, mmd, mcopy  (mtools)
+# Requires: truncate, parted, mkfs.fat, mmd, mcopy  (dosfstools + mtools)
 
 set -e
 
@@ -32,10 +32,10 @@ if [ ! -f "${EFI_FILE}" ]; then
     exit 1
 fi
 
-for tool in truncate parted mdir mformat mmd mcopy; do
+for tool in truncate parted mkfs.fat mdir mmd mcopy; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
         echo "Error: '${tool}' not found."
-        echo "Install with: dnf install parted mtools  # or: apt install parted mtools"
+        echo "Install with: dnf install parted dosfstools mtools  # or: apt install parted dosfstools mtools"
         exit 1
     fi
 done
@@ -50,8 +50,8 @@ trap cleanup_temp_image EXIT
 
 # ── Disk layout ────────────────────────────────────────────────────────────
 #  Total disk  : 512 MiB
-#  ESP         : 1 MiB → 65 MiB  (64 MiB)
-#  Data FAT32  : 65 MiB → 511 MiB (446 MiB)
+#  ESP         : 1 MiB → 127 MiB  (126 MiB)
+#  Data FAT32  : 127 MiB → 511 MiB (384 MiB)
 #  GPT backup  : last 33 sectors
 #
 #  FAT32 geometry uses 64 heads × 32 sectors/track, so tracks == partition MiB.
@@ -59,18 +59,23 @@ trap cleanup_temp_image EXIT
 
 DISK_MB=512
 ESP_START_MiB=1
-ESP_SIZE_MiB=64
+ESP_SIZE_MiB=126
 ESP_END_MiB=$((ESP_START_MiB + ESP_SIZE_MiB))
 DATA_START_MiB=${ESP_END_MiB}
 DATA_END_MiB=511
 DATA_SIZE_MiB=$((DATA_END_MiB - DATA_START_MiB))
 
+SECTORS_PER_MiB=2048
 ESP_BYTE_OFFSET=$((ESP_START_MiB * 1024 * 1024))   # 1 048 576
 DATA_BYTE_OFFSET=$((DATA_START_MiB * 1024 * 1024))
 FAT_HEADS=64
 FAT_SECS=32
-ESP_TRACKS=${ESP_SIZE_MiB}
-DATA_TRACKS=${DATA_SIZE_MiB}
+ESP_START_SECTOR=$((ESP_START_MiB * SECTORS_PER_MiB))
+ESP_SECTORS=$((ESP_SIZE_MiB * SECTORS_PER_MiB))
+ESP_END_SECTOR=$((ESP_START_SECTOR + ESP_SECTORS - 1))
+DATA_START_SECTOR=$((DATA_START_MiB * SECTORS_PER_MiB))
+DATA_SECTORS=$((DATA_SIZE_MiB * SECTORS_PER_MiB))
+DATA_END_SECTOR=$((DATA_START_SECTOR + DATA_SECTORS - 1))
 
 esp_image_spec() {
     printf '%s@@%s' "${IMAGE_PATH}" "${ESP_BYTE_OFFSET}"
@@ -78,6 +83,38 @@ esp_image_spec() {
 
 data_image_spec() {
     printf '%s@@%s' "${IMAGE_PATH}" "${DATA_BYTE_OFFSET}"
+}
+
+format_fat_partition() {
+    local start_sector="$1"
+    local size_mib="$2"
+    local fat_bits="$3"
+    local image_path="$4"
+    local volume_label="$5"
+    local sectors_per_cluster="$6"
+
+    # mkfs.fat writes a partition-sized filesystem at the given sector offset,
+    # which keeps the BPB length consistent with the GPT entry.
+    mkfs.fat -F "${fat_bits}" \
+        --offset "${start_sector}" \
+        -h "${start_sector}" \
+        -g "${FAT_HEADS}/${FAT_SECS}" \
+        -n "${volume_label}" \
+        -s "${sectors_per_cluster}" \
+        "${image_path}" \
+        "$((size_mib * 1024))" \
+        >/dev/null 2>&1
+}
+
+image_has_expected_layout() {
+    local image_path="$1"
+    local layout
+
+    layout=$(parted -s -m "${image_path}" unit s print 2>/dev/null) || return 1
+
+    grep -Fq ':gpt::;' <<< "${layout}" || return 1
+    grep -Fqx "1:${ESP_START_SECTOR}s:${ESP_END_SECTOR}s:${ESP_SECTORS}s:fat32:ESP:boot, esp;" <<< "${layout}" || return 1
+    grep -Fqx "2:${DATA_START_SECTOR}s:${DATA_END_SECTOR}s:${DATA_SECTORS}s:fat32:DATA:msftdata;" <<< "${layout}" || return 1
 }
 
 ensure_fat_dir() {
@@ -129,8 +166,6 @@ copy_into_esp() {
     copy_into_fat "$(esp_image_spec)" "$1" "$2"
 }
 
-# Recursively copy a source directory into ::/<dest_dir>.
-# Creates intermediate FAT directories as needed then bulk-copies each file.
 copy_into_data() {
     copy_into_fat "$(data_image_spec)" "$1" "$2"
 }
@@ -227,10 +262,35 @@ stage_userspace_symbol_maps() {
     done < <(find build/symbols/userspace -type f -name '*.vbin.map' -print0 2>/dev/null)
 }
 
+stage_extra_file() {
+    local extra_path="$1"
+    local extra_name
+
+    [ -f "${extra_path}" ] || return 0
+
+    extra_name=$(basename "${extra_path}")
+    case "${extra_name}" in
+        vkernel.elf.map|vkernel.elf.lines)
+            copy_into_esp "${extra_path}" "boot/${extra_name}"
+            ;;
+        *.vbin.lines)
+            copy_into_data "${extra_path}" "data/debug/lines/${extra_name}"
+            ;;
+        *.vbin.map)
+            copy_into_data "${extra_path}" "data/debug/maps/${extra_name}"
+            ;;
+        *)
+            # Keep the ESP limited to firmware and early-loader inputs.
+            copy_into_data "${extra_path}" "data/boot/${extra_name}"
+            ;;
+    esac
+}
+
 TEMP_IMAGE=$(mktemp "${OUTPUT}.tmp.XXXXXX")
 IMAGE_PATH="${TEMP_IMAGE}"
 
 if [ -f "${OUTPUT}" ] \
+    && image_has_expected_layout "${OUTPUT}" \
     && mdir -i "${OUTPUT}@@${ESP_BYTE_OFFSET}" :: >/dev/null 2>&1 \
     && mdir -i "${OUTPUT}@@${DATA_BYTE_OFFSET}" :: >/dev/null 2>&1; then
     echo "  Refreshing existing disk image..."
@@ -238,13 +298,13 @@ if [ -f "${OUTPUT}" ] \
         cp "${OUTPUT}" "${IMAGE_PATH}"
     fi
 
-    echo "  Reformatting ESP..."
-    mformat -i "${IMAGE_PATH}@@${ESP_BYTE_OFFSET}" -F \
-        -h ${FAT_HEADS} -s ${FAT_SECS} -t ${ESP_TRACKS} ::
+    echo "  Reformatting ESP as FAT32..."
+    # Use 1 KiB clusters so the 126 MiB ESP stays above FAT32's minimum cluster count
+    # while remaining easy for firmware and the in-kernel FAT32 reader to consume.
+    format_fat_partition "${ESP_START_SECTOR}" "${ESP_SIZE_MiB}" 32 "${IMAGE_PATH}" "VKEFI" 2
 
     echo "  Reformatting data partition..."
-    mformat -i "${IMAGE_PATH}@@${DATA_BYTE_OFFSET}" -F \
-        -h ${FAT_HEADS} -s ${FAT_SECS} -t ${DATA_TRACKS} ::
+    format_fat_partition "${DATA_START_SECTOR}" "${DATA_SIZE_MiB}" 32 "${IMAGE_PATH}" "VKDATA" 8
 else
     rm -f "${IMAGE_PATH}"
 
@@ -258,12 +318,10 @@ else
     parted -s "${IMAGE_PATH}" mkpart DATA fat32 "${DATA_START_MiB}MiB" "${DATA_END_MiB}MiB"
 
     echo "  Formatting ESP as FAT32..."
-    mformat -i "${IMAGE_PATH}@@${ESP_BYTE_OFFSET}" -F \
-        -h ${FAT_HEADS} -s ${FAT_SECS} -t ${ESP_TRACKS} ::
+    format_fat_partition "${ESP_START_SECTOR}" "${ESP_SIZE_MiB}" 32 "${IMAGE_PATH}" "VKEFI" 2
 
     echo "  Formatting data partition as FAT32..."
-    mformat -i "${IMAGE_PATH}@@${DATA_BYTE_OFFSET}" -F \
-        -h ${FAT_HEADS} -s ${FAT_SECS} -t ${DATA_TRACKS} ::
+    format_fat_partition "${DATA_START_SECTOR}" "${DATA_SIZE_MiB}" 32 "${IMAGE_PATH}" "VKDATA" 8
 fi
 
 echo "  Staging EFI application..."
@@ -278,6 +336,7 @@ ensure_data_dir "data/vkgui"
 ensure_data_dir "data/vkgui/plugins"
 ensure_data_dir "data/debug/maps"
 ensure_data_dir "data/debug/lines"
+ensure_data_dir "data/boot"
 ensure_data_dir "data/doom"
 ensure_data_dir "data/quake/id1"
 ensure_data_dir "data/quake/zeusbot"
@@ -313,27 +372,7 @@ for plugin in userspace/vkgui/runtime_plugins/*.vplg; do
 done
 
 for extra in "$@"; do
-    local_dest=""
-    [ -f "${extra}" ] || continue
-    extra_name=$(basename "${extra}")
-    case "${extra_name}" in
-        vkernel.elf.map|vkernel.elf.lines)
-            local_dest="boot/${extra_name}"
-            copy_into_esp "${extra}" "${local_dest}"
-            ;;
-        *.vbin.lines)
-            local_dest="data/debug/lines/${extra_name}"
-            copy_into_data "${extra}" "${local_dest}"
-            ;;
-        *.vbin.map)
-            local_dest="data/debug/maps/${extra_name}"
-            copy_into_data "${extra}" "${local_dest}"
-            ;;
-        *)
-            local_dest="boot/${extra_name}"
-            copy_into_esp "${extra}" "${local_dest}"
-            ;;
-    esac
+    stage_extra_file "${extra}"
 done
 
 echo "  Staging reaperfx..."

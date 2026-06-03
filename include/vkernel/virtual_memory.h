@@ -15,6 +15,7 @@ namespace vm {
 
 inline constexpr virt_addr USER_IMAGE_BASE = 0x0000400000000000ULL;
 inline constexpr virt_addr USER_HEAP_BASE  = 0x0000410000000000ULL;
+inline constexpr virt_addr USER_MMAP_BASE  = 0x0000500000000000ULL;
 inline constexpr virt_addr USER_SHARED_BASE = 0x00007E0000000000ULL;
 inline constexpr virt_addr USER_MAP_LIMIT  = 0x0000800000000000ULL;
 
@@ -25,6 +26,7 @@ inline constexpr u64 MAP_EXECUTABLE = (1ULL << 2);
 struct address_space {
     phys_addr pml4_phys = 0;
     virt_addr heap_next = USER_HEAP_BASE;
+    virt_addr map_next = USER_MMAP_BASE;
 };
 
 void init();
