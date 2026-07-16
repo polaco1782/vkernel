@@ -70,7 +70,6 @@ struct process_task_context {
     bool startup_window_size_set;
     vk_u32 startup_window_width;
     vk_u32 startup_window_height;
-    bool stdio_to_serial;
     u64 task_id;
     vk_u32 fb_text_col;
     vk_u32 fb_text_row;

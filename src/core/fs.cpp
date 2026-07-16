@@ -171,11 +171,37 @@ static auto is_separator(char ch) -> bool {
     return ch == '/' || ch == '\\';
 }
 
-static auto normalize_path(string_view path) -> string_view {
+static auto normalize_path(string_view path, static_string<256>& normalized_out) -> string_view {
     while (path.size() >= 2 && path[0] == '.' && is_separator(path[1])) {
         path.remove_prefix(2);
     }
-    return path;
+
+    bool needs_copy = false;
+    for (usize i = 0; i < path.size(); ++i) {
+        if (path[i] == '\\') {
+            needs_copy = true;
+            break;
+        }
+    }
+
+    if (!needs_copy) {
+        return path;
+    }
+
+    if (path.size() >= normalized_out.capacity()) {
+        normalized_out.clear();
+        return {};
+    }
+
+    char scratch[256];
+    for (usize i = 0; i < path.size(); ++i) {
+        scratch[i] = path[i] == '\\' ? '/' : path[i];
+    }
+
+    if (!normalized_out.assign(string_view(scratch, path.size()))) {
+        return {};
+    }
+    return normalized_out.view();
 }
 
 static auto stream_data(const kernel_stream& stream) -> const u8* {
@@ -402,7 +428,8 @@ auto fs::file_exists(const char* path) -> bool {
         return false;
     }
 
-    const auto normalized = normalize_path(string_view(path));
+    static_string<256> normalized_storage;
+    const auto normalized = normalize_path(string_view(path), normalized_storage);
     if (try_backend_file_exists(normalized)) {
         return true;
     }
@@ -414,7 +441,8 @@ auto fs::file_size(const char* path) -> usize {
         return 0;
     }
 
-    const auto normalized = normalize_path(string_view(path));
+    static_string<256> normalized_storage;
+    const auto normalized = normalize_path(string_view(path), normalized_storage);
     const usize size = try_backend_file_size(normalized);
     if (size > 0 || try_backend_file_exists(normalized)) {
         return size;
@@ -428,7 +456,8 @@ auto fs::directory_exists(const char* path) -> bool {
         return false;
     }
 
-    const auto normalized = normalize_path(string_view(path));
+    static_string<256> normalized_storage;
+    const auto normalized = normalize_path(string_view(path), normalized_storage);
     return try_backend_directory_exists(normalized);
 }
 
@@ -440,14 +469,16 @@ auto fs::list_directory(const char* path, directory_visit_callback callback, voi
         return false;
     }
 
-    const auto normalized = normalize_path(string_view(path));
+    static_string<256> normalized_storage;
+    const auto normalized = normalize_path(string_view(path), normalized_storage);
     const bool ok = try_backend_list_directory(normalized, callback, context);
     log::debug() << "fs: list_directory path='" << normalized << "' result=" << (ok ? "ok" : "fail");
     return ok;
 }
 
 auto fs::load_file(string_view path, kernel_heap_ptr<u8>& owned_buffer, usize& size_out) -> const u8* {
-    const auto normalized = normalize_path(path);
+    static_string<256> normalized_storage;
+    const auto normalized = normalize_path(path, normalized_storage);
     log::debug() << "fs: loading file '" << normalized << "'";
     const u8* backend_data = try_backend_read_file(normalized, owned_buffer, size_out);
     if (backend_data != null) {
@@ -485,7 +516,8 @@ auto fs::file_open(const char* path, const char* mode_string) -> file_handle {
         return 0;
     }
 
-    const auto normalized = normalize_path(string_view(path));
+    static_string<256> normalized_storage;
+    const auto normalized = normalize_path(string_view(path), normalized_storage);
     if (normalized.empty()) {
         log::debug() << "fs: file_open rejected empty normalized path from '" << path << "'";
         return 0;
@@ -787,7 +819,8 @@ auto fs::file_remove(const char* path) -> int {
         return -1;
     }
 
-    const auto normalized = normalize_path(string_view(path));
+    static_string<256> normalized_storage;
+    const auto normalized = normalize_path(string_view(path), normalized_storage);
     const bool removed = try_backend_remove_file(normalized);
     log::debug() << "fs: file_remove path='" << normalized << "' result="
                  << (removed ? "removed" : "not-found-or-failed");

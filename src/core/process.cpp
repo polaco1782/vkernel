@@ -357,7 +357,6 @@ static auto load_process_context(string_view filename,
     ctx->startup_window_size_set = false;
     ctx->startup_window_width = 0;
     ctx->startup_window_height = 0;
-    ctx->stdio_to_serial = ctx->fb_override_valid;
     ctx->task_id = 0;
     ctx->fb_text_col = 0;
     ctx->fb_text_row = 0;

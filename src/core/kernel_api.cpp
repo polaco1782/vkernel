@@ -76,6 +76,7 @@ static auto sleep_from_timespec(vk_u64 clock_id,
                                 vk_u64 flags,
                                 const vk_timespec_t* req,
                                 vk_timespec_t* rem) -> vk_i64;
+static auto clock_id_uses_scheduler_ticks(vk_u64 clock_id) -> bool;
 static auto stub_syscall(vk_u64 nr,
                          vk_u64 a1,
                          vk_u64 a2,
@@ -93,6 +94,7 @@ static constexpr vk_i32 VK_AT_FDCWD = -100;
 static constexpr vk_i32 VK_AT_EMPTY_PATH = 0x1000;
 static constexpr vk_i32 VK_AT_SYMLINK_NOFOLLOW = 0x100;
 static constexpr vk_u32 VK_TIMER_ABSTIME = 1u;
+static constexpr vk_u64 VK_CLOCK_PROCESS_CPUTIME_ID = 2u;
 
 struct linux_iovec {
     void* iov_base;
@@ -366,6 +368,12 @@ static auto sleep_from_timespec(vk_u64 clock_id,
         sched::sleep(ticks);
     }
     return 0;
+}
+
+static auto clock_id_uses_scheduler_ticks(vk_u64 clock_id) -> bool {
+    return clock_id == VK_CLOCK_REALTIME
+        || clock_id == VK_CLOCK_MONOTONIC
+        || clock_id == VK_CLOCK_PROCESS_CPUTIME_ID;
 }
 
 static auto track_process_mapping(process::process_task_context* ctx,
@@ -1209,14 +1217,8 @@ static auto route_stdio_write(const char* buf, vk_usize len) -> vk_usize {
         return 0;
     }
 
-    auto* ctx = static_cast<process::process_task_context*>(sched::current_task_user_data());
-    if (ctx != null && ctx->stdio_to_serial) {
-        for (vk_usize i = 0; i < len; ++i) {
-            console::putc_serial(buf[i]);
-        }
-        return len;
-    }
-
+    /* stdio should follow the task's active console route so windowed apps
+     * render into their assigned framebuffer instead of disappearing to COM1. */
     for (vk_usize i = 0; i < len; ++i) {
         route_putc(buf[i]);
     }
@@ -1707,7 +1709,7 @@ static auto stub_syscall(vk_u64 nr,
             if (ts == null) {
                 return -VK_ERR_FAULT;
             }
-            if (clock_id != VK_CLOCK_REALTIME && clock_id != VK_CLOCK_MONOTONIC) {
+            if (!clock_id_uses_scheduler_ticks(clock_id)) {
                 return -VK_ERR_INVAL;
             }
             const u64 ticks = sched::tick_count();
